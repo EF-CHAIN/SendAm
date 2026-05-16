@@ -1,0 +1,15 @@
+{
+  "name": "sendam",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "SendAm - WhatsApp-based Stellar payment MVP",
+  "workspaces": [
+    "apps/*"
+  ],
+  "scripts": {
+    "dev:api": "npm run dev --workspace=apps/api",
+    "dev:web": "npm run dev --workspace=apps/web",
+    "dev": "npm run dev:api & npm run dev:web",
+    "install:all": "npm install"
+  }
+}
