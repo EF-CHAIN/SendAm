@@ -20,8 +20,8 @@ export default function AdminLogin() {
   };
 
   return (
-    <div className="min-h-[80vh] flex items-center justify-center bg-gray-50 px-4">
-      <div className="bg-white p-8 rounded-2xl shadow-sm border border-gray-100 w-full max-w-md">
+    <div className="min-h-[80vh] flex items-center justify-center bg-gray-50 px-4 sm:px-6 py-8">
+      <div className="bg-white p-6 sm:p-8 rounded-2xl shadow-sm border border-gray-100 w-full max-w-md">
         <div className="flex justify-center mb-6 text-primary">
           <div className="p-4 bg-secondary rounded-full">
             <Lock size={32} />

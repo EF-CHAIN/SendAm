@@ -13,9 +13,9 @@ export default function AdminLayout({ children }) {
 
   return (
     <ProtectedRoute>
-      <div className="flex bg-gray-50">
+      <div className="flex flex-col md:flex-row bg-gray-50 min-w-0">
         <AdminSidebar />
-        <div className="flex-1 p-8 h-[calc(100vh-73px)] overflow-y-auto">
+        <div className="flex-1 min-w-0 p-4 sm:p-6 lg:p-8 md:h-[calc(100vh-73px)] overflow-y-auto">
           {children}
         </div>
       </div>

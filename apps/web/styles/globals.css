@@ -11,3 +11,8 @@ body {
   color: var(--foreground);
   background: var(--background);
 }
+
+html,
+body {
+  max-width: 100%;
+}
