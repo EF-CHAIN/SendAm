@@ -34,6 +34,15 @@ module.exports = {
     dailySendAmount: Number(process.env.DAILY_SEND_LIMIT || 5000),
     dailySendCount: Number(process.env.MAX_SENDS_PER_DAY || 50),
   },
+  // Request rate limiting. The store is Mongo-backed so counters are shared
+  // across instances. `api*` caps REST traffic per IP; `bot*` caps inbound
+  // WhatsApp messages per sender.
+  rateLimit: {
+    apiWindowMs: Number(process.env.RATE_LIMIT_WINDOW_MIN || 15) * 60 * 1000,
+    apiMax: Number(process.env.RATE_LIMIT_MAX || 100),
+    botWindowMs: Number(process.env.BOT_RATE_WINDOW_SEC || 60) * 1000,
+    botMax: Number(process.env.BOT_RATE_MAX || 20),
+  },
   stellar: {
     network: process.env.STELLAR_NETWORK || 'testnet',
     horizonUrl: process.env.STELLAR_HORIZON_URL || 'https://horizon-testnet.stellar.org',
