@@ -244,10 +244,17 @@ Create an `.env` file inside `apps/api` using `apps/api/.env.example` as a guide
 PORT=3002
 NODE_ENV=development
 MONGODB_URI=mongodb://localhost:27017/sendam
+CORS_ORIGINS=http://localhost:3000,http://localhost:3001
 ENCRYPTION_KEY=your_64_character_hex_key
+ADMIN_PASSWORD=your_admin_password
+JWT_SECRET=your_64_character_hex_secret
 WHATSAPP_TOKEN=your_whatsapp_token_here
 WHATSAPP_PHONE_NUMBER_ID=your_phone_id_here
 WHATSAPP_VERIFY_TOKEN=your_verify_token
+WHATSAPP_APP_SECRET=your_meta_app_secret
+MAX_SEND_AMOUNT=1000
+DAILY_SEND_LIMIT=5000
+MAX_SENDS_PER_DAY=50
 STELLAR_NETWORK=testnet
 STELLAR_HORIZON_URL=https://horizon-testnet.stellar.org
 ```
@@ -331,15 +338,26 @@ Admin app (`apps/admin`):
 
 ## Security Notes
 
-This project is still an MVP. Before any production or real-money launch, the following must be completed:
+This project is still an MVP. Some hardening is already in place:
 
-- Replace mock admin authentication with real backend authentication.
-- Protect admin API routes with server-side authorization.
-- Remove any fallback encryption key behavior.
-- Validate Stellar public keys, amounts, phone numbers, and command payloads.
-- Add transaction limits and abuse prevention.
-- Add audit logs for sensitive actions.
-- Add secure secret management for deployment.
+- Real backend admin authentication (HMAC-signed session tokens); the API refuses to start without `ADMIN_PASSWORD` and `JWT_SECRET`.
+- Admin API routes protected server-side by the `requireAdmin` middleware.
+- No fallback encryption key — a missing/invalid `ENCRYPTION_KEY` fails loudly at startup.
+- Wallet secrets encrypted with authenticated AES-256-GCM (tamper-detecting).
+- Stellar public keys, amounts, and phone numbers validated on every surface.
+- WhatsApp webhook POSTs verified against the `X-Hub-Signature-256` header (fail-closed in production).
+- Inbound message idempotency to prevent duplicate transfers from webhook retries.
+- Per-user transfer guardrails: per-transaction cap plus rolling 24h amount and count limits.
+- CORS restricted to a configured origin allowlist in production.
+- Mongo-backed rate limiting (shared across instances): per-IP on the REST API and per-sender on the WhatsApp webhook.
+
+Still required before a real-money launch:
+
+- Move from Stellar Testnet to mainnet with a vetted deployment.
+- Add secure, managed secret/key management (KMS/HSM) instead of a single static env key; support key rotation.
+- Add audit logs for sensitive actions and monitoring/alerting.
+- Add an automated test suite (parser, wallet, webhook, transaction flows).
+- Replace the single shared admin password with real admin accounts and roles.
 - Complete legal, compliance, KYC, AML, and custody review where required.
 
 ## Current Limitations
@@ -347,7 +365,7 @@ This project is still an MVP. Before any production or real-money launch, the fo
 - Uses Stellar Testnet only.
 - Supports native XLM transfers only.
 - WhatsApp command parser is intentionally simple.
-- Admin login is currently mock/demo logic.
+- Single shared admin password (no per-admin accounts or roles yet).
 - No customer web signup is required yet because WhatsApp phone number is the MVP identity.
 - No production compliance workflow is included yet.
 
@@ -355,8 +373,9 @@ This project is still an MVP. Before any production or real-money launch, the fo
 
 ### MVP Completion
 
-- Real admin authentication.
-- Stronger validation for wallet and payment requests.
+- ~~Real admin authentication.~~ (done)
+- ~~Stronger validation for wallet and payment requests.~~ (done)
+- ~~Webhook signature verification and transfer guardrails.~~ (done)
 - Better WhatsApp command handling, confirmation prompts, and error messages.
 - Automated tests for parser, wallet, webhook, and transaction flows.
 - Deployment configuration for backend, frontend, database, and environment variables.

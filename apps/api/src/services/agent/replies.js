@@ -25,6 +25,7 @@ const replies = {
 
   unknown: () => `Sorry, I didn't understand that. Reply with 'help' to see what I can do.`,
   genericError: (message) => `Sorry, an error occurred: ${message}`,
+  rateLimited: () => `You're sending messages too quickly. Please wait a moment and try again.`,
 
   // Wallet
   creatingWallet: () => `Creating and funding your new wallet on Stellar Testnet...`,
