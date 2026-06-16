@@ -23,7 +23,7 @@ export default function Hero() {
               href={whatsappUrl('create wallet')}
               target="_blank"
               rel="noopener noreferrer"
-              className="inline-flex items-center justify-center gap-2 rounded-xl bg-primary px-7 py-4 font-semibold text-white shadow-lg shadow-whatsapp/30 transition-all hover:-translate-y-0.5 hover:bg-whatsapp-dark focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-whatsapp-dark"
+              className="inline-flex items-center justify-center gap-2 rounded-xl bg-primary px-7 py-4 font-semibold text-white shadow-lg shadow-whatsapp/30 transition-all hover:-translate-y-0.5 hover:bg-whatsapp focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-whatsapp"
             >
               <MessageCircle size={20} aria-hidden="true" />
               Start on WhatsApp

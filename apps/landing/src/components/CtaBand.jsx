@@ -20,7 +20,7 @@ export default function CtaBand() {
           href={whatsappUrl('create wallet')}
           target="_blank"
           rel="noopener noreferrer"
-          className="relative mt-8 inline-flex items-center justify-center gap-2 rounded-xl bg-whatsapp px-8 py-4 font-semibold text-white shadow-lg shadow-whatsapp/30 transition-all hover:-translate-y-0.5 hover:bg-whatsapp-dark focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white"
+          className="relative mt-8 inline-flex items-center justify-center gap-2 rounded-xl bg-primary px-8 py-4 font-semibold text-white shadow-lg shadow-primary/30 transition-all hover:-translate-y-0.5 hover:bg-whatsapp focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white"
         >
           <MessageCircle size={20} aria-hidden="true" />
           Start on WhatsApp
