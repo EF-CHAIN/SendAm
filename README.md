@@ -110,7 +110,7 @@ WhatsApp Response Message
 Admin / Tester
      |
      v
-Next.js Web App
+Vite React Apps (landing + admin)
      |
      v
 Express REST API
@@ -122,7 +122,10 @@ Express REST API
 SendAm/
   apps/
     api/       Express backend for WhatsApp, Stellar, MongoDB, and admin APIs
-    web/       Next.js frontend for landing page, wallet testing, and admin dashboard
+    landing/   Vite + React marketing/landing site
+    admin/     Vite + React admin dashboard
+  packages/
+    shared/    Shared UI (Loader) and utilities (api client, formatDate)
   package.json Root workspace scripts
 ```
 
@@ -140,8 +143,8 @@ SendAm/
 
 ### Frontend
 
-- Next.js 14
-- React
+- Vite + React (two apps: landing and admin)
+- React Router
 - Tailwind CSS
 - Axios
 - Lucide React icons
@@ -249,10 +252,16 @@ STELLAR_NETWORK=testnet
 STELLAR_HORIZON_URL=https://horizon-testnet.stellar.org
 ```
 
-For the web app, configure:
+For the admin app (`apps/admin/.env`), configure:
 
 ```env
-NEXT_PUBLIC_API_BASE_URL=http://localhost:3002/api
+VITE_API_BASE_URL=http://localhost:3002/api
+```
+
+For the landing app (`apps/landing/.env`), configure:
+
+```env
+VITE_ADMIN_URL=http://localhost:3001
 ```
 
 ## Getting Started
@@ -287,31 +296,37 @@ http://localhost:3002
 ### Run The Frontend
 
 ```bash
-npm run dev:web
+npm run dev:landing
+npm run dev:admin
 ```
 
-The web app runs on:
+The landing app runs on `http://localhost:3000` and the admin app on
+`http://localhost:3001`.
 
-```text
-http://localhost:3000
-```
-
-### Run Both Apps
+### Run All Apps
 
 ```bash
 npm run dev
 ```
 
+This starts the API, landing, and admin apps together.
+
 ## Web App Pages
+
+Landing app (`apps/landing`):
 
 ```text
 /                 Landing page
-/wallet-test      REST API wallet simulator
-/admin/login      Admin login screen
-/admin            Dashboard overview
-/admin/users      User table
-/admin/wallets    Wallet table
-/admin/transactions Transaction table
+```
+
+Admin app (`apps/admin`):
+
+```text
+/login            Admin login screen
+/                 Dashboard overview
+/users            User table
+/wallets          Wallet table
+/transactions     Transaction table
 ```
 
 ## Security Notes
