@@ -1,6 +1,7 @@
 const { processMessage } = require('../services/agent/handler');
 const { sendTextMessage } = require('../services/whatsapp.service');
 const { replies } = require('../services/agent/replies');
+const ProcessedMessage = require('../models/ProcessedMessage');
 const logger = require('../utils/logger');
 
 /**
@@ -8,9 +9,7 @@ const logger = require('../utils/logger');
  * acknowledging the event quickly, extracting the inbound text message, and
  * handing it to the agent. All conversation logic lives in services/agent.
  *
- * NOTE (security seam, out of scope for this cleanup): POST requests are not
- * yet verified against the X-Hub-Signature-256 header — add that check here
- * before going to mainnet.
+ * The POST signature is verified upstream (verifyWhatsappSignature middleware).
  */
 const handleIncomingMessage = async (req, res) => {
   res.status(200).send('EVENT_RECEIVED');
@@ -22,6 +21,21 @@ const handleIncomingMessage = async (req, res) => {
     const value = body.entry?.[0]?.changes?.[0]?.value;
     const message = value?.messages?.[0];
     if (!message || message.type !== 'text') return;
+
+    // Idempotency: Meta redelivers un-acked events, so dedup on message id
+    // before doing anything with side effects. A duplicate insert throws on
+    // the unique index and we bail out without reprocessing.
+    if (message.id) {
+      try {
+        await ProcessedMessage.create({ messageId: message.id });
+      } catch (err) {
+        if (err.code === 11000) {
+          logger.info(`Skipping duplicate WhatsApp message ${message.id}`);
+          return;
+        }
+        throw err;
+      }
+    }
 
     const from = message.from;
     const whatsappName = value?.contacts?.[0]?.profile?.name || '';
