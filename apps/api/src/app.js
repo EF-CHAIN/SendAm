@@ -10,6 +10,7 @@ const adminRoutes = require('./routes/admin.routes');
 
 const errorHandler = require('./middlewares/errorHandler');
 const notFound = require('./middlewares/notFound');
+const MongoRateStore = require('./middlewares/mongoRateStore');
 const config = require('./config/env');
 const logger = require('./utils/logger');
 
@@ -39,10 +40,16 @@ app.use(morgan('dev'));
 app.use(express.json({ verify: (req, _res, buf) => { req.rawBody = buf; } }));
 app.use(express.urlencoded({ extended: true }));
 
-// Rate limiting
+// Rate limiting (REST). Mongo-backed store so the per-IP window is shared
+// across instances. The WhatsApp webhook is throttled separately, per sender,
+// in its controller — Meta proxies all events through a few IPs, so an IP
+// limiter there would throttle every user together.
 const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100, // limit each IP to 100 requests per windowMs
+  windowMs: config.rateLimit.apiWindowMs,
+  max: config.rateLimit.apiMax,
+  standardHeaders: true,
+  legacyHeaders: false,
+  store: new MongoRateStore(),
 });
 app.use('/api/', limiter);
 
