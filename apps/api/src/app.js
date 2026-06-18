@@ -34,7 +34,10 @@ if (config.corsOrigins.length > 0) {
   app.use(cors({ origin: config.isProduction ? false : true }));
 }
 
-app.use(morgan('dev'));
+// Access logs: the verbose, colorized 'dev' format is great locally but unfit
+// for production log aggregation. Use the standard Apache 'combined' format in
+// production so hosted log drains get parseable, complete request lines.
+app.use(morgan(config.isProduction ? 'combined' : 'dev'));
 
 // Capture the raw request body so the WhatsApp webhook can verify the
 // X-Hub-Signature-256 HMAC against exactly what Meta signed.
