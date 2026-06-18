@@ -11,6 +11,7 @@ const replies = {
     [
       'Available commands:',
       '- create wallet: Create a new Stellar wallet',
+      '- fund: Retry funding if your wallet was not funded',
       '- balance: Check your XLM balance',
       '- save <name> <address>: Save a Stellar contact',
       '- contacts: List saved contacts',
@@ -33,10 +34,17 @@ const replies = {
     `Wallet created and funded successfully.\n\nYour Public Key:\n${publicKey}\n\nYou can now check your balance.`,
   walletExists: (publicKey) => `You already have a wallet.\n\nYour Public Key:\n${publicKey}`,
   noWallet: () => `You don't have a wallet yet. Send 'create wallet' first.`,
+  fundingWallet: () => `Funding your wallet on Stellar Testnet...`,
+  fundingFailed: () =>
+    `We couldn't fund your wallet right now — Testnet Friendbot may be busy. Reply 'fund' to try again in a moment.`,
+  alreadyFunded: (publicKey) =>
+    `Your wallet is already funded.\n\nYour Public Key:\n${publicKey}\n\nSend 'balance' to check it.`,
 
   // Balance
   balance: (amount) => `Your current balance is ${amount} XLM`,
   balanceError: (message) => `Error getting balance: ${message}`,
+  insufficientBalance: (balance, amount) =>
+    `Insufficient balance. You're trying to send ${amount} XLM but your balance is ${balance} XLM.`,
 
   // Contacts
   invalidPublicKey: () =>

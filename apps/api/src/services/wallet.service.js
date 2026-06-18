@@ -27,6 +27,12 @@ const getWalletByUserId = async (userId) => {
   return await Wallet.findOne({ userId });
 };
 
+// Mark a wallet as funded once Friendbot has confirmed the account exists.
+// Returns the updated wallet so callers can use the fresh state.
+const markWalletFunded = async (walletId) => {
+  return await Wallet.findByIdAndUpdate(walletId, { funded: true }, { new: true });
+};
+
 const getWalletByPhoneNumber = async (phoneNumber) => {
   const user = await User.findOne({ phoneNumber }).populate('walletId');
   if (!user || !user.walletId) {
@@ -39,4 +45,5 @@ module.exports = {
   createWalletForUser,
   getWalletByUserId,
   getWalletByPhoneNumber,
+  markWalletFunded,
 };

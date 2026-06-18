@@ -20,14 +20,35 @@ const getTransactionUrl = (txHash) => {
   return `https://stellar.expert/explorer/${network}/tx/${txHash}`;
 };
 
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const FUNDING_MAX_ATTEMPTS = 3;
+
+// Friendbot is unreliable (frequent 5xx/timeouts), and a failed first-time
+// funding used to leave a user with an empty wallet and no way to recover.
+// Retry with linear backoff, and treat "account already exists" as success so
+// re-running create/`fund` on an already-funded wallet is idempotent.
 const fundAccount = async (publicKey) => {
-  try {
-    const response = await axios.get(`https://friendbot.stellar.org?addr=${encodeURIComponent(publicKey)}`);
-    return response.data;
-  } catch (error) {
-    logger.error('Error funding account with Friendbot', error.message);
-    throw new Error('Failed to fund account on Testnet');
+  let lastError;
+  for (let attempt = 1; attempt <= FUNDING_MAX_ATTEMPTS; attempt += 1) {
+    try {
+      const response = await axios.get(`https://friendbot.stellar.org?addr=${encodeURIComponent(publicKey)}`);
+      return response.data;
+    } catch (error) {
+      const body = JSON.stringify(error.response?.data || '');
+      if (error.response?.status === 400 && /op_already_exists|already.*exist/i.test(body)) {
+        logger.info(`Account ${publicKey} already funded; treating Friendbot 400 as success.`);
+        return { alreadyFunded: true };
+      }
+      lastError = error;
+      logger.warn(`Friendbot funding attempt ${attempt}/${FUNDING_MAX_ATTEMPTS} for ${publicKey} failed: ${error.message}`);
+      if (attempt < FUNDING_MAX_ATTEMPTS) {
+        await sleep(attempt * 500);
+      }
+    }
   }
+  logger.error('Error funding account with Friendbot', lastError?.message);
+  throw new Error('Failed to fund account on Testnet');
 };
 
 const getBalance = async (publicKey) => {

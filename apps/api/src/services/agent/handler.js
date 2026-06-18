@@ -1,7 +1,7 @@
 const { parseIntent } = require('./intents');
 const { replies, shortenPublicKey } = require('./replies');
 const { sendTextMessage } = require('../whatsapp.service');
-const { createWalletForUser, getWalletByUserId } = require('../wallet.service');
+const { createWalletForUser, getWalletByUserId, markWalletFunded } = require('../wallet.service');
 const { getBalance, fundAccount, isValidPublicKey } = require('../stellar.service');
 const { executeSend } = require('../transaction.service');
 const User = require('../../models/User');
@@ -42,22 +42,52 @@ const handleHelp = async ({ phoneNumber }) => {
   await sendTextMessage(phoneNumber, replies.help());
 };
 
-const handleCreateWallet = async ({ phoneNumber, user }) => {
+// Fund (or re-fund) a wallet on Testnet and mark it funded on success.
+// Friendbot retries live in stellar.service; if it still fails we tell the
+// user how to retry rather than leaving them stranded with an empty wallet.
+const fundWallet = async ({ phoneNumber, wallet }) => {
   try {
-    const wallet = await createWalletForUser(user._id);
-    await sendTextMessage(phoneNumber, replies.creatingWallet());
-
     await fundAccount(wallet.publicKey);
-
+    await markWalletFunded(wallet._id);
     await sendTextMessage(phoneNumber, replies.walletReady(wallet.publicKey));
   } catch (error) {
-    if (error.message === 'User already has a wallet') {
-      const existingWallet = await getWalletByUserId(user._id);
-      await sendTextMessage(phoneNumber, replies.walletExists(existingWallet.publicKey));
-      return;
-    }
-    throw error;
+    logger.error(`Funding failed for ${wallet.publicKey}:`, error.message);
+    await sendTextMessage(phoneNumber, replies.fundingFailed());
   }
+};
+
+const handleCreateWallet = async ({ phoneNumber, user }) => {
+  let wallet = await getWalletByUserId(user._id);
+
+  // Already funded — nothing to do but echo their public key.
+  if (wallet && wallet.funded) {
+    await sendTextMessage(phoneNumber, replies.walletExists(wallet.publicKey));
+    return;
+  }
+
+  // Either no wallet yet, or one whose funding never completed. Create if
+  // needed, then (re)attempt funding so a prior Friendbot hiccup self-heals.
+  if (!wallet) {
+    wallet = await createWalletForUser(user._id);
+  }
+
+  await sendTextMessage(phoneNumber, replies.creatingWallet());
+  await fundWallet({ phoneNumber, wallet });
+};
+
+const handleFundWallet = async ({ phoneNumber, user }) => {
+  const wallet = await getWalletByUserId(user._id);
+  if (!wallet) {
+    await sendTextMessage(phoneNumber, replies.noWallet());
+    return;
+  }
+  if (wallet.funded) {
+    await sendTextMessage(phoneNumber, replies.alreadyFunded(wallet.publicKey));
+    return;
+  }
+
+  await sendTextMessage(phoneNumber, replies.fundingWallet());
+  await fundWallet({ phoneNumber, wallet });
 };
 
 const handleBalance = async ({ phoneNumber, user }) => {
@@ -114,6 +144,14 @@ const handlePrepareSend = async ({ phoneNumber, user, payload }) => {
 
     if (!resolved.destination) {
       await sendTextMessage(phoneNumber, replies.recipientNotFound(recipient));
+      return;
+    }
+
+    // Pre-flight balance check: catch "sending more than you have" before the
+    // user confirms, instead of letting it fail on-ledger after they reply YES.
+    const balance = await getBalance(wallet.publicKey);
+    if (Number(balance) < Number(amount)) {
+      await sendTextMessage(phoneNumber, replies.insufficientBalance(balance, amount));
       return;
     }
 
@@ -194,6 +232,7 @@ const handlers = {
   GREETING: handleGreeting,
   HELP: handleHelp,
   CREATE_WALLET: handleCreateWallet,
+  FUND_WALLET: handleFundWallet,
   BALANCE: handleBalance,
   SAVE_CONTACT: handleSaveContact,
   LIST_CONTACTS: handleListContacts,

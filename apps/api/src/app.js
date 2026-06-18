@@ -55,7 +55,19 @@ app.use('/api/', limiter);
 
 // Routes
 app.use('/webhook', webhookRoutes);
-app.use('/api/wallet', walletRoutes);
+
+// The REST wallet API is unauthenticated (phone number in the body is the only
+// "identity"), so it's gated off in production by default. WhatsApp is the real
+// surface; see config.features.walletRestApi.
+if (config.features.walletRestApi) {
+  if (config.isProduction) {
+    logger.warn('ENABLE_WALLET_REST_API=true in production — the unauthenticated /api/wallet routes are exposed.');
+  }
+  app.use('/api/wallet', walletRoutes);
+} else {
+  logger.info('REST wallet API (/api/wallet) is disabled. Set ENABLE_WALLET_REST_API=true to enable.');
+}
+
 app.use('/api/admin', adminRoutes);
 
 // Error Handling

@@ -15,6 +15,7 @@
     "dev": "npm run dev:api & npm run dev:landing & npm run dev:admin",
     "build:landing": "npm run build --workspace=apps/landing",
     "build:admin": "npm run build --workspace=apps/admin",
+    "test": "npm run test --workspace=apps/api",
     "install:all": "npm install"
   }
 }

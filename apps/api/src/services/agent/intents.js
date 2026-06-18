@@ -32,6 +32,10 @@ const parseIntent = (text) => {
     return { type: 'BALANCE', payload: null };
   }
 
+  if (normalizedText === 'fund' || normalizedText === 'fund wallet') {
+    return { type: 'FUND_WALLET', payload: null };
+  }
+
   if (normalizedText === 'contacts' || normalizedText === 'list contacts') {
     return { type: 'LIST_CONTACTS', payload: null };
   }
