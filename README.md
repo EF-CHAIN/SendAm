@@ -45,6 +45,7 @@ SendAm has three main surfaces:
 
    ```text
    create wallet
+   fund
    balance
    save ada GABC...
    contacts
@@ -66,10 +67,10 @@ SendAm has three main surfaces:
 ### User Features
 
 - Create a Stellar Testnet wallet from a WhatsApp command.
-- Automatically fund new test wallets using Stellar Friendbot.
+- Automatically fund new test wallets using Stellar Friendbot, with a `fund` command to retry if funding fails.
 - Check XLM balance by sending `balance`.
 - Send XLM to another Stellar public address.
-- Confirm transfers before funds are submitted to Stellar.
+- See an upfront balance check and confirm transfers before funds are submitted to Stellar.
 - Save contacts with aliases for repeat payments.
 - Receive Stellar Expert receipt links after successful transfers.
 - Receive simple WhatsApp replies for successful and failed actions.
@@ -165,8 +166,8 @@ SendAm/
 3. Backend generates a Stellar keypair.
 4. Secret key is encrypted before storage.
 5. Public key is stored on the wallet record.
-6. Testnet wallet is funded with Friendbot.
-7. User receives their public key by WhatsApp.
+6. Testnet wallet is funded with Friendbot (retried on failure; the wallet is marked funded on success).
+7. User receives their public key by WhatsApp. If funding failed, the user can reply `fund` to retry.
 
 ### Balance Check
 
@@ -179,12 +180,13 @@ SendAm/
 
 1. User sends a command like `send 5 xlm GABC...` or `send 5 xlm ada`.
 2. Backend parses amount and destination, or resolves a saved contact alias.
-3. Backend sends a confirmation prompt to the user.
-4. User replies `YES` to approve or `NO` to cancel.
-5. Backend decrypts the user's stored Stellar secret key.
-6. Backend builds, signs, and submits a Stellar payment transaction.
-7. Transaction result and Stellar Expert receipt link are saved in MongoDB.
-8. User receives success or failure feedback on WhatsApp.
+3. Backend checks the sender's balance and rejects the transfer up front if it is insufficient.
+4. Backend sends a confirmation prompt to the user (expires after 10 minutes).
+5. User replies `YES` to approve or `NO` to cancel.
+6. Backend enforces per-user transfer guardrails, then decrypts the user's stored Stellar secret key.
+7. Backend builds, signs, and submits a Stellar payment transaction.
+8. Transaction result and Stellar Expert receipt link are saved in MongoDB.
+9. User receives success or failure feedback on WhatsApp.
 
 ## API Summary
 
@@ -257,7 +259,10 @@ DAILY_SEND_LIMIT=5000
 MAX_SENDS_PER_DAY=50
 STELLAR_NETWORK=testnet
 STELLAR_HORIZON_URL=https://horizon-testnet.stellar.org
+ENABLE_WALLET_REST_API=false
 ```
+
+> The REST wallet API (`/api/wallet/*`) is unauthenticated and is disabled in production unless `ENABLE_WALLET_REST_API=true`. Outside production it defaults to enabled for local testing. WhatsApp is the real, signature-verified surface.
 
 For the admin app (`apps/admin/.env`), configure:
 
@@ -318,6 +323,15 @@ npm run dev
 
 This starts the API, landing, and admin apps together.
 
+### Run The Tests
+
+The backend ships with a unit test suite on the built-in Node test runner (no extra dependencies), covering the command parser, wallet-secret encryption, and admin auth:
+
+```bash
+npm test                            # from the repo root
+npm run test --workspace=apps/api   # equivalently
+```
+
 ## Web App Pages
 
 Landing app (`apps/landing`):
@@ -347,16 +361,18 @@ This project is still an MVP. Some hardening is already in place:
 - Stellar public keys, amounts, and phone numbers validated on every surface.
 - WhatsApp webhook POSTs verified against the `X-Hub-Signature-256` header (fail-closed in production).
 - Inbound message idempotency to prevent duplicate transfers from webhook retries.
-- Per-user transfer guardrails: per-transaction cap plus rolling 24h amount and count limits.
+- Per-user transfer guardrails: per-transaction cap plus rolling 24h amount and count limits, with an upfront balance check before confirmation.
 - CORS restricted to a configured origin allowlist in production.
 - Mongo-backed rate limiting (shared across instances): per-IP on the REST API and per-sender on the WhatsApp webhook.
+- The unauthenticated REST wallet API is disabled in production by default (`ENABLE_WALLET_REST_API`); WhatsApp is the signature-verified product surface.
 
 Still required before a real-money launch:
 
 - Move from Stellar Testnet to mainnet with a vetted deployment.
 - Add secure, managed secret/key management (KMS/HSM) instead of a single static env key; support key rotation.
 - Add audit logs for sensitive actions and monitoring/alerting.
-- Add an automated test suite (parser, wallet, webhook, transaction flows).
+- Add per-user authentication to the REST wallet API, or keep it disabled in production.
+- Expand the automated test suite from the current unit tests (parser, crypto, admin auth) to webhook and transaction integration flows.
 - Replace the single shared admin password with real admin accounts and roles.
 - Complete legal, compliance, KYC, AML, and custody review where required.
 
@@ -377,7 +393,7 @@ Still required before a real-money launch:
 - ~~Stronger validation for wallet and payment requests.~~ (done)
 - ~~Webhook signature verification and transfer guardrails.~~ (done)
 - Better WhatsApp command handling, confirmation prompts, and error messages.
-- Automated tests for parser, wallet, webhook, and transaction flows.
+- ~~Automated tests for the parser, crypto, and admin auth.~~ (done) — extend to webhook and transaction integration flows.
 - Deployment configuration for backend, frontend, database, and environment variables.
 
 ### Stellar Product Expansion
@@ -395,12 +411,12 @@ Still required before a real-money launch:
 - Monitoring and alerting.
 - Admin roles and permissions.
 - Recovery and support workflows.
-- Rate limits per user and per phone number.
+- ~~Rate limits per user and per phone number.~~ (done — per-IP REST and per-sender WhatsApp limits)
 - Secure key-management strategy.
 
 ## Reviewer's Summary
 
-SendAm demonstrates a practical Stellar use case: making blockchain payments accessible through a communication channel people already use every day. The MVP combines WhatsApp, Stellar Testnet, MongoDB, and a Next.js admin dashboard to show the foundation for a chat-based payment product.
+SendAm demonstrates a practical Stellar use case: making blockchain payments accessible through a communication channel people already use every day. The MVP combines WhatsApp, Stellar Testnet, MongoDB, and a Vite + React admin dashboard to show the foundation for a chat-based payment product.
 
 The project is intentionally scoped: it proves wallet creation, balance checks, saved recipients, confirmation-based XLM transfers, and auditable Stellar receipts first. With stronger authentication, validation, compliance work, and production deployment, SendAm can evolve from a Testnet MVP into a broader payments product for mobile-first users.
 
