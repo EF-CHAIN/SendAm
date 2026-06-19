@@ -23,3 +23,6 @@ pnpm-debug.log*
 Thumbs.db
 .vscode/
 .idea/
+
+# Private internal planning doc — never publish
+MAINTAINER.md
