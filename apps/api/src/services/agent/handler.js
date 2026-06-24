@@ -1,4 +1,5 @@
 const { parseIntent } = require('./intents');
+const { decodeIntent } = require('./intentDecoder.service');
 const { replies, shortenPublicKey } = require('./replies');
 const { sendTextMessage } = require('../whatsapp.service');
 const {
@@ -9,10 +10,58 @@ const {
 } = require('../wallet.service');
 const { resolveAdapter, detectChainFromAddress, SUPPORTED_CHAINS } = require('../chains');
 const { executeSend } = require('../transaction.service');
+const config = require('../../config/env');
 const User = require('../../models/User');
 const logger = require('../../utils/logger');
 
 const PENDING_SEND_TTL_MS = 10 * 60 * 1000;
+
+// Translates the AI decoder's output shape into the same {type, payload}
+// shape parseIntent produces, so a decoded message re-enters the exact same
+// dispatch table (and therefore the exact same guardrails) a typed command
+// would. The decoder never calls a handler directly.
+const mapDecodedToIntent = (decoded) => {
+  switch (decoded.intent) {
+    case 'SEND':
+      if (!decoded.amount || !decoded.recipient) return { type: 'UNKNOWN', payload: null };
+      return {
+        type: 'SEND',
+        payload: {
+          amount: decoded.amount,
+          asset: (decoded.asset || (decoded.chain === 'lisk' ? 'ETH' : 'XLM')).toUpperCase(),
+          recipient: decoded.recipient,
+        },
+      };
+    case 'BALANCE':
+      return { type: 'BALANCE', payload: null };
+    case 'CREATE_WALLET':
+      return { type: 'CREATE_WALLET', payload: null };
+    case 'LIST_CONTACTS':
+      return { type: 'LIST_CONTACTS', payload: null };
+    case 'HELP':
+      return { type: 'HELP', payload: null };
+    default:
+      return { type: 'UNKNOWN', payload: null };
+  }
+};
+
+// Regex first (free, instant, deterministic for well-formed commands); the
+// AI decoder only ever runs as a fallback for messages the regex parser
+// can't confidently classify, and only when explicitly enabled. On any
+// decoder error it degrades to UNKNOWN — an AI outage must never break the
+// bot, and a low-confidence guess is treated the same as no guess at all.
+const resolveIntent = async (text) => {
+  const parsed = parseIntent(text);
+  if (parsed.type !== 'UNKNOWN' || !config.ai.enabled) {
+    return parsed;
+  }
+
+  const decoded = await decodeIntent(text);
+  if (!decoded) {
+    return parsed;
+  }
+  return mapDecodedToIntent(decoded);
+};
 
 /**
  * Entry point for the WhatsApp agent. Resolves the user, classifies the
@@ -22,7 +71,7 @@ const PENDING_SEND_TTL_MS = 10 * 60 * 1000;
  */
 const processMessage = async (phoneNumber, whatsappName, text) => {
   const user = await resolveUser(phoneNumber, whatsappName);
-  const { type, payload } = parseIntent(text);
+  const { type, payload } = await resolveIntent(text);
 
   const handler = handlers[type] || handlers.UNKNOWN;
   await handler({ phoneNumber, whatsappName, user, payload });
@@ -338,4 +387,5 @@ module.exports = {
   processMessage,
   resolveRecipient,
   isPendingSendExpired,
+  mapDecodedToIntent,
 };
