@@ -407,41 +407,34 @@ Still required before a real-money launch:
 
 ## Current Limitations
 
-- Uses Stellar Testnet only.
-- Supports native XLM transfers only.
-- WhatsApp command parser is intentionally simple.
+- The deployed bot uses Stellar Testnet only and supports native XLM
+  transfers only. Lisk support is built and tested in this repo but not yet
+  deployed — see [`ROADMAP.md`](ROADMAP.md).
+- WhatsApp command parser is intentionally simple by default (an optional
+  AI-assisted fallback exists but isn't enabled by default — see
+  [`ROADMAP.md`](ROADMAP.md)).
 - Single shared admin password (no per-admin accounts or roles yet).
 - No customer web signup is required yet because WhatsApp phone number is the MVP identity.
 - No production compliance workflow is included yet.
 
 ## Roadmap
 
-### MVP Completion
+Short summary below — see [`ROADMAP.md`](ROADMAP.md) for the full, detailed,
+kept-current picture.
 
-- ~~Real admin authentication.~~ (done)
-- ~~Stronger validation for wallet and payment requests.~~ (done)
-- ~~Webhook signature verification and transfer guardrails.~~ (done)
-- Better WhatsApp command handling, confirmation prompts, and error messages.
-- ~~Automated tests for the parser, crypto, and admin auth.~~ (done) — extend to webhook and transaction integration flows.
-- Deployment configuration for backend, frontend, database, and environment variables.
-
-### Stellar Product Expansion
-
-- Support custom Stellar assets.
-- Expand contact aliases into richer recipient management.
-- Add richer transaction receipts with Stellar explorer links.
-- Add QR-code public key sharing.
-- Add low-balance warnings and safer confirmation flows.
-- Explore anchor integrations for fiat on/off ramps.
-
-### Production Readiness
-
-- Compliance review.
-- Monitoring and alerting.
-- Admin roles and permissions.
-- Recovery and support workflows.
-- ~~Rate limits per user and per phone number.~~ (done — per-IP REST and per-sender WhatsApp limits)
-- Secure key-management strategy.
+- ~~Real admin authentication, stronger validation, webhook signature
+  verification, transfer guardrails, and a unit test suite.~~ (done)
+- **Lisk support** (wallets, address-aware sending) is built and tested, not
+  yet deployed — see [`ARCHITECTURE.md`](ARCHITECTURE.md) for the
+  chain-adapter design and [`ROADMAP.md`](ROADMAP.md) for exact status.
+- **AI-assisted natural-language command parsing**, a **cross-chain bridging
+  groundwork spike**, and a **gas-sponsorship client** are all built —
+  each has real, documented gaps before it's production-usable (see
+  [`ROADMAP.md`](ROADMAP.md)).
+- Still ahead: production deployment, Stellar protocol depth (SEP-10,
+  Soroban, non-native assets), security hardening (KMS/HSM, audit logging,
+  monitoring, admin roles), and a compliance review before any real-money or
+  mainnet launch on either chain.
 
 ## Reviewer's Summary
 
