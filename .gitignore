@@ -30,3 +30,6 @@ MAINTAINER.md
 # Contains account/identity operational detail — kept private, same as
 # MAINTAINER.md. Claude Code still reads it locally regardless of git status.
 CLAUDE.md
+
+# Claude Code local runtime/session state — machine-specific, never publish
+.claude/
