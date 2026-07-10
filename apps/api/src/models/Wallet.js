@@ -31,6 +31,13 @@ const walletSchema = new mongoose.Schema({
   funded: {
     type: Boolean,
     default: false,
+  },
+  // Used by scripts/notify-deposits.js to detect an incoming deposit (a
+  // positive delta against this value) without a dedicated chain-watcher
+  // process — see that script's header for why.
+  lastKnownBalance: {
+    type: String,
+    default: '0',
   }
 }, { timestamps: true });
 
