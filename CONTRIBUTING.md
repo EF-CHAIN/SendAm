@@ -1,4 +1,4 @@
-# Contributing to SendAm
+//# Contributing to SendAm
 
 Thank you for your interest in contributing to SendAm. SendAm is an open-source WhatsApp-first Stellar payments MVP focused on making blockchain payments easier for mobile-first users.
 
@@ -43,6 +43,8 @@ Larger areas include:
 - Contact and recipient management.
 - QR-code wallet sharing.
 - Compliance-aware production workflows.
+- Cross-chain expansion (Lisk) via the chain-adapter pattern — see
+  [`ARCHITECTURE.md`](ARCHITECTURE.md) and the notes below.
 
 ## Local Setup
 
@@ -210,6 +212,30 @@ When contributing Stellar functionality:
 - Include Stellar Expert links where useful.
 - Be careful with custody-related changes.
 - Document any assumptions around assets, issuers, trustlines, or anchors.
+
+## Cross-Chain (Lisk) Contribution Notes
+
+SendAm is extending to Lisk, an EVM-compatible Layer 2 network, alongside
+Stellar. See [`ARCHITECTURE.md`](ARCHITECTURE.md) for the chain-adapter
+pattern this work follows before contributing here.
+
+When contributing Lisk functionality:
+
+- Use Lisk Sepolia testnet for development, not mainnet.
+- Do not use real funds in development.
+- Implement new chain logic behind the shared adapter interface
+  (`createWallet`, `getBalance`, `submitPayment`, `resolveAsset`,
+  `validateAddress`, `fundTestnetAccount`) — product-level code (command
+  handling, guardrails, admin reporting) should never import a chain SDK
+  directly.
+- Validate addresses before submitting transactions.
+- Be careful with custody-related changes, exactly as with the Stellar side.
+- Lisk Sepolia has no Friendbot-equivalent auto-fund API — testnet funding
+  currently requires a human-facing faucet (e.g. the Superchain Faucet).
+  Don't assume a scriptable, server-side auto-fund path exists.
+- Document any assumptions around gas sponsorship, bridging, or asset
+  support — these depend on privately-operated services described in
+  `ARCHITECTURE.md`, not code that ships in this repository.
 
 ## Documentation Contributions
 
