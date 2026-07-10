@@ -26,3 +26,7 @@ Thumbs.db
 
 # Private internal planning doc — never publish
 MAINTAINER.md
+
+# Contains account/identity operational detail — kept private, same as
+# MAINTAINER.md. Claude Code still reads it locally regardless of git status.
+CLAUDE.md
