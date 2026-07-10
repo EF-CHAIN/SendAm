@@ -1,0 +1,290 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model User {
+  id           String    @id @default(cuid())
+  phoneNumber  String    @unique
+  whatsappName String?
+  walletId     String?   @unique
+  kycTier      Int       @default(0)
+  riskScore    Int       @default(0)
+  pinHash      String?
+  pinSetAt     DateTime?
+  pendingSend  Json?
+  contactsJson Json?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  wallet        Wallet?
+  aliases       Alias[]
+  contacts      Contact[]      @relation("ContactOwner")
+  transactions  Transaction[]
+  kycProfile    KycProfile?
+  voiceCommands VoiceCommand[]
+  notifications Notification[]
+  quotes        Quote[]
+  escrows       Escrow[]       @relation("EscrowCreator")
+}
+
+model Wallet {
+  id                 String   @id @default(cuid())
+  userId             String   @unique
+  phoneNumber        String?
+  provider           String   @default("thirdweb")
+  providerWalletId   String?
+  address            String?
+  publicKey          String?
+  encryptedSecretKey String?
+  primaryChain       String   @default("lisk")
+  supportedChains    String[] @default(["lisk", "stellar"])
+  network            String   @default("managed")
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([phoneNumber])
+}
+
+model Transaction {
+  id                    String   @id @default(cuid())
+  userId                String
+  type                  String
+  amount                String
+  asset                 String   @default("USDC")
+  fiatCurrency          String?
+  fiatAmount            String?
+  rail                  String   @default("unknown")
+  routeType             String   @default("unknown")
+  quoteId               String?
+  destination           String?
+  recipientPhoneNumber  String?
+  txHash                String?
+  providerTransactionId String?
+  explorerUrl           String?
+  status                String   @default("pending")
+  metadata              Json     @default("{}")
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  user  User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  quote Quote? @relation(fields: [quoteId], references: [id])
+
+  @@index([userId, createdAt])
+  @@index([status])
+  @@index([rail])
+}
+
+model Contact {
+  id              String   @id @default(cuid())
+  ownerId         String
+  phoneNumber     String
+  displayName     String?
+  defaultCurrency String   @default("NGN")
+  defaultAsset    String   @default("USDC")
+  riskLevel       String   @default("low")
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  owner User @relation("ContactOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+
+  @@unique([ownerId, phoneNumber])
+}
+
+model Alias {
+  id         String   @id @default(cuid())
+  userId     String
+  alias      String
+  targetType String   @default("phone")
+  target     String
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, alias])
+}
+
+model Escrow {
+  id              String    @id @default(cuid())
+  creatorId       String
+  counterpartyId  String?
+  arbiterId       String?
+  amount          String
+  asset           String    @default("USDC")
+  chain           String    @default("lisk")
+  contractAddress String?
+  contractEscrowId String?
+  status          String    @default("draft")
+  releaseAfter    DateTime?
+  terms           String?
+  metadata        Json      @default("{}")
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  creator User   @relation("EscrowCreator", fields: [creatorId], references: [id], onDelete: Cascade)
+  arbiter Agent? @relation(fields: [arbiterId], references: [id])
+
+  @@index([status])
+  @@index([creatorId])
+}
+
+model KycProfile {
+  id                String    @id @default(cuid())
+  userId            String    @unique
+  provider          String    @default("smileid")
+  providerReference String?
+  tier              Int       @default(0)
+  status            String    @default("not_started")
+  country           String?
+  riskScore         Int       @default(0)
+  lastScreenedAt    DateTime?
+  metadata          Json      @default("{}")
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([status])
+}
+
+model VoiceCommand {
+  id                String   @id @default(cuid())
+  userId            String?
+  phoneNumber       String
+  whatsappMessageId String?
+  audioUrl          String?
+  transcript        String?
+  intent            String?
+  status            String   @default("queued")
+  error             String?
+  metadata          Json     @default("{}")
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([phoneNumber])
+  @@index([whatsappMessageId])
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  actorType  String   @default("system")
+  actorId    String?
+  action     String
+  entityType String?
+  entityId   String?
+  ipAddress  String?
+  userAgent  String?
+  metadata   Json     @default("{}")
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([actorType])
+  @@index([action])
+  @@index([createdAt])
+}
+
+model Notification {
+  id                String   @id @default(cuid())
+  userId            String?
+  channel           String   @default("whatsapp")
+  type              String
+  recipient         String
+  body              String
+  status            String   @default("queued")
+  providerMessageId String?
+  error             String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([status])
+}
+
+model Quote {
+  id             String   @id @default(cuid())
+  userId         String?
+  sourceCurrency String
+  targetCurrency String
+  sourceAmount   String
+  targetAmount   String?
+  rate           Float?
+  fee            String?
+  provider       String?
+  route          String?
+  expiresAt      DateTime
+  metadata       Json     @default("{}")
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  user         User?         @relation(fields: [userId], references: [id], onDelete: SetNull)
+  transactions Transaction[]
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+model Agent {
+  id          String   @id @default(cuid())
+  name        String
+  phoneNumber String   @unique
+  role        String   @default("cashout_agent")
+  status      String   @default("pending")
+  locationId  String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  location CashoutLocation? @relation(fields: [locationId], references: [id])
+  escrows  Escrow[]
+}
+
+model CashoutLocation {
+  id                  String   @id @default(cuid())
+  name                String
+  address             String?
+  city                String?
+  country             String   @default("NG")
+  latitude            Float?
+  longitude           Float?
+  supportedCurrencies String[] @default(["NGN"])
+  status              String   @default("active")
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  agents Agent[]
+
+  @@index([status])
+}
+
+model AdminRole {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  permissions String[] @default([])
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model ProcessedMessage {
+  id        String   @id @default(cuid())
+  messageId String   @unique
+  createdAt DateTime @default(now())
+}
+
+model RateLimitHit {
+  id        String   @id @default(cuid())
+  key       String   @unique
+  count     Int      @default(0)
+  resetAt   DateTime
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}

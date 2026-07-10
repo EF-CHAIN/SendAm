@@ -6,7 +6,7 @@ module.exports = {
   port: process.env.PORT || 3002,
   env,
   isProduction: env === 'production',
-  mongoUri: process.env.MONGODB_URI || 'mongodb://localhost:27017/sendam',
+  databaseUrl: process.env.DATABASE_URL,
   encryptionKey: process.env.ENCRYPTION_KEY,
   // Comma-separated list of origins allowed to call the REST API. Empty means
   // "no allowlist configured" — see app.js for the dev/prod behaviour.
@@ -34,7 +34,7 @@ module.exports = {
     dailySendAmount: Number(process.env.DAILY_SEND_LIMIT || 5000),
     dailySendCount: Number(process.env.MAX_SENDS_PER_DAY || 50),
   },
-  // Request rate limiting. The store is Mongo-backed so counters are shared
+  // Request rate limiting. The store is PostgreSQL-backed so counters are shared
   // across instances. `api*` caps REST traffic per IP; `bot*` caps inbound
   // WhatsApp messages per sender.
   rateLimit: {
@@ -43,8 +43,66 @@ module.exports = {
     botWindowMs: Number(process.env.BOT_RATE_WINDOW_SEC || 60) * 1000,
     botMax: Number(process.env.BOT_RATE_MAX || 20),
   },
+  redis: {
+    url: process.env.REDIS_URL || process.env.UPSTASH_REDIS_URL,
+  },
+  storage: {
+    r2Endpoint: process.env.CLOUDFLARE_R2_ENDPOINT,
+    r2Bucket: process.env.CLOUDFLARE_R2_BUCKET,
+    r2AccessKeyId: process.env.CLOUDFLARE_R2_ACCESS_KEY_ID,
+    r2SecretAccessKey: process.env.CLOUDFLARE_R2_SECRET_ACCESS_KEY,
+  },
+  walletProvider: process.env.WALLET_PROVIDER || 'thirdweb',
+  thirdweb: {
+    engineUrl: process.env.THIRDWEB_ENGINE_URL,
+    accessToken: process.env.THIRDWEB_ACCESS_TOKEN,
+    backendWalletAddress: process.env.THIRDWEB_BACKEND_WALLET_ADDRESS,
+    defaultChain: process.env.THIRDWEB_DEFAULT_CHAIN || 'lisk',
+    usdcContractAddress: process.env.THIRDWEB_USDC_CONTRACT_ADDRESS,
+  },
+  openfort: {
+    apiUrl: process.env.OPENFORT_API_URL || 'https://api.openfort.io',
+    secretKey: process.env.OPENFORT_SECRET_KEY,
+  },
+  lisk: {
+    chainId: process.env.LISK_CHAIN_ID || 'lisk',
+    rpcUrl: process.env.LISK_RPC_URL,
+    escrowContractAddress: process.env.LISK_ESCROW_CONTRACT_ADDRESS,
+  },
   stellar: {
     network: process.env.STELLAR_NETWORK || 'testnet',
     horizonUrl: process.env.STELLAR_HORIZON_URL || 'https://horizon-testnet.stellar.org',
-  }
+  },
+  pricing: {
+    coinGeckoBaseUrl: process.env.COINGECKO_BASE_URL || 'https://api.coingecko.com/api/v3',
+    coinGeckoApiKey: process.env.COINGECKO_API_KEY,
+    exchangeRateApiKey: process.env.EXCHANGERATE_API_KEY,
+  },
+  ramps: {
+    yellowCard: {
+      apiUrl: process.env.YELLOW_CARD_API_URL,
+      apiKey: process.env.YELLOW_CARD_API_KEY,
+    },
+    paychant: {
+      apiUrl: process.env.PAYCHANT_API_URL,
+      apiKey: process.env.PAYCHANT_API_KEY,
+    },
+  },
+  compliance: {
+    provider: process.env.KYC_PROVIDER || 'smileid',
+    smileId: {
+      partnerId: process.env.SMILE_ID_PARTNER_ID,
+      apiKey: process.env.SMILE_ID_API_KEY,
+    },
+    dojah: {
+      appId: process.env.DOJAH_APP_ID,
+      secretKey: process.env.DOJAH_SECRET_KEY,
+    },
+    pinPepper: process.env.PIN_PEPPER,
+  },
+  voice: {
+    provider: process.env.VOICE_PROVIDER || 'deepgram',
+    deepgramApiKey: process.env.DEEPGRAM_API_KEY,
+    whisperApiKey: process.env.WHISPER_API_KEY || process.env.OPENAI_API_KEY,
+  },
 };

@@ -52,3 +52,23 @@ export const getAdminTransactions = async () => {
   const { data } = await api.get('/admin/transactions');
   return data;
 };
+
+export const getAdminEscrows = async () => {
+  const { data } = await api.get('/admin/escrows');
+  return data;
+};
+
+export const getAdminKyc = async () => {
+  const { data } = await api.get('/admin/kyc');
+  return data;
+};
+
+export const getAdminAuditLogs = async () => {
+  const { data } = await api.get('/admin/audit-logs');
+  return data;
+};
+
+export const getAdminSystemHealth = async () => {
+  const { data } = await api.get('/admin/system-health');
+  return data;
+};

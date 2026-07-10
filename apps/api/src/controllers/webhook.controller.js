@@ -1,15 +1,16 @@
-const { processMessage } = require('../services/agent/handler');
 const { sendTextMessage } = require('../services/whatsapp.service');
 const { replies } = require('../services/agent/replies');
-const ProcessedMessage = require('../models/ProcessedMessage');
 const { consume } = require('../services/rateLimit.service');
 const config = require('../config/env');
 const logger = require('../utils/logger');
+const { enqueue } = require('../queues/queue.service');
+const prisma = require('../common/prisma');
 
 /**
  * Transport adapter for the WhatsApp Cloud API webhook. Its only jobs are
- * acknowledging the event quickly, extracting the inbound text message, and
- * handing it to the agent. All conversation logic lives in services/agent.
+ * acknowledging the event quickly, extracting the inbound WhatsApp message,
+ * and queueing background work. All conversation/payment logic lives outside
+ * the webhook request path so Meta retries never duplicate money movement.
  *
  * The POST signature is verified upstream (verifyWhatsappSignature middleware).
  */
@@ -22,16 +23,16 @@ const handleIncomingMessage = async (req, res) => {
 
     const value = body.entry?.[0]?.changes?.[0]?.value;
     const message = value?.messages?.[0];
-    if (!message || message.type !== 'text') return;
+    if (!message || !['text', 'audio', 'voice'].includes(message.type)) return;
 
     // Idempotency: Meta redelivers un-acked events, so dedup on message id
     // before doing anything with side effects. A duplicate insert throws on
     // the unique index and we bail out without reprocessing.
     if (message.id) {
       try {
-        await ProcessedMessage.create({ messageId: message.id });
+        await prisma.processedMessage.create({ data: { messageId: message.id } });
       } catch (err) {
-        if (err.code === 11000) {
+        if (err.code === 'P2002') {
           logger.info(`Skipping duplicate WhatsApp message ${message.id}`);
           return;
         }
@@ -55,9 +56,13 @@ const handleIncomingMessage = async (req, res) => {
       return;
     }
 
-    processMessage(from, whatsappName, message.text.body).catch((err) => {
-      logger.error(`Error processing command for ${from}:`, err);
-      sendTextMessage(from, replies.genericError(err.message));
+    await enqueue('whatsapp-inbound', 'message.received', {
+      from,
+      whatsappName,
+      text: message.text?.body,
+      mediaId: message.audio?.id || message.voice?.id,
+      messageType: message.type,
+      whatsappMessageId: message.id,
     });
   } catch (error) {
     logger.error('Webhook processing error:', error);

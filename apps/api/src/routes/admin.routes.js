@@ -19,5 +19,9 @@ router.get('/stats', requireAdmin, adminController.getStats);
 router.get('/users', requireAdmin, adminController.getUsers);
 router.get('/wallets', requireAdmin, adminController.getWallets);
 router.get('/transactions', requireAdmin, adminController.getTransactions);
+router.get('/escrows', requireAdmin, adminController.getEscrows);
+router.get('/kyc', requireAdmin, adminController.getKycProfiles);
+router.get('/audit-logs', requireAdmin, adminController.getAuditLogs);
+router.get('/system-health', requireAdmin, adminController.getSystemHealth);
 
 module.exports = router;

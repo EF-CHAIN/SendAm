@@ -7,10 +7,13 @@ const rateLimit = require('express-rate-limit');
 const webhookRoutes = require('./routes/webhook.routes');
 const walletRoutes = require('./routes/wallet.routes');
 const adminRoutes = require('./routes/admin.routes');
+const escrowRoutes = require('./escrow/escrow.routes');
+const complianceRoutes = require('./compliance/compliance.routes');
+const pricingRoutes = require('./pricing/pricing.routes');
 
 const errorHandler = require('./middlewares/errorHandler');
 const notFound = require('./middlewares/notFound');
-const MongoRateStore = require('./middlewares/mongoRateStore');
+const PostgresRateStore = require('./middlewares/postgresRateStore');
 const config = require('./config/env');
 const logger = require('./utils/logger');
 
@@ -40,7 +43,7 @@ app.use(morgan('dev'));
 app.use(express.json({ verify: (req, _res, buf) => { req.rawBody = buf; } }));
 app.use(express.urlencoded({ extended: true }));
 
-// Rate limiting (REST). Mongo-backed store so the per-IP window is shared
+// Rate limiting (REST). PostgreSQL-backed store so the per-IP window is shared
 // across instances. The WhatsApp webhook is throttled separately, per sender,
 // in its controller — Meta proxies all events through a few IPs, so an IP
 // limiter there would throttle every user together.
@@ -49,7 +52,7 @@ const limiter = rateLimit({
   max: config.rateLimit.apiMax,
   standardHeaders: true,
   legacyHeaders: false,
-  store: new MongoRateStore(),
+  store: new PostgresRateStore(),
 });
 app.use('/api/', limiter);
 
@@ -57,6 +60,9 @@ app.use('/api/', limiter);
 app.use('/webhook', webhookRoutes);
 app.use('/api/wallet', walletRoutes);
 app.use('/api/admin', adminRoutes);
+app.use('/api/escrow', escrowRoutes);
+app.use('/api/compliance', complianceRoutes);
+app.use('/api/pricing', pricingRoutes);
 
 // Error Handling
 app.use(notFound);

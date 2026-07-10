@@ -1,21 +1,21 @@
 const steps = [
   {
     n: '1',
-    title: 'Message SendAm',
-    desc: 'Open WhatsApp and text “create wallet”. We generate and fund a Stellar wallet for you instantly.',
-    command: 'create wallet',
+    title: 'Chat or speak',
+    desc: 'Send a message or voice note for balance, payment, escrow, receipt, or cash-out.',
+    command: 'Send 25000 NGN to Ada',
   },
   {
     n: '2',
-    title: 'Send or check',
-    desc: 'Text “balance” to see your XLM, or “send 5 xlm ada” to pay a saved contact or any Stellar address.',
-    command: 'send 5 xlm ada',
+    title: 'Review the quote',
+    desc: 'SendAm shows the live rate, fees, recipient, and confirmation flow before funds move.',
+    command: 'Confirm with PIN',
   },
   {
     n: '3',
-    title: 'Confirm & done',
-    desc: 'Reply “YES” to approve. We sign and submit the payment, then send back a Stellar Expert receipt.',
-    command: 'yes',
+    title: 'Settle quietly',
+    desc: 'The orchestrator picks Lisk, Stellar, or ramp partners while the user sees one clean receipt.',
+    command: 'Receipt ready',
   },
 ];
 
@@ -28,7 +28,7 @@ export default function HowItWorks() {
             How it works
           </h2>
           <p className="mt-4 text-slate-600">
-            Three messages from zero to a confirmed on-chain payment.
+            One WhatsApp experience, with routing, compliance, and settlement handled behind the scenes.
           </p>
         </div>
 

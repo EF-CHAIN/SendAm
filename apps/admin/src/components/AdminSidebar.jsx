@@ -1,5 +1,5 @@
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { LayoutDashboard, Users, Wallet, ArrowRightLeft, LogOut } from 'lucide-react';
+import { LayoutDashboard, Users, Wallet, ArrowRightLeft, LogOut, ShieldCheck, FileSearch, Activity } from 'lucide-react';
 import { removeToken } from '@/lib/auth';
 
 export default function AdminSidebar() {
@@ -11,6 +11,10 @@ export default function AdminSidebar() {
     { name: 'Users', path: '/users', icon: Users },
     { name: 'Wallets', path: '/wallets', icon: Wallet },
     { name: 'Transactions', path: '/transactions', icon: ArrowRightLeft },
+    { name: 'Escrows', path: '/escrows', icon: ShieldCheck },
+    { name: 'KYC', path: '/kyc', icon: FileSearch },
+    { name: 'Audit', path: '/audit-logs', icon: FileSearch },
+    { name: 'Health', path: '/system-health', icon: Activity },
   ];
 
   const handleLogout = () => {

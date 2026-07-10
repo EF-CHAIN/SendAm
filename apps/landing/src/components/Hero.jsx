@@ -9,13 +9,13 @@ export default function Hero() {
         <div className="animate-fade-up text-center lg:text-left">
 
           <h1 className="mt-5 text-4xl font-extrabold leading-tight tracking-tight text-dark sm:text-5xl lg:text-6xl">
-            Send money like you <span className="text-primary">send a text</span>.
+            WhatsApp payments with <span className="text-primary">voice, escrow, and cash-out</span>.
           </h1>
 
           <p className="mx-auto mt-5 max-w-xl text-base text-slate-600 sm:text-lg lg:mx-0">
-            SendAm turns WhatsApp into a wallet. Create a Stellar account, check
-            your balance, and send XLM, all from a chat, with no app to install
-            and no seed phrases to memorise.
+            SendAm maps your phone number to a managed wallet, routes each
+            payment over the best rail, and lets you send, receive, escrow, and
+            cash out without installing a crypto app.
           </p>
 
           <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:justify-center lg:justify-start">
@@ -44,11 +44,11 @@ export default function Hero() {
             </li>
             <li className="inline-flex items-center gap-1.5">
               <ShieldCheck size={16} className="text-primary" aria-hidden="true" />
-              Keys encrypted at rest
+              Phone number as wallet
             </li>
             <li className="inline-flex items-center gap-1.5">
               <Zap size={16} className="text-primary" aria-hidden="true" />
-              Near-instant settlement
+              Lisk + Stellar rails
             </li>
           </ul>
         </div>
