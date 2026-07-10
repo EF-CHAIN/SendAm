@@ -6,6 +6,12 @@ const walletSchema = new mongoose.Schema({
     ref: 'User',
     required: true,
   },
+  chain: {
+    type: String,
+    enum: ['stellar', 'lisk'],
+    required: true,
+    default: 'stellar',
+  },
   publicKey: {
     type: String,
     required: true,
@@ -27,5 +33,9 @@ const walletSchema = new mongoose.Schema({
     default: false,
   }
 }, { timestamps: true });
+
+// One wallet per user per chain, enforced at the DB layer rather than only
+// in application logic.
+walletSchema.index({ userId: 1, chain: 1 }, { unique: true });
 
 module.exports = mongoose.model('Wallet', walletSchema);

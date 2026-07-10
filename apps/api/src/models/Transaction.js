@@ -6,6 +6,11 @@ const transactionSchema = new mongoose.Schema({
     ref: 'User',
     required: true,
   },
+  chain: {
+    type: String,
+    enum: ['stellar', 'lisk'],
+    default: 'stellar',
+  },
   // 'send'/'receive' are wired today. The extra values reserve room for
   // on/off-ramp and swap flows so adding them needs no schema migration.
   type: {

@@ -1,49 +1,52 @@
-const { createKeypair } = require('./stellar.service');
+const { resolveAdapter, SUPPORTED_CHAINS } = require('./chains');
 const { encrypt } = require('./crypto.service');
 const Wallet = require('../models/Wallet');
 const User = require('../models/User');
 
-const createWalletForUser = async (userId) => {
-  const existingWallet = await Wallet.findOne({ userId });
+const createWalletForUser = async (userId, chain) => {
+  const existingWallet = await Wallet.findOne({ userId, chain });
   if (existingWallet) {
-    throw new Error('User already has a wallet');
+    throw new Error('User already has a wallet on this chain');
   }
 
-  const { publicKey, secretKey } = createKeypair();
+  const { publicKey, secretKey } = resolveAdapter(chain).createWallet();
   const encryptedSecretKey = encrypt(secretKey);
 
-  const wallet = await Wallet.create({
+  return Wallet.create({
     userId,
+    chain,
     publicKey,
     encryptedSecretKey,
   });
-
-  await User.findByIdAndUpdate(userId, { walletId: wallet._id });
-
-  return wallet;
 };
 
-const getWalletByUserId = async (userId) => {
-  return await Wallet.findOne({ userId });
+const getWalletsByUserId = async (userId) => {
+  return Wallet.find({ userId });
 };
 
-// Mark a wallet as funded once Friendbot has confirmed the account exists.
-// Returns the updated wallet so callers can use the fresh state.
+const getWalletByUserIdAndChain = async (userId, chain) => {
+  return Wallet.findOne({ userId, chain });
+};
+
+// Mark a wallet as funded once the chain has confirmed the account is
+// usable (Friendbot on Stellar; a balance check on Lisk, since there's no
+// auto-fund API to confirm against). Returns the updated wallet so callers
+// can use the fresh state.
 const markWalletFunded = async (walletId) => {
-  return await Wallet.findByIdAndUpdate(walletId, { funded: true }, { new: true });
+  return Wallet.findByIdAndUpdate(walletId, { funded: true }, { new: true });
 };
 
-const getWalletByPhoneNumber = async (phoneNumber) => {
-  const user = await User.findOne({ phoneNumber }).populate('walletId');
-  if (!user || !user.walletId) {
-    return null;
-  }
-  return user.walletId;
+const getWalletsByPhoneNumber = async (phoneNumber) => {
+  const user = await User.findOne({ phoneNumber });
+  if (!user) return [];
+  return getWalletsByUserId(user._id);
 };
 
 module.exports = {
+  SUPPORTED_CHAINS,
   createWalletForUser,
-  getWalletByUserId,
-  getWalletByPhoneNumber,
+  getWalletsByUserId,
+  getWalletByUserIdAndChain,
+  getWalletsByPhoneNumber,
   markWalletFunded,
 };

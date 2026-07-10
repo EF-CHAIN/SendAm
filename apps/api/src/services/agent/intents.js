@@ -42,13 +42,16 @@ const parseIntent = (text) => {
 
   if (normalizedText.startsWith('save ')) {
     const parts = trimmedText.split(/\s+/);
-    // format: save ada GABC...
+    // format: save ada GABC... or save bob 0x1234...
+    // Casing is left as typed — Stellar keys get normalized to uppercase
+    // downstream, but forcing case here would corrupt an EVM address (Lisk
+    // addresses aren't simply upper/lowercase the way StrKey is).
     if (parts.length === 3) {
       return {
         type: 'SAVE_CONTACT',
         payload: {
           alias: parts[1].toLowerCase(),
-          publicKey: parts[2].toUpperCase(),
+          publicKey: parts[2],
         },
       };
     }
@@ -57,13 +60,16 @@ const parseIntent = (text) => {
 
   if (normalizedText.startsWith('send ')) {
     const parts = trimmedText.split(/\s+/);
-    // format: send 5 xlm GABC... or send 5 xlm ada
-    if (parts.length >= 4 && parts[2].toLowerCase() === 'xlm') {
+    // format: send <amount> <asset> <address-or-name>, e.g. "send 5 xlm ada"
+    // or "send 0.01 eth 0x...". Asset is kept as typed (uppercased) — the
+    // chain is inferred later from the resolved destination address, not
+    // from this keyword, so 'xlm'/'eth' here is just user-facing labeling.
+    if (parts.length >= 4) {
       return {
         type: 'SEND',
         payload: {
           amount: parts[1],
-          asset: 'XLM',
+          asset: parts[2].toUpperCase(),
           recipient: parts[3],
         },
       };

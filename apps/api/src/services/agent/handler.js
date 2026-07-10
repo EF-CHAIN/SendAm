@@ -1,8 +1,13 @@
 const { parseIntent } = require('./intents');
 const { replies, shortenPublicKey } = require('./replies');
 const { sendTextMessage } = require('../whatsapp.service');
-const { createWalletForUser, getWalletByUserId, markWalletFunded } = require('../wallet.service');
-const { getBalance, fundAccount, isValidPublicKey } = require('../stellar.service');
+const {
+  createWalletForUser,
+  getWalletsByUserId,
+  getWalletByUserIdAndChain,
+  markWalletFunded,
+} = require('../wallet.service');
+const { resolveAdapter, detectChainFromAddress, SUPPORTED_CHAINS } = require('../chains');
 const { executeSend } = require('../transaction.service');
 const User = require('../../models/User');
 const logger = require('../../utils/logger');
@@ -34,6 +39,33 @@ const resolveUser = async (phoneNumber, whatsappName) => {
   return user;
 };
 
+const toWalletStatus = (wallet) => ({ chain: wallet.chain, publicKey: wallet.publicKey, funded: wallet.funded });
+
+// Attempt to (re)fund one wallet and return its resulting status. Stellar
+// auto-funds via Friendbot (retried inside the adapter). Lisk has no
+// equivalent auto-fund API — see lisk.adapter.js — so instead we check
+// whether the account already holds a balance (the user funded it manually)
+// and otherwise return manual instructions rather than pretending funding
+// was attempted.
+const attemptFundWallet = async (wallet) => {
+  const adapter = resolveAdapter(wallet.chain);
+
+  if (wallet.chain === 'stellar') {
+    await adapter.fundTestnetAccount(wallet.publicKey);
+    await markWalletFunded(wallet._id);
+    return { chain: wallet.chain, publicKey: wallet.publicKey, funded: true };
+  }
+
+  const balance = await adapter.getBalance(wallet.publicKey).catch(() => '0');
+  if (Number(balance) > 0) {
+    await markWalletFunded(wallet._id);
+    return { chain: wallet.chain, publicKey: wallet.publicKey, funded: true };
+  }
+
+  const { instructions } = await adapter.fundTestnetAccount(wallet.publicKey);
+  return { chain: wallet.chain, publicKey: wallet.publicKey, funded: false, manual: true, instructions };
+};
+
 const handleGreeting = async ({ phoneNumber, whatsappName }) => {
   await sendTextMessage(phoneNumber, replies.greeting(whatsappName));
 };
@@ -42,82 +74,110 @@ const handleHelp = async ({ phoneNumber }) => {
   await sendTextMessage(phoneNumber, replies.help());
 };
 
-// Fund (or re-fund) a wallet on Testnet and mark it funded on success.
-// Friendbot retries live in stellar.service; if it still fails we tell the
-// user how to retry rather than leaving them stranded with an empty wallet.
-const fundWallet = async ({ phoneNumber, wallet }) => {
-  try {
-    await fundAccount(wallet.publicKey);
-    await markWalletFunded(wallet._id);
-    await sendTextMessage(phoneNumber, replies.walletReady(wallet.publicKey));
-  } catch (error) {
-    logger.error(`Funding failed for ${wallet.publicKey}:`, error.message);
-    await sendTextMessage(phoneNumber, replies.fundingFailed());
-  }
-};
-
 const handleCreateWallet = async ({ phoneNumber, user }) => {
-  let wallet = await getWalletByUserId(user._id);
+  const existingWallets = await getWalletsByUserId(user._id);
+  const walletsByChain = Object.fromEntries(existingWallets.map((w) => [w.chain, w]));
 
-  // Already funded — nothing to do but echo their public key.
-  if (wallet && wallet.funded) {
-    await sendTextMessage(phoneNumber, replies.walletExists(wallet.publicKey));
+  const allFunded = SUPPORTED_CHAINS.every((chain) => walletsByChain[chain]?.funded);
+  if (allFunded) {
+    await sendTextMessage(phoneNumber, replies.walletsExist(existingWallets.map(toWalletStatus)));
     return;
-  }
-
-  // Either no wallet yet, or one whose funding never completed. Create if
-  // needed, then (re)attempt funding so a prior Friendbot hiccup self-heals.
-  if (!wallet) {
-    wallet = await createWalletForUser(user._id);
   }
 
   await sendTextMessage(phoneNumber, replies.creatingWallet());
-  await fundWallet({ phoneNumber, wallet });
+
+  const results = [];
+  for (const chain of SUPPORTED_CHAINS) {
+    let wallet = walletsByChain[chain];
+    if (!wallet) {
+      wallet = await createWalletForUser(user._id, chain);
+    }
+    if (wallet.funded) {
+      results.push(toWalletStatus(wallet));
+      continue;
+    }
+    try {
+      results.push(await attemptFundWallet(wallet));
+    } catch (error) {
+      logger.error(`Funding failed for ${wallet.publicKey} (${chain}):`, error.message);
+      results.push({ chain, publicKey: wallet.publicKey, funded: false });
+    }
+  }
+
+  await sendTextMessage(phoneNumber, replies.walletsReady(results));
 };
 
 const handleFundWallet = async ({ phoneNumber, user }) => {
-  const wallet = await getWalletByUserId(user._id);
-  if (!wallet) {
+  const wallets = await getWalletsByUserId(user._id);
+  if (wallets.length === 0) {
     await sendTextMessage(phoneNumber, replies.noWallet());
     return;
   }
-  if (wallet.funded) {
-    await sendTextMessage(phoneNumber, replies.alreadyFunded(wallet.publicKey));
+
+  const unfunded = wallets.filter((w) => !w.funded);
+  if (unfunded.length === 0) {
+    await sendTextMessage(phoneNumber, replies.allWalletsFunded(wallets.map(toWalletStatus)));
     return;
   }
 
-  await sendTextMessage(phoneNumber, replies.fundingWallet());
-  await fundWallet({ phoneNumber, wallet });
+  await sendTextMessage(phoneNumber, replies.fundingWallets());
+
+  const results = [];
+  for (const wallet of wallets) {
+    if (wallet.funded) {
+      results.push(toWalletStatus(wallet));
+      continue;
+    }
+    try {
+      results.push(await attemptFundWallet(wallet));
+    } catch (error) {
+      logger.error(`Funding failed for ${wallet.publicKey} (${wallet.chain}):`, error.message);
+      results.push({ chain: wallet.chain, publicKey: wallet.publicKey, funded: false });
+    }
+  }
+
+  await sendTextMessage(phoneNumber, replies.walletsReady(results));
 };
 
 const handleBalance = async ({ phoneNumber, user }) => {
-  try {
-    const wallet = await getWalletByUserId(user._id);
-    if (!wallet) {
-      await sendTextMessage(phoneNumber, replies.noWallet());
-      return;
-    }
-
-    const balance = await getBalance(wallet.publicKey);
-    await sendTextMessage(phoneNumber, replies.balance(balance));
-  } catch (error) {
-    await sendTextMessage(phoneNumber, replies.balanceError(error.message));
+  const wallets = await getWalletsByUserId(user._id);
+  if (wallets.length === 0) {
+    await sendTextMessage(phoneNumber, replies.noWallet());
+    return;
   }
+
+  const results = await Promise.all(
+    wallets.map(async (wallet) => {
+      try {
+        const balance = await resolveAdapter(wallet.chain).getBalance(wallet.publicKey);
+        return { chain: wallet.chain, balance };
+      } catch (error) {
+        return { chain: wallet.chain, balance: '0', error: error.message };
+      }
+    })
+  );
+
+  await sendTextMessage(phoneNumber, replies.balances(results));
 };
 
 const handleSaveContact = async ({ phoneNumber, user, payload }) => {
   try {
     const { alias, publicKey } = payload;
-    if (!isValidPublicKey(publicKey)) {
-      await sendTextMessage(phoneNumber, replies.invalidPublicKey());
+    const chain = detectChainFromAddress(publicKey);
+    if (!chain) {
+      await sendTextMessage(phoneNumber, replies.invalidAddress());
       return;
     }
 
+    // Stellar keys are conventionally stored uppercase (StrKey); EVM
+    // addresses are left as typed since case carries checksum meaning.
+    const normalizedPublicKey = chain === 'stellar' ? publicKey.toUpperCase() : publicKey;
+
     user.contacts = (user.contacts || []).filter((contact) => contact.alias !== alias);
-    user.contacts.push({ alias, publicKey });
+    user.contacts.push({ alias, publicKey: normalizedPublicKey, chain });
     await user.save();
 
-    await sendTextMessage(phoneNumber, replies.contactSaved(alias, publicKey));
+    await sendTextMessage(phoneNumber, replies.contactSaved(alias, normalizedPublicKey, chain));
   } catch (error) {
     await sendTextMessage(phoneNumber, replies.contactSaveError(error.message));
   }
@@ -133,13 +193,7 @@ const handleListContacts = async ({ phoneNumber, user }) => {
 
 const handlePrepareSend = async ({ phoneNumber, user, payload }) => {
   try {
-    const wallet = await getWalletByUserId(user._id);
-    if (!wallet) {
-      await sendTextMessage(phoneNumber, replies.noWallet());
-      return;
-    }
-
-    const { amount, recipient } = payload;
+    const { amount, asset, recipient } = payload;
     const resolved = resolveRecipient(user, recipient);
 
     if (!resolved.destination) {
@@ -147,24 +201,32 @@ const handlePrepareSend = async ({ phoneNumber, user, payload }) => {
       return;
     }
 
+    const wallet = await getWalletByUserIdAndChain(user._id, resolved.chain);
+    if (!wallet) {
+      await sendTextMessage(phoneNumber, replies.noWallet());
+      return;
+    }
+
     // Pre-flight balance check: catch "sending more than you have" before the
     // user confirms, instead of letting it fail on-ledger after they reply YES.
-    const balance = await getBalance(wallet.publicKey);
+    const balance = await resolveAdapter(resolved.chain).getBalance(wallet.publicKey);
     if (Number(balance) < Number(amount)) {
-      await sendTextMessage(phoneNumber, replies.insufficientBalance(balance, amount));
+      await sendTextMessage(phoneNumber, replies.insufficientBalance(resolved.chain, balance, amount, asset));
       return;
     }
 
     user.pendingSend = {
       amount,
+      asset,
       destination: resolved.destination,
       alias: resolved.alias,
+      chain: resolved.chain,
       requestedAt: new Date(),
     };
     await user.save();
 
     const label = resolved.alias || shortenPublicKey(resolved.destination);
-    await sendTextMessage(phoneNumber, replies.confirmTransfer(amount, label, resolved.destination));
+    await sendTextMessage(phoneNumber, replies.confirmTransfer(amount, asset, label, resolved.destination, resolved.chain));
   } catch (error) {
     await sendTextMessage(phoneNumber, replies.prepareError(error.message));
   }
@@ -178,16 +240,17 @@ const handleConfirmSend = async ({ phoneNumber, user }) => {
     return;
   }
 
-  const wallet = await getWalletByUserId(user._id);
+  const { amount, asset, destination, alias, chain } = user.pendingSend;
+
+  const wallet = await getWalletByUserIdAndChain(user._id, chain);
   if (!wallet) {
     await sendTextMessage(phoneNumber, replies.noWallet());
     return;
   }
 
-  const { amount, destination, alias } = user.pendingSend;
-  await sendTextMessage(phoneNumber, replies.processingTransfer(amount));
+  await sendTextMessage(phoneNumber, replies.processingTransfer(amount, asset));
 
-  const result = await executeSend({ user, wallet, destination, amount, asset: 'XLM' });
+  const result = await executeSend({ user, wallet, destination, amount, asset });
 
   user.pendingSend = undefined;
   await user.save();
@@ -200,7 +263,7 @@ const handleConfirmSend = async ({ phoneNumber, user }) => {
   const label = alias || shortenPublicKey(destination);
   await sendTextMessage(
     phoneNumber,
-    replies.transferSuccess(amount, label, result.txHash, result.explorerUrl)
+    replies.transferSuccess(amount, asset, label, result.txHash, result.explorerUrl)
   );
 };
 
@@ -244,21 +307,26 @@ const handlers = {
   UNKNOWN: handleUnknown,
 };
 
+// Detects the destination chain from the raw address shape before falling
+// back to a saved alias — a chain-qualified address always wins over a
+// same-named alias, and an alias carries its own stored chain so the caller
+// never has to guess which wallet to check.
 const resolveRecipient = (user, recipient) => {
   const normalizedRecipient = recipient.trim();
-  const publicKey = normalizedRecipient.toUpperCase();
+  const chain = detectChainFromAddress(normalizedRecipient);
 
-  if (isValidPublicKey(publicKey)) {
-    return { destination: publicKey, alias: null };
+  if (chain) {
+    const destination = chain === 'stellar' ? normalizedRecipient.toUpperCase() : normalizedRecipient;
+    return { destination, alias: null, chain };
   }
 
   const alias = normalizedRecipient.toLowerCase();
   const contact = (user.contacts || []).find((item) => item.alias === alias);
   if (!contact) {
-    return { destination: null, alias };
+    return { destination: null, alias, chain: null };
   }
 
-  return { destination: contact.publicKey, alias: contact.alias };
+  return { destination: contact.publicKey, alias: contact.alias, chain: contact.chain || 'stellar' };
 };
 
 const isPendingSendExpired = (pendingSend) => {

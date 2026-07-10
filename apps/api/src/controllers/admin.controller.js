@@ -49,10 +49,27 @@ const getUsers = async (req, res, next) => {
   try {
     const { page, limit, skip } = parsePagination(req.query);
     const [users, total] = await Promise.all([
-      User.find().populate('walletId', 'publicKey network createdAt').sort({ createdAt: -1 }).skip(skip).limit(limit),
+      User.find().sort({ createdAt: -1 }).skip(skip).limit(limit),
       User.countDocuments(),
     ]);
-    sendPaginated(res, users, { page, limit, total });
+
+    // Wallets are looked up separately and attached to the response rather
+    // than populated — a user can now have one wallet per chain, so there's
+    // no single ref on User to populate (see models/User.js).
+    const userIds = users.map((u) => u._id);
+    const wallets = await Wallet.find({ userId: { $in: userIds } }).select('userId chain publicKey network createdAt');
+    const walletsByUser = wallets.reduce((acc, w) => {
+      const key = String(w.userId);
+      (acc[key] = acc[key] || []).push(w);
+      return acc;
+    }, {});
+
+    const usersWithWallets = users.map((u) => ({
+      ...u.toObject(),
+      wallets: walletsByUser[String(u._id)] || [],
+    }));
+
+    sendPaginated(res, usersWithWallets, { page, limit, total });
   } catch (error) {
     next(error);
   }

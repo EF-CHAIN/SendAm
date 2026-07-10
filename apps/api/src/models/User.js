@@ -9,10 +9,10 @@ const userSchema = new mongoose.Schema({
   whatsappName: {
     type: String,
   },
-  walletId: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'Wallet',
-  },
+  // Wallets are looked up from the Wallet collection (one per user per
+  // chain) rather than referenced here — a single ref can't represent more
+  // than one chain, and keeping Wallet as the sole source of truth avoids a
+  // second place that can drift out of sync.
   contacts: [{
     alias: {
       type: String,
@@ -26,6 +26,11 @@ const userSchema = new mongoose.Schema({
       uppercase: true,
       trim: true,
     },
+    chain: {
+      type: String,
+      enum: ['stellar', 'lisk'],
+      default: 'stellar',
+    },
     createdAt: {
       type: Date,
       default: Date.now,
@@ -33,8 +38,10 @@ const userSchema = new mongoose.Schema({
   }],
   pendingSend: {
     amount: String,
+    asset: String,
     destination: String,
     alias: String,
+    chain: String,
     requestedAt: Date,
   }
 }, { timestamps: true });
