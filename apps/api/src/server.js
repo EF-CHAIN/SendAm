@@ -2,9 +2,11 @@ const mongoose = require('mongoose');
 const app = require('./app');
 const config = require('./config/env');
 const connectDB = require('./config/db');
+const { validateEnv } = require('./config/validateEnv');
 const logger = require('./utils/logger');
 
 const startServer = async () => {
+  validateEnv(config);
   await connectDB();
 
   const server = app.listen(config.port, () => {
