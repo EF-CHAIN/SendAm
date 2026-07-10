@@ -30,7 +30,7 @@ SendAm/
     shared/    Shared frontend utilities and UI
 ```
 
-The backend is being refactored toward:
+The backend is organized toward:
 
 ```text
 src/
@@ -110,9 +110,37 @@ POST /webhook
 
 Use `apps/api/.env.example` as the source of truth. The local `apps/api/.env` has been expanded with blank keys for Thirdweb, Lisk, Redis, R2, pricing, KYC, ramps, and voice providers so secrets can be filled in later.
 
+> The REST wallet API (`/api/wallet/*`) is unauthenticated and is disabled in production unless `ENABLE_WALLET_REST_API=true`. Outside production it defaults to enabled for local testing. WhatsApp is the real, signature-verified surface.
+
 ## Local Development
 
-Install dependencies:
+For the admin app (`apps/admin/.env`), configure:
+
+```env
+VITE_API_BASE_URL=http://localhost:3002/api
+```
+
+For the landing app (`apps/landing/.env`), configure:
+
+```env
+VITE_ADMIN_URL=http://localhost:3001
+```
+
+For production, set `VITE_ADMIN_URL` to the admin dashboard subdomain, for
+example `https://admin.your-domain.com`.
+
+## Getting Started
+
+### Prerequisites
+
+- Node.js 18 or newer
+- npm
+- A PostgreSQL connection string (e.g. Neon) for `DATABASE_URL`
+- WhatsApp Business Cloud API credentials for webhook testing
+
+### Install Dependencies
+
+From the repository root:
 
 ```bash
 npm install
@@ -150,6 +178,81 @@ npm run build:admin
 - Split background workers from the API process in deployment.
 - Add automated tests for orchestrator, wallet, webhook, voice, compliance, and escrow flows.
 - Add monitoring, alerting, audit review workflows, and admin RBAC.
+- Add authentication/authorization to the compliance PIN and KYC-start endpoints (currently open by phone number only).
+
+### Run The Tests
+
+The backend ships with a unit test suite on the built-in Node test runner (no extra dependencies), covering wallet-secret encryption, admin auth, and request validators:
+
+```bash
+npm test                            # from the repo root
+npm run test --workspace=apps/api   # equivalently
+```
+
+## Deployment
+
+The three apps deploy differently because of how they run:
+
+### Frontend (`landing`, `admin`)
+
+Static Vite builds — deploy to any static host (Vercel, Netlify, Cloudflare Pages). Build command `npm run build --workspace=apps/landing` (or `apps/admin`), output in `apps/<app>/dist`. Set the `VITE_*` variables (see [Environment Variables](#environment-variables)) at build time.
+
+### Backend (`api`)
+
+The API is a **long-running Express server** (`app.listen` in `src/server.js`), so deploy it to a **persistent Node host** — Render, Railway, Fly.io, or a VM — not Vercel/Lambda serverless functions as written. The WhatsApp webhook acknowledges Meta immediately and processes the message asynchronously (via BullMQ), so a serverless function that freezes after responding would drop in-flight work.
+
+Backend deployment checklist:
+
+- Provision a PostgreSQL database (e.g. Neon) and set `DATABASE_URL`.
+- Run `npm run prisma:deploy --workspace=apps/api` to apply migrations.
+- Set every required `apps/api` variable — the server **fails fast at startup** without `ENCRYPTION_KEY`, `JWT_SECRET`, and `ADMIN_PASSWORD`, and rejects unsigned webhooks in production without `WHATSAPP_APP_SECRET`.
+- Set `NODE_ENV=production` and a `CORS_ORIGINS` allowlist covering the deployed admin/landing URLs.
+- Point the host's health check at `GET /health` (returns 503 if the database link is down).
+- Configure the WhatsApp Business webhook URL to `https://<api-host>/webhook` with a matching `WHATSAPP_VERIFY_TOKEN`.
+
+## Web App Pages
+
+Landing app (`apps/landing`):
+
+```text
+/                 Landing page
+```
+
+Admin app (`apps/admin`):
+
+```text
+/login            Admin login screen
+/                 Dashboard overview
+/users            User table
+/wallets          Wallet table
+/transactions     Transaction table
+/escrows          Escrow table
+/kyc              KYC review
+/audit-logs       Audit logs
+/system-health    System health
+```
+
+## Security Notes
+
+This project is a work-in-progress platform expansion. Some hardening is already in place:
+
+- Real backend admin authentication (HMAC-signed session tokens); the API refuses to start without `ADMIN_PASSWORD` and `JWT_SECRET`.
+- Admin API routes protected server-side by the `requireAdmin` middleware.
+- WhatsApp webhook POSTs verified against the `X-Hub-Signature-256` header (fail-closed in production).
+- Inbound message idempotency to prevent duplicate transfers from webhook retries.
+- KYC tiers with daily/single-transaction limits and risk scoring, enforced on every payment via the Payment Orchestrator.
+- CORS restricted to a configured origin allowlist in production.
+- PostgreSQL-backed rate limiting (shared across instances): per-IP on the REST API and per-sender on the WhatsApp webhook.
+- The unauthenticated REST wallet API is disabled in production by default (`ENABLE_WALLET_REST_API`); WhatsApp is the signature-verified product surface.
+
+Still required before a real-money launch:
+
+- Add authentication to `POST /api/compliance/pin` and `POST /api/compliance/kyc/start` — both currently accept any phone number with no identity check.
+- Add secure, managed secret/key management (KMS/HSM) for provider credentials; support key rotation.
+- Add audit-log coverage for all sensitive admin and compliance actions, plus monitoring/alerting.
+- Expand the automated test suite to cover the payment orchestrator, wallet, webhook, voice, compliance, and escrow flows.
+- Replace the single shared admin password with real admin accounts and roles.
+- Complete legal, compliance, KYC, AML, and custody review where required.
 
 ## License
 

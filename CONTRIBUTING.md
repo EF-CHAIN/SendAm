@@ -4,6 +4,8 @@ Thank you for your interest in contributing to SendAm. SendAm is an open-source 
 
 Contributions are welcome across product, engineering, documentation, testing, security, and Stellar ecosystem integrations.
 
+By participating in this project you agree to abide by our [Code of Conduct](CODE_OF_CONDUCT.md).
+
 ## Project Scope
 
 SendAm currently focuses on:
@@ -34,8 +36,9 @@ Good first areas include:
 
 Larger areas include:
 
-- Real admin authentication.
-- Stronger transaction confirmation flows.
+- Per-user authentication for the REST wallet API.
+- Managed secret/key management (KMS/HSM) and key rotation.
+- Audit logging, monitoring, and alerting.
 - Stellar asset support beyond native XLM.
 - Contact and recipient management.
 - QR-code wallet sharing.
@@ -63,7 +66,8 @@ npm install
 
 Create `apps/api/.env` from `apps/api/.env.example`.
 
-Create `apps/web/.env.local` from `apps/web/.env.local.example`.
+Create `apps/admin/.env` and `apps/landing/.env` (see the root `README.md`
+"Environment Variables" section for the `VITE_*` values each app expects).
 
 Do not commit real secrets, production keys, access tokens, private keys, or `.env` files.
 
@@ -81,14 +85,17 @@ http://localhost:3002
 
 ### Run The Frontend
 
+The frontend is two Vite + React apps, `landing` and `admin`:
+
 ```bash
-npm run dev:web
+npm run dev:landing   # http://localhost:3000
+npm run dev:admin     # http://localhost:3001
 ```
 
-The frontend runs on:
+Or run everything (API + both apps) at once:
 
-```text
-http://localhost:3000
+```bash
+npm run dev
 ```
 
 ## Development Workflow
@@ -150,23 +157,36 @@ Frontend expectations:
 
 ## Checks Before Submitting
 
-For frontend changes:
+For backend changes, run the test suite (built-in Node test runner):
 
 ```bash
-npm run lint --workspace=apps/web
-npm run build --workspace=apps/web
+npm test                            # from the repo root
+npm run test --workspace=apps/api   # equivalently
 ```
 
-For backend syntax checks:
+Backend syntax checks:
 
 ```bash
 node --check apps/api/src/server.js
 node --check apps/api/src/app.js
 ```
 
-If your change touches a specific backend file, run `node --check` on that file too.
+If your change touches a specific backend file, run `node --check` on that file too. New parser, crypto, auth, or transaction logic should come with tests in `apps/api/test/`.
+
+For frontend changes, lint and build the app(s) you touched:
+
+```bash
+npm run lint  --workspace=apps/landing
+npm run build --workspace=apps/landing
+npm run lint  --workspace=apps/admin
+npm run build --workspace=apps/admin
+```
+
+These same checks run automatically in CI (`.github/workflows/ci.yml`) on every pull request.
 
 ## Security Policy
+
+See [`SECURITY.md`](SECURITY.md) for the full reporting process and current security posture.
 
 Do not open public issues for serious security vulnerabilities involving:
 

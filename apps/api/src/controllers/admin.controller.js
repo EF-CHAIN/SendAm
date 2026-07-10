@@ -1,7 +1,15 @@
-const { sendSuccess, sendError } = require('../utils/response');
+const { sendSuccess, sendError, sendPaginated } = require('../utils/response');
 const { verifyPassword, createToken } = require('../services/adminAuth.service');
 const prisma = require('../common/prisma');
 const { withIdAliases } = require('../common/records');
+
+// Parse ?page and ?limit into safe bounds so list endpoints can never be asked
+// to load the entire collection at once. Defaults to 50/page, capped at 100.
+const parsePagination = (query) => {
+  const page = Math.max(1, parseInt(query.page, 10) || 1);
+  const limit = Math.min(100, Math.max(1, parseInt(query.limit, 10) || 50));
+  return { page, limit, skip: (page - 1) * limit };
+};
 
 const login = async (req, res, next) => {
   try {
@@ -61,15 +69,21 @@ const getStats = async (req, res, next) => {
 
 const getUsers = async (req, res, next) => {
   try {
-    const users = await prisma.user.findMany({
-      include: { wallet: { select: { publicKey: true, address: true, network: true, createdAt: true } } },
-      orderBy: { createdAt: 'desc' },
-    });
-    sendSuccess(res, withIdAliases(users.map((user) => ({
+    const { page, limit, skip } = parsePagination(req.query);
+    const [users, total] = await Promise.all([
+      prisma.user.findMany({
+        include: { wallet: { select: { publicKey: true, address: true, network: true, createdAt: true } } },
+        orderBy: { createdAt: 'desc' },
+        skip,
+        take: limit,
+      }),
+      prisma.user.count(),
+    ]);
+    sendPaginated(res, withIdAliases(users.map((user) => ({
       ...user,
       walletId: user.wallet,
       pinHash: undefined,
-    }))));
+    }))), { page, limit, total });
   } catch (error) {
     next(error);
   }
@@ -77,15 +91,21 @@ const getUsers = async (req, res, next) => {
 
 const getWallets = async (req, res, next) => {
   try {
-    const wallets = await prisma.wallet.findMany({
-      include: { user: { select: { phoneNumber: true, whatsappName: true } } },
-      orderBy: { createdAt: 'desc' },
-    });
-    sendSuccess(res, withIdAliases(wallets.map((wallet) => ({
+    const { page, limit, skip } = parsePagination(req.query);
+    const [wallets, total] = await Promise.all([
+      prisma.wallet.findMany({
+        include: { user: { select: { phoneNumber: true, whatsappName: true } } },
+        orderBy: { createdAt: 'desc' },
+        skip,
+        take: limit,
+      }),
+      prisma.wallet.count(),
+    ]);
+    sendPaginated(res, withIdAliases(wallets.map((wallet) => ({
       ...wallet,
       encryptedSecretKey: undefined,
       userId: wallet.user,
-    }))));
+    }))), { page, limit, total });
   } catch (error) {
     next(error);
   }
@@ -93,14 +113,20 @@ const getWallets = async (req, res, next) => {
 
 const getTransactions = async (req, res, next) => {
   try {
-    const transactions = await prisma.transaction.findMany({
-      include: { user: { select: { phoneNumber: true } } },
-      orderBy: { createdAt: 'desc' },
-    });
-    sendSuccess(res, withIdAliases(transactions.map((transaction) => ({
+    const { page, limit, skip } = parsePagination(req.query);
+    const [transactions, total] = await Promise.all([
+      prisma.transaction.findMany({
+        include: { user: { select: { phoneNumber: true } } },
+        orderBy: { createdAt: 'desc' },
+        skip,
+        take: limit,
+      }),
+      prisma.transaction.count(),
+    ]);
+    sendPaginated(res, withIdAliases(transactions.map((transaction) => ({
       ...transaction,
       userId: transaction.user,
-    }))));
+    }))), { page, limit, total });
   } catch (error) {
     next(error);
   }

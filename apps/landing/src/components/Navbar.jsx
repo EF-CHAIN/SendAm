@@ -1,6 +1,6 @@
 import { Link } from 'react-router-dom';
 import { MessageCircle } from 'lucide-react';
-import { ADMIN_URL, whatsappUrl } from '@/lib/links.js';
+import { whatsappUrl } from '@/lib/links.js';
 
 export default function Navbar() {
   return (

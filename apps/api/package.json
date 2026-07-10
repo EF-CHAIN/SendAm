@@ -8,7 +8,8 @@
     "dev": "nodemon src/server.js",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
-    "prisma:deploy": "prisma migrate deploy"
+    "prisma:deploy": "prisma migrate deploy",
+    "test": "node --test \"test/**/*.test.js\""
   },
   "dependencies": {
     "@prisma/adapter-pg": "^7.8.0",

@@ -105,4 +105,14 @@ module.exports = {
     deepgramApiKey: process.env.DEEPGRAM_API_KEY,
     whisperApiKey: process.env.WHISPER_API_KEY || process.env.OPENAI_API_KEY,
   },
+  features: {
+    // The unauthenticated REST wallet API (/api/wallet/*) treats the phone
+    // number in the request body as identity, so anyone can read another
+    // user's balance or move their funds. The real product surface is
+    // WhatsApp (signature-verified), so this is OFF in production unless
+    // explicitly enabled, and ON elsewhere for local testing.
+    walletRestApi: process.env.ENABLE_WALLET_REST_API
+      ? process.env.ENABLE_WALLET_REST_API === 'true'
+      : env !== 'production',
+  },
 };

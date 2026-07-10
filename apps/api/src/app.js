@@ -16,6 +16,7 @@ const notFound = require('./middlewares/notFound');
 const PostgresRateStore = require('./middlewares/postgresRateStore');
 const config = require('./config/env');
 const logger = require('./utils/logger');
+const prisma = require('./common/prisma');
 
 const app = express();
 
@@ -36,7 +37,10 @@ if (config.corsOrigins.length > 0) {
   app.use(cors({ origin: config.isProduction ? false : true }));
 }
 
-app.use(morgan('dev'));
+// Access logs: the verbose, colorized 'dev' format is great locally but unfit
+// for production log aggregation. Use the standard Apache 'combined' format in
+// production so hosted log drains get parseable, complete request lines.
+app.use(morgan(config.isProduction ? 'combined' : 'dev'));
 
 // Capture the raw request body so the WhatsApp webhook can verify the
 // X-Hub-Signature-256 HMAC against exactly what Meta signed.
@@ -56,9 +60,32 @@ const limiter = rateLimit({
 });
 app.use('/api/', limiter);
 
+// Health check for uptime monitors and platform probes. Not rate-limited and
+// requires no auth; reports 503 if the database link is down.
+app.get('/health', async (req, res) => {
+  try {
+    await prisma.$queryRaw`SELECT 1`;
+    res.status(200).json({ status: 'ok', db: 'connected', uptime: process.uptime() });
+  } catch (error) {
+    res.status(503).json({ status: 'degraded', db: 'disconnected', uptime: process.uptime() });
+  }
+});
+
 // Routes
 app.use('/webhook', webhookRoutes);
-app.use('/api/wallet', walletRoutes);
+
+// The REST wallet API is unauthenticated (phone number in the body is the only
+// "identity"), so it's gated off in production by default. WhatsApp is the real
+// surface; see config.features.walletRestApi.
+if (config.features.walletRestApi) {
+  if (config.isProduction) {
+    logger.warn('ENABLE_WALLET_REST_API=true in production — the unauthenticated /api/wallet routes are exposed.');
+  }
+  app.use('/api/wallet', walletRoutes);
+} else {
+  logger.info('REST wallet API (/api/wallet) is disabled. Set ENABLE_WALLET_REST_API=true to enable.');
+}
+
 app.use('/api/admin', adminRoutes);
 app.use('/api/escrow', escrowRoutes);
 app.use('/api/compliance', complianceRoutes);

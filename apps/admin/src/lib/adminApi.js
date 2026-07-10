@@ -38,18 +38,18 @@ export const getAdminStats = async () => {
   return data;
 };
 
-export const getAdminUsers = async () => {
-  const { data } = await api.get('/admin/users');
+export const getAdminUsers = async ({ page = 1, limit = 50 } = {}) => {
+  const { data } = await api.get('/admin/users', { params: { page, limit } });
   return data;
 };
 
-export const getAdminWallets = async () => {
-  const { data } = await api.get('/admin/wallets');
+export const getAdminWallets = async ({ page = 1, limit = 50 } = {}) => {
+  const { data } = await api.get('/admin/wallets', { params: { page, limit } });
   return data;
 };
 
-export const getAdminTransactions = async () => {
-  const { data } = await api.get('/admin/transactions');
+export const getAdminTransactions = async ({ page = 1, limit = 50 } = {}) => {
+  const { data } = await api.get('/admin/transactions', { params: { page, limit } });
   return data;
 };
 
