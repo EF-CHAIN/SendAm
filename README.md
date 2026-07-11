@@ -178,7 +178,7 @@ npm run build:admin
 - Split background workers from the API process in deployment.
 - Add automated tests for orchestrator, wallet, webhook, voice, compliance, and escrow flows.
 - Add monitoring, alerting, audit review workflows, and admin RBAC.
-- Add authentication/authorization to the compliance PIN and KYC-start endpoints (currently open by phone number only).
+- Build real per-user authentication for the compliance PIN and KYC-start endpoints — they're gated off in production by default (`ENABLE_WALLET_REST_API`, same as the wallet REST API) until then, so they have no working production path yet.
 
 ### Run The Tests
 
@@ -243,11 +243,11 @@ This project is a work-in-progress platform expansion. Some hardening is already
 - KYC tiers with daily/single-transaction limits and risk scoring, enforced on every payment via the Payment Orchestrator.
 - CORS restricted to a configured origin allowlist in production.
 - PostgreSQL-backed rate limiting (shared across instances): per-IP on the REST API and per-sender on the WhatsApp webhook.
-- The unauthenticated REST wallet API is disabled in production by default (`ENABLE_WALLET_REST_API`); WhatsApp is the signature-verified product surface.
+- The unauthenticated REST wallet API, plus `POST /api/compliance/pin` and `POST /api/compliance/kyc/start` (which have the same phone-number-only identity model), are all disabled in production by default (`ENABLE_WALLET_REST_API`); WhatsApp is the signature-verified product surface.
 
 Still required before a real-money launch:
 
-- Add authentication to `POST /api/compliance/pin` and `POST /api/compliance/kyc/start` — both currently accept any phone number with no identity check.
+- Build real per-user authentication for `POST /api/compliance/pin` and `POST /api/compliance/kyc/start` so they can be enabled in production — right now they're only usable with the flag on, which means no user can self-serve a PIN or start KYC in production at all.
 - Add secure, managed secret/key management (KMS/HSM) for provider credentials; support key rotation.
 - Add audit-log coverage for all sensitive admin and compliance actions, plus monitoring/alerting.
 - Expand the automated test suite to cover the payment orchestrator, wallet, webhook, voice, compliance, and escrow flows.

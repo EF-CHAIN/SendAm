@@ -108,9 +108,12 @@ module.exports = {
   features: {
     // The unauthenticated REST wallet API (/api/wallet/*) treats the phone
     // number in the request body as identity, so anyone can read another
-    // user's balance or move their funds. The real product surface is
-    // WhatsApp (signature-verified), so this is OFF in production unless
-    // explicitly enabled, and ON elsewhere for local testing.
+    // user's balance or move their funds. Same story for the compliance
+    // endpoints that set state from a bare phone number with no ownership
+    // check (POST /api/compliance/pin, POST /api/compliance/kyc/start) — see
+    // middlewares/requireRestApiEnabled. The real product surface is
+    // WhatsApp (signature-verified), so all of these are OFF in production
+    // unless explicitly enabled, and ON elsewhere for local testing.
     walletRestApi: process.env.ENABLE_WALLET_REST_API
       ? process.env.ENABLE_WALLET_REST_API === 'true'
       : env !== 'production',

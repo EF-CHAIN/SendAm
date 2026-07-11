@@ -152,6 +152,15 @@ POST /api/wallet/send          { phoneNumber, amount, destination }
 
 > ⚠️ These routes are **unauthenticated** — the phone number in the request body is the only identity. They are intended for local testing of the same wallet actions used by WhatsApp. They are **disabled in production by default**; set `ENABLE_WALLET_REST_API=true` to expose them (not recommended without adding per-user auth first). WhatsApp is the real, signature-verified product surface.
 
+### Compliance Self-Service Routes (optional, for testing without WhatsApp)
+
+```text
+POST /api/compliance/kyc/start   { phoneNumber, providerReference }
+POST /api/compliance/pin         { phoneNumber, pin }
+```
+
+> ⚠️ Same story as the wallet routes above — no per-user identity check, gated behind the same `ENABLE_WALLET_REST_API` flag (`middlewares/requireRestApiEnabled`), and disabled in production by default. `GET /api/compliance/kyc/:phone` and `POST /api/compliance/kyc/:id/review` are different: those require an admin Bearer token and are always on.
+
 ## Environment Variables
 
 Create an `.env` file in `apps/api` using `.env.example` as a guide. The app **fails fast at startup** if the required secrets are missing or weak.
@@ -226,7 +235,7 @@ npm run prisma:migrate --workspace=apps/api
 
 ## Important Gaps
 
-This refactor adds production module boundaries, Prisma/PostgreSQL persistence, and provider adapters, but real-money launch still needs final provider onboarding, contract deployment, worker deployment, automated tests, monitoring, admin RBAC, and compliance approval — including authentication on the compliance PIN and KYC-start endpoints (see below).
+This refactor adds production module boundaries, Prisma/PostgreSQL persistence, and provider adapters, but real-money launch still needs final provider onboarding, contract deployment, worker deployment, automated tests, monitoring, admin RBAC, and compliance approval — including real per-user authentication for the compliance PIN and KYC-start endpoints, which are gated off in production for now (see below).
 
 The backend runs on `http://localhost:3002`.
 
@@ -290,13 +299,13 @@ Already in place:
 - Inbound message idempotency to prevent duplicate transfers from webhook retries.
 - KYC tiers with daily/single-transaction limits and risk scoring, enforced on every payment via the Payment Orchestrator.
 - CORS allowlist enforced in production; PostgreSQL-backed shared rate limiting.
-- The unauthenticated REST wallet API is disabled in production by default (`ENABLE_WALLET_REST_API`).
+- The unauthenticated REST wallet API, and the equally unauthenticated `POST /api/compliance/pin` / `POST /api/compliance/kyc/start`, are all disabled in production by default (`ENABLE_WALLET_REST_API`).
 
 ## Security and Production Requirements
 
 Before a real-money launch, this backend still needs:
 
-- Authentication on `POST /api/compliance/pin` and `POST /api/compliance/kyc/start` — both currently accept any phone number with no identity check, so anyone can set another user's transaction PIN or flip their KYC status.
+- Real per-user authentication for `POST /api/compliance/pin` and `POST /api/compliance/kyc/start` — they currently accept any phone number with no identity check, so they're kept behind the production flag rather than actually fixed; no user can self-serve a PIN or start KYC in production until this is built.
 - Managed secret/key management (KMS/HSM) for provider credentials, with key rotation.
 - Audit-log coverage for all sensitive admin and compliance actions, plus monitoring and alerting.
 - Replacement of the single shared admin password with real admin accounts and roles.
@@ -307,7 +316,6 @@ Before a real-money launch, this backend still needs:
 
 - Simple WhatsApp command/intent parsing (regex-based).
 - Single shared admin password (no per-admin accounts or roles yet).
-- REST wallet API is unauthenticated by design (and disabled in production by default).
-- Compliance PIN and KYC-start endpoints are unauthenticated (see above).
+- REST wallet API, compliance PIN, and KYC-start endpoints are unauthenticated by design and disabled in production by default (see above) — no working production path until real per-user auth exists.
 - No customer web login/signup — WhatsApp phone number is the identity.
 - Stellar corridor and fiat ramp execution are stubbed pending provider/custody onboarding.
