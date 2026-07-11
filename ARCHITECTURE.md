@@ -34,6 +34,15 @@ an EVM `0x...` address), so a user never has to declare which chain they mean
 — every user gets both a Stellar and a Lisk wallet by default, and `send`
 routes automatically.
 
+```mermaid
+flowchart TD
+    CMD[WhatsApp command / REST request] --> RA["resolveAdapter(chain)"]
+    RA -->|"destination is Stellar G... StrKey"| SA[stellar.adapter.js]
+    RA -->|"destination is EVM 0x... address"| LA[lisk.adapter.js]
+    SA --> HZ[(Stellar Horizon)]
+    LA --> LN[(Lisk Network)]
+```
+
 ## What's open vs. what's a private service
 
 Everything that makes SendAm's Stellar and Lisk integrations work is in this

@@ -92,29 +92,17 @@ SendAm has three main surfaces:
 
 ## Architecture
 
-```text
-WhatsApp User
-     |
-     v
-WhatsApp Business API
-     |
-     v
-Express Webhook API
-     |
-     +--> Command Parser
-     +--> MongoDB: users, wallets, transactions
-     +--> Stellar Horizon: balances and payments
-     |
-     v
-WhatsApp Response Message
+```mermaid
+flowchart TD
+    U[WhatsApp User] --> WA[WhatsApp Business API]
+    WA --> API[Express Webhook API]
+    API --> CP[Command Parser]
+    API --> DB[(MongoDB: users, wallets, transactions)]
+    API --> HZ[Stellar Horizon: balances and payments]
+    API --> RESP[WhatsApp Response Message]
 
-Admin / Tester
-     |
-     v
-Vite React Apps (landing + admin)
-     |
-     v
-Express REST API
+    ADM[Admin / Tester] --> WEBAPP[Vite React Apps: landing + admin]
+    WEBAPP --> REST[Express REST API]
 ```
 
 ## Monorepo Structure
