@@ -10,7 +10,6 @@ model User {
   id           String    @id @default(cuid())
   phoneNumber  String    @unique
   whatsappName String?
-  walletId     String?   @unique
   kycTier      Int       @default(0)
   riskScore    Int       @default(0)
   pinHash      String?
@@ -20,7 +19,7 @@ model User {
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
 
-  wallet        Wallet?
+  wallets       Wallet[]
   aliases       Alias[]
   contacts      Contact[]      @relation("ContactOwner")
   transactions  Transaction[]
@@ -31,23 +30,24 @@ model User {
   escrows       Escrow[]       @relation("EscrowCreator")
 }
 
+// One row per user per chain — direct custody. `encryptedSecretKey` holds
+// the chain's private key, AES-256-GCM encrypted (see crypto.service.js).
+// Never store or return the plaintext secret key outside wallet.service.js.
 model Wallet {
   id                 String   @id @default(cuid())
-  userId             String   @unique
+  userId             String
+  chain              String
   phoneNumber        String?
-  provider           String   @default("thirdweb")
-  providerWalletId   String?
-  address            String?
   publicKey          String?
   encryptedSecretKey String?
-  primaryChain       String   @default("lisk")
-  supportedChains    String[] @default(["lisk", "stellar"])
-  network            String   @default("managed")
+  funded             Boolean  @default(false)
+  network            String   @default("testnet")
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
+  @@unique([userId, chain])
   @@index([phoneNumber])
 }
 

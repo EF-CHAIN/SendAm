@@ -1,9 +1,9 @@
 const walletService = require('../wallet/wallet.service');
+const { detectChainFromAddress } = require('../wallet/chainRegistry');
 const { selectRail } = require('../blockchain/railSelector');
 const { createQuote } = require('../pricing/pricing.service');
 const { writeAuditLog } = require('../common/audit.service');
 const { enforceTransactionPolicy } = require('../compliance/compliance.service');
-const config = require('../config/env');
 const prisma = require('../common/prisma');
 const { withIdAlias } = require('../common/records');
 
@@ -24,12 +24,15 @@ const buildReceipt = ({ transaction }) => {
   };
 };
 
+const NATIVE_ASSET_BY_RAIL = { stellar: 'XLM', lisk: 'ETH' };
+const RAILS_WITH_NO_DESTINATION_CHAIN = ['cash_in', 'cash_out', 'escrow'];
+
 const executePayment = async ({
   sender,
   recipientPhoneNumber,
   destination,
   amount,
-  asset = 'USDC',
+  asset,
   sourceCountry = 'NG',
   destinationCountry = 'NG',
   routeType,
@@ -38,18 +41,33 @@ const executePayment = async ({
   const senderUser = sender;
   if (!senderUser) throw new Error('Sender not found.');
 
-  const rail = selectRail({ sourceCountry, destinationCountry, routeType, forceRail });
+  // A destination address decides which chain a plain P2P send uses — the
+  // user never declares a chain. Ramp/escrow routes have no on-chain
+  // destination to detect a chain from, so they keep selectRail's existing
+  // routeType-based precedence untouched.
+  let effectiveForceRail = forceRail;
+  if (!effectiveForceRail && destination && !RAILS_WITH_NO_DESTINATION_CHAIN.includes(routeType)) {
+    const detectedChain = detectChainFromAddress(destination);
+    if (detectedChain) effectiveForceRail = detectedChain;
+  }
+
+  const rail = selectRail({ sourceCountry, destinationCountry, routeType, forceRail: effectiveForceRail });
+  // Direct custody only supports each chain's native asset for now (see
+  // wallet/stellar.adapter.js and wallet/lisk.adapter.js resolveAsset) — no
+  // ERC-20/anchor-asset support yet. Fiat ramp rails aren't chain-native, so
+  // they keep the USDC default.
+  const effectiveAsset = asset || NATIVE_ASSET_BY_RAIL[rail] || 'USDC';
+
   const compliance = await enforceTransactionPolicy({
     user: senderUser,
     amount,
     routeType: routeType || (rail === 'stellar' ? 'cross_border' : 'domestic'),
     destinationCountry,
   });
-  const wallet = await walletService.createOrGetWallet({ user: senderUser });
   const quote = await createQuote({
     userId: senderUser.id,
-    sourceCurrency: asset,
-    targetCurrency: asset,
+    sourceCurrency: effectiveAsset,
+    targetCurrency: effectiveAsset,
     sourceAmount: amount,
     route: rail,
     provider: rail,
@@ -60,7 +78,7 @@ const executePayment = async ({
       userId: senderUser.id,
       type: routeType === 'escrow' ? 'escrow_create' : 'send',
       amount: String(amount),
-      asset,
+      asset: effectiveAsset,
       recipientPhoneNumber,
       destination,
       rail,
@@ -76,32 +94,15 @@ const executePayment = async ({
   });
 
   try {
-    if (rail === 'lisk') {
-      const result = await walletService.sendToken({
-        wallet,
-        chain: config.lisk.chainId,
-        destination,
-        amount,
-        tokenAddress: config.thirdweb.usdcContractAddress,
-      });
+    if (rail === 'lisk' || rail === 'stellar') {
+      const wallet = await walletService.createOrGetWallet({ user: senderUser, chain: rail });
+      const result = await walletService.submitPayment({ wallet, destination, amount, asset: effectiveAsset });
       transaction = await prisma.transaction.update({
         where: { id: transaction.id },
         data: {
           status: 'success',
-          providerTransactionId: result.queueId || result.id,
-          txHash: result.transactionHash || result.txHash,
-        },
-      });
-    } else if (rail === 'stellar') {
-      transaction = await prisma.transaction.update({
-        where: { id: transaction.id },
-        data: {
-          status: 'pending',
-          metadata: {
-            ...transaction.metadata,
-            corridor: 'stellar',
-            note: 'Stellar corridor adapter requires regulated partner or custody configuration before live execution.',
-          },
+          txHash: result.txHash,
+          explorerUrl: result.explorerUrl,
         },
       });
     } else {

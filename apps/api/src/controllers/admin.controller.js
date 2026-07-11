@@ -72,7 +72,7 @@ const getUsers = async (req, res, next) => {
     const { page, limit, skip } = parsePagination(req.query);
     const [users, total] = await Promise.all([
       prisma.user.findMany({
-        include: { wallet: { select: { publicKey: true, address: true, network: true, createdAt: true } } },
+        include: { wallets: { select: { chain: true, publicKey: true, network: true, createdAt: true } } },
         orderBy: { createdAt: 'desc' },
         skip,
         take: limit,
@@ -81,7 +81,6 @@ const getUsers = async (req, res, next) => {
     ]);
     sendPaginated(res, withIdAliases(users.map((user) => ({
       ...user,
-      walletId: user.wallet,
       pinHash: undefined,
     }))), { page, limit, total });
   } catch (error) {
@@ -182,7 +181,7 @@ const getSystemHealth = async (_req, res, next) => {
       queues: process.env.REDIS_URL || process.env.UPSTASH_REDIS_URL ? 'redis-configured' : 'inline-dev-mode',
       primarySettlement: 'lisk',
       corridorRail: 'stellar',
-      walletProvider: process.env.WALLET_PROVIDER || 'thirdweb',
+      custodyModel: 'direct',
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
