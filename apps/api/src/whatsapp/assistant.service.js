@@ -1,4 +1,5 @@
 const walletService = require('../wallet/wallet.service');
+const { detectChainFromAddress } = require('../wallet/chainRegistry');
 const { executePayment } = require('../payment/payment.orchestrator');
 const { enforceTransactionPolicy } = require('../compliance/compliance.service');
 const { verifyPin } = require('../compliance/pin.service');
@@ -27,7 +28,9 @@ const parsePaymentIntent = (text) => {
 
   return {
     amount: sendMatch[1],
-    asset: (sendMatch[2] || 'USDC').toUpperCase(),
+    // No unit specified — let payment.orchestrator default to the
+    // destination chain's native asset instead of guessing here.
+    asset: sendMatch[2] ? sendMatch[2].toUpperCase() : undefined,
     recipient: sendMatch[3].trim(),
   };
 };
@@ -43,6 +46,15 @@ const resolveRecipient = async (user, recipient) => {
 
 const requestConfirmation = async ({ phoneNumber, user, intent }) => {
   const recipient = await resolveRecipient(user, intent.recipient);
+
+  if (!detectChainFromAddress(recipient.destination)) {
+    await sendTextMessage(
+      phoneNumber,
+      `"${recipient.label}" isn't a saved contact or a recognized wallet address (Stellar or Lisk). Save it first, or send to a valid address directly.`
+    );
+    return;
+  }
+
   const pendingSend = {
     amount: intent.amount,
     asset: intent.asset,
@@ -96,7 +108,7 @@ const handlePendingPin = async ({ phoneNumber, user, text }) => {
     sender: user,
     destination: pending.destination,
     amount: pending.amount,
-    asset: pending.asset || 'USDC',
+    asset: pending.asset,
     routeType: pending.routeType,
   });
 
@@ -118,15 +130,17 @@ const processMessage = async (phoneNumber, whatsappName, text) => {
   }
 
   if (normalized.includes('balance')) {
-    const wallet = await walletService.createOrGetWallet({ user });
-    const balance = await walletService.balance({ wallet });
-    await sendTextMessage(phoneNumber, `Your SendAm balance is ${balance.value || balance.displayValue || 'available in your managed wallet'}.`);
+    await walletService.ensureWalletsForUser({ user });
+    const balances = await walletService.balancesForUser({ userId: user.id });
+    const lines = balances.map((b) => (b.value !== null ? `${b.chain}: ${b.value}` : `${b.chain}: unavailable (${b.error})`));
+    await sendTextMessage(phoneNumber, `Your SendAm balances:\n${lines.join('\n')}`);
     return;
   }
 
   if (normalized.includes('receive')) {
-    const wallet = await walletService.createOrGetWallet({ user });
-    await sendTextMessage(phoneNumber, `Share your phone number to receive money on SendAm. Wallet reference: ${wallet.address || wallet.publicKey}`);
+    const wallets = await walletService.ensureWalletsForUser({ user });
+    const lines = wallets.map((w) => `${w.chain}: ${w.publicKey}`);
+    await sendTextMessage(phoneNumber, `Share one of these to receive money on SendAm:\n${lines.join('\n')}`);
     return;
   }
 

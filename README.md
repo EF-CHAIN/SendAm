@@ -1,8 +1,8 @@
 # SendAm
 
-WhatsApp-first payments with managed wallets, voice-to-cash, escrow, nearby cash-out, and automatic payment-rail routing.
+WhatsApp-first payments with direct-custody wallets, voice-to-cash, escrow, nearby cash-out, and automatic payment-rail routing.
 
-SendAm maps a WhatsApp phone number to a managed wallet and lets users send, receive, escrow, check balances, request receipts, and find cash-out options from chat. The user experience hides blockchain complexity: the backend decides whether a payment should use Lisk, Stellar corridor rails, or a fiat on/off-ramp provider.
+SendAm maps a WhatsApp phone number to a Stellar wallet and a Lisk wallet and lets users send, receive, escrow, check balances, request receipts, and find cash-out options from chat. The user experience hides blockchain complexity: the backend decides whether a payment should use Lisk, Stellar corridor rails, or a fiat on/off-ramp provider, based on the destination address.
 
 > Current status: architecture refactor in progress. The project now has production-oriented module boundaries, queue scaffolding, managed-wallet abstractions, compliance models, and expanded admin surfaces. Live money movement still requires provider credentials, Lisk escrow contracts, KYC/ramp onboarding, monitoring, and compliance review.
 
@@ -10,11 +10,11 @@ SendAm maps a WhatsApp phone number to a managed wallet and lets users send, rec
 
 - WhatsApp conversational payment assistant.
 - Voice note payment intents with transcription.
-- Phone number as managed wallet identity.
+- Phone number as wallet identity — every user gets a Stellar and a Lisk wallet.
+- Direct custody: keys generated and encrypted (AES-256-GCM) locally, not managed by a third-party provider.
 - Lisk as the primary settlement layer.
 - Stellar only for cross-border payment corridors.
 - Yellow Card and Paychant for fiat on/off ramp flows.
-- Thirdweb Engine as the preferred Wallet-as-a-Service provider.
 - KYC, PIN verification, audit logs, limits, and risk scoring.
 - BullMQ background processing for webhook, voice, receipt, and settlement jobs.
 
@@ -52,7 +52,7 @@ src/
 
 ## Backend Modules
 
-- `wallet`: WalletService abstraction for create/get wallet, send token, balance, and transaction history. App code does not call Thirdweb/Openfort directly.
+- `wallet`: Direct-custody chain adapters (Stellar, Lisk) plus a `WalletService` abstraction for create/get wallet, send, balance, and transaction history. App code never imports a chain SDK directly — see `chainRegistry.js`.
 - `payment`: Payment Orchestrator for quotes, fees, rail selection, transaction execution, and receipts.
 - `blockchain`: Rail selection. Lisk is primary; Stellar is selected for cross-border routes.
 - `whatsapp`: Conversational assistant for send money, receive money, balance, escrow, cash-out, contacts, history, and receipts.
@@ -108,7 +108,7 @@ POST /webhook
 
 ## Environment Variables
 
-Use `apps/api/.env.example` as the source of truth. The local `apps/api/.env` has been expanded with blank keys for Thirdweb, Lisk, Redis, R2, pricing, KYC, ramps, and voice providers so secrets can be filled in later.
+Use `apps/api/.env.example` as the source of truth. The local `apps/api/.env` has been expanded with blank keys for Lisk, Redis, R2, pricing, KYC, ramps, and voice providers so secrets can be filled in later.
 
 > The REST wallet API (`/api/wallet/*`) is unauthenticated and is disabled in production unless `ENABLE_WALLET_REST_API=true`. Outside production it defaults to enabled for local testing. WhatsApp is the real, signature-verified surface.
 
@@ -171,7 +171,7 @@ npm run build:admin
 ## Production Readiness Gaps
 
 - Deploy and verify Lisk escrow smart contracts.
-- Finish Thirdweb Engine/Openfort provider-specific transfer implementation.
+- Support non-native assets per chain (Stellar `changeTrust`, Lisk bridged/ERC-20 USDC).
 - Wire Smile ID or Dojah production KYC callbacks.
 - Wire Yellow Card and Paychant quote/execution callbacks.
 - Apply the Prisma migration to the Neon database and run provider-level smoke tests.
@@ -238,6 +238,7 @@ This project is a work-in-progress platform expansion. Some hardening is already
 
 - Real backend admin authentication (HMAC-signed session tokens); the API refuses to start without `ADMIN_PASSWORD` and `JWT_SECRET`.
 - Admin API routes protected server-side by the `requireAdmin` middleware.
+- Wallet private keys encrypted with authenticated AES-256-GCM (tamper-detecting); the server fails fast at startup without a valid `ENCRYPTION_KEY`.
 - WhatsApp webhook POSTs verified against the `X-Hub-Signature-256` header (fail-closed in production).
 - Inbound message idempotency to prevent duplicate transfers from webhook retries.
 - KYC tiers with daily/single-transaction limits and risk scoring, enforced on every payment via the Payment Orchestrator.
@@ -248,7 +249,7 @@ This project is a work-in-progress platform expansion. Some hardening is already
 Still required before a real-money launch:
 
 - Build real per-user authentication for `POST /api/compliance/pin` and `POST /api/compliance/kyc/start` so they can be enabled in production — right now they're only usable with the flag on, which means no user can self-serve a PIN or start KYC in production at all.
-- Add secure, managed secret/key management (KMS/HSM) for provider credentials; support key rotation.
+- Add secure, managed secret/key management (KMS/HSM) instead of a single static `ENCRYPTION_KEY` for wallet private keys; support key rotation.
 - Add audit-log coverage for all sensitive admin and compliance actions, plus monitoring/alerting.
 - Expand the automated test suite to cover the payment orchestrator, wallet, webhook, voice, compliance, and escrow flows.
 - Replace the single shared admin password with real admin accounts and roles.

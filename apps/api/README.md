@@ -1,6 +1,6 @@
 # SendAm API
 
-Express backend for the new SendAm architecture: WhatsApp conversational payments, managed wallets, payment orchestration, compliance, voice transcription, escrow, pricing, queues, and admin monitoring.
+Express backend for the new SendAm architecture: WhatsApp conversational payments, direct-custody wallets, payment orchestration, compliance, voice transcription, escrow, pricing, queues, and admin monitoring.
 
 ## Architecture
 
@@ -9,7 +9,7 @@ The API is moving away from the original Stellar-only wallet bot. The current ba
 ```text
 src/
   whatsapp/      Conversational assistant
-  wallet/        WalletService abstraction over Thirdweb/Openfort
+  wallet/        Chain adapters (Stellar, Lisk) + WalletService abstraction
   payment/       Payment Orchestrator
   escrow/        Lisk escrow lifecycle
   compliance/    KYC tiers, PIN, risk, limits
@@ -26,11 +26,11 @@ src/
 - Lisk is the primary settlement layer.
 - Stellar is reserved for cross-border corridors.
 - Yellow Card and Paychant are intended for NGN/USDC cash-in and cash-out.
-- Users never choose or see the rail; the Payment Orchestrator records it internally.
+- The destination address decides which chain a plain send uses (Stellar `G...` StrKey vs. Lisk `0x...`); users never choose or see the rail explicitly — the Payment Orchestrator records it internally.
 
 ## Wallets
 
-`src/wallet/wallet.service.js` is the only backend surface that should talk to a WaaS provider. Thirdweb Engine is the preferred provider. Openfort is scaffolded as a swappable adapter.
+`src/wallet/wallet.service.js` is the only backend surface that should talk to a chain adapter (`stellar.adapter.js`, `lisk.adapter.js`, resolved via `chainRegistry.js`). Direct custody: each adapter generates a keypair, and the private key is encrypted (AES-256-GCM, `services/crypto.service.js`) before being stored — one `Wallet` row per user per chain.
 
 ## Queues
 
@@ -41,10 +41,6 @@ WhatsApp webhooks return `200` immediately, then enqueue work through BullMQ whe
 Use `.env.example`. The main provider keys are:
 
 ```text
-THIRDWEB_ENGINE_URL=
-THIRDWEB_ACCESS_TOKEN=
-THIRDWEB_BACKEND_WALLET_ADDRESS=
-THIRDWEB_USDC_CONTRACT_ADDRESS=
 LISK_RPC_URL=
 LISK_ESCROW_CONTRACT_ADDRESS=
 REDIS_URL=
@@ -61,7 +57,7 @@ EXCHANGERATE_API_KEY=
 - Node.js
 - Express
 - PostgreSQL (Neon) with Prisma
-- `@stellar/stellar-sdk`, Thirdweb Engine, Openfort
+- `@stellar/stellar-sdk`, `ethers` (Lisk)
 - WhatsApp Business Cloud API
 - BullMQ / Redis
 - Axios
@@ -77,7 +73,7 @@ apps/api/
     config/        Environment and database configuration
     controllers/   Webhook, wallet, and admin request handlers
     whatsapp/      Conversational assistant
-    wallet/        WalletService abstraction over Thirdweb/Openfort
+    wallet/        Chain adapters (Stellar, Lisk) + WalletService abstraction
     payment/       Payment Orchestrator
     escrow/        Lisk escrow lifecycle
     compliance/    KYC tiers, PIN, risk, limits
