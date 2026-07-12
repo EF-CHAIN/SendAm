@@ -1,5 +1,6 @@
 const config = require('../config/env');
 const prisma = require('../common/prisma');
+const { policyClient } = require('../services/policyClient');
 
 const tierLimits = {
   0: { daily: 0, single: 0 },
@@ -32,6 +33,18 @@ const calculateRiskScore = ({ amount, routeType, destinationCountry }) => {
 };
 
 const enforceTransactionPolicy = async ({ user, amount, routeType, destinationCountry }) => {
+  // When the private policy service is enabled AND answers, its verdict is
+  // authoritative. A null verdict (service off, unreachable, or malformed)
+  // falls through to the local KYC-tier logic below — the documented,
+  // deliberately-naive local fallback.
+  const verdict = await policyClient.checkPolicy({ userId: user.id, amount, routeType, destinationCountry });
+  if (verdict) {
+    if (!verdict.allowed) {
+      throw new Error(verdict.reason || 'This payment was rejected by transaction policy.');
+    }
+    return { profile: null, riskScore: verdict.riskScore };
+  }
+
   const profile = await getOrCreateKycProfile(user);
   const limits = tierLimits[profile.tier] || tierLimits[0];
   const parsedAmount = Number(amount);
