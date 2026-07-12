@@ -5,6 +5,7 @@ const { executePayment } = require('../payment/payment.orchestrator');
 const { enforceTransactionPolicy } = require('../compliance/compliance.service');
 const { verifyPin } = require('../compliance/pin.service');
 const { sendTextMessage } = require('../services/whatsapp.service');
+const { aiClient } = require('../services/aiClient');
 const { claimPendingSend } = require('./pendingClaim');
 const prisma = require('../common/prisma');
 
@@ -176,7 +177,14 @@ const processMessage = async (phoneNumber, whatsappName, text) => {
     return;
   }
 
-  const paymentIntent = parsePaymentIntent(text);
+  // Regex parser stays PRIMARY. The AI decoder is a guarded fallback for
+  // messages the regex can't classify — it only ever proposes; a decoded
+  // send re-enters the exact same confirmation + PIN + policy guardrails.
+  // Off or unreachable, this is a no-op and the help fallback below answers.
+  let paymentIntent = parsePaymentIntent(text);
+  if (!paymentIntent && aiClient.enabled) {
+    paymentIntent = await aiClient.decodeToPaymentIntent(text, user.id);
+  }
   if (paymentIntent) {
     await requestConfirmation({ phoneNumber, user, intent: paymentIntent });
     return;
