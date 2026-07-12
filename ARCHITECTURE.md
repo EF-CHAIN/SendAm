@@ -61,8 +61,18 @@ them, degrading gracefully (clearly logged, no crash) when unconfigured.
 | Stellar wallet / balance / send | Full implementation | — |
 | Lisk wallet / balance / send | Full implementation | — |
 | Payment orchestration, rail selection | Full implementation | — |
-| Gas sponsorship (paymaster) | Thin client, calling contract only | Funded gas wallet, relayer signing |
+| Gas sponsorship (paymaster) | Thin client, calling contract only (`services/paymaster.service.js`) | **sendam-paymaster** — funded gas wallet, fee-bump/sponsored-reserve building, spend caps, kill switch |
+| AI intent decoding | Regex parser (primary) + thin fallback client (`services/aiClient.js`) | **sendam-ai** — model adapters, versioned prompts, styling, eval harness |
+| Ledger, quoting, treasury | Thin client stub (`services/settlementClient.js`, off by default) | **sendam-settlement** — double-entry ledger of record, fee-on-top quotes, rebalance planning |
+| Transaction policy | KYC tier/limit/risk-scoring logic (the local fallback) | Policy service (`services/policyClient.js` calling contract; engine home still an open decision) |
+| Naming (`@name` / `name*domain`) | Thin resolution client (`services/nsClient.js`) in the recipient flow | **sendam-ns** — registry, SEP-0002 federation, ENS CCIP-Read gateway |
 | KYC | Tier/limit/risk-scoring logic | Provider identity verification (Smile ID / Dojah) |
+
+Every private-service client follows one pattern (`services/serviceClient.js`):
+HMAC-signed requests (`X-Sendam-Signature` over the raw body +
+`X-Sendam-Timestamp`), an explicit `ENABLE_*` flag, and graceful degradation —
+unset config means the client is disabled and the public repo behaves exactly
+as if the service didn't exist.
 
 ## Why this shape
 
