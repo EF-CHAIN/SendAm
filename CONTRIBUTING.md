@@ -1,6 +1,6 @@
 //# Contributing to SendAm
 
-Thank you for your interest in contributing to SendAm. SendAm is an open-source WhatsApp-first Stellar payments MVP focused on making blockchain payments easier for mobile-first users.
+Thank you for your interest in contributing to SendAm. SendAm is an open-source WhatsApp-first payments MVP (Lisk + Stellar, direct-custody wallets) focused on making blockchain payments easier for mobile-first users.
 
 Contributions are welcome across product, engineering, documentation, testing, security, and Stellar ecosystem integrations.
 
@@ -11,12 +11,38 @@ By participating in this project you agree to abide by our [Code of Conduct](COD
 SendAm currently focuses on:
 
 - WhatsApp-based wallet commands.
-- Stellar Testnet wallet creation.
-- Native XLM balance checks.
-- Native XLM transfers.
-- Saved recipient aliases.
-- Confirmation-based payment flow.
+- Direct-custody wallet creation on Stellar and Lisk (testnets).
+- Native-asset balance checks and transfers (XLM, Lisk ETH).
+- Saved recipient aliases, with optional global-name resolution via the
+  private naming service.
+- Confirmation-based payment flow (PIN + policy guardrails).
 - Admin visibility for users, wallets, and transactions.
+
+### Open territory
+
+Areas that are deliberately open and where contributions have the most
+leverage:
+
+- **Chain adapters** — new chains behind the `apps/api/src/wallet/`
+  adapter interface (validate/create/balance/send + explorer URLs).
+- **Localization** — reply copy lives in `apps/api/src/services/agent/replies.js`;
+  Pidgin/Yoruba/Igbo/Hausa copy and locale plumbing are wide open.
+- **WhatsApp UX** — richer command handling, better error copy, receipts,
+  interactive flows.
+- **Integration tests** — the suite is offline unit tests today; a
+  container-backed integration harness (Postgres + queue) would be valuable.
+- **Admin dashboard** — usability, filtering, and reporting improvements.
+
+### Operated privately
+
+The other side of the split (see `ARCHITECTURE.md`) runs as private
+services this repo only talks to through thin, HMAC-signed clients:
+**sendam-ai** (intent decoding/styling), **sendam-settlement** (ledger,
+quoting, treasury), **sendam-paymaster** (gas/reserve sponsorship), and
+**sendam-ns** (naming/federation/ENS gateway). Contributions there aren't
+possible directly, but the calling contracts (`apps/api/src/services/*Client.js`
+and `serviceClient.js`) are public — improvements to the clients, their
+fallbacks, and their tests are welcome.
 
 Before contributing a large feature, please open an issue first so we can discuss scope and avoid duplicate work.
 
@@ -39,7 +65,7 @@ Larger areas include:
 - Per-user authentication for the REST wallet API.
 - Managed secret/key management (KMS/HSM) and key rotation.
 - Audit logging, monitoring, and alerting.
-- Stellar asset support beyond native XLM.
+- Asset support beyond chain-native assets (ERC-20, Stellar anchor assets).
 - Contact and recipient management.
 - QR-code wallet sharing.
 - Compliance-aware production workflows.
@@ -50,9 +76,10 @@ Larger areas include:
 
 ### Prerequisites
 
-- Node.js 18 or newer.
+- Node.js 20 or newer (see `.nvmrc`).
 - npm.
-- MongoDB running locally or a MongoDB connection URI.
+- A PostgreSQL database (e.g. local Postgres or Neon) for `DATABASE_URL` —
+  not needed just to run the unit tests, which are fully offline.
 - Stellar Testnet configuration.
 - WhatsApp Business Cloud API credentials if testing webhooks.
 
