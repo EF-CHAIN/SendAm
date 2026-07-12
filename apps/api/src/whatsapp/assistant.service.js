@@ -1,9 +1,11 @@
+const { Prisma } = require('@prisma/client');
 const walletService = require('../wallet/wallet.service');
 const { detectChainFromAddress } = require('../wallet/chainRegistry');
 const { executePayment } = require('../payment/payment.orchestrator');
 const { enforceTransactionPolicy } = require('../compliance/compliance.service');
 const { verifyPin } = require('../compliance/pin.service');
 const { sendTextMessage } = require('../services/whatsapp.service');
+const { claimPendingSend } = require('./pendingClaim');
 const prisma = require('../common/prisma');
 
 const PENDING_SEND_TTL_MS = 10 * 60 * 1000;
@@ -79,13 +81,14 @@ const handlePendingPin = async ({ phoneNumber, user, text }) => {
 
   const lowered = String(text).trim().toLowerCase();
   if (lowered === 'no' || lowered === 'cancel') {
-    await prisma.user.update({ where: { id: user.id }, data: { pendingSend: null } });
+    // Json? columns need Prisma.DbNull — a plain null in `data` throws at runtime.
+    await prisma.user.update({ where: { id: user.id }, data: { pendingSend: Prisma.DbNull } });
     await sendTextMessage(phoneNumber, 'Payment cancelled.');
     return true;
   }
 
   if (Date.now() - new Date(user.pendingSend.requestedAt).getTime() > PENDING_SEND_TTL_MS) {
-    await prisma.user.update({ where: { id: user.id }, data: { pendingSend: null } });
+    await prisma.user.update({ where: { id: user.id }, data: { pendingSend: Prisma.DbNull } });
     await sendTextMessage(phoneNumber, 'That payment request expired. Please start again.');
     return true;
   }
@@ -96,7 +99,17 @@ const handlePendingPin = async ({ phoneNumber, user, text }) => {
     return true;
   }
 
+  // Atomically claim (clear) the pending send BEFORE executing. Two
+  // concurrent messages with a valid PIN both reach this point — the claim
+  // guarantees exactly one of them executes the payment; the loser gets a
+  // clear reply instead of a double spend. A payment that fails after the
+  // claim requires the user to start the send again — the safe direction.
   const pending = user.pendingSend;
+  if (!(await claimPendingSend({ prisma, Prisma, userId: user.id }))) {
+    await sendTextMessage(phoneNumber, 'That payment was already processed or cancelled.');
+    return true;
+  }
+
   await enforceTransactionPolicy({
     user,
     amount: pending.amount,
@@ -111,8 +124,6 @@ const handlePendingPin = async ({ phoneNumber, user, text }) => {
     asset: pending.asset,
     routeType: pending.routeType,
   });
-
-  await prisma.user.update({ where: { id: user.id }, data: { pendingSend: null } });
 
   await sendTextMessage(phoneNumber, `Payment ${result.transaction.status}. Receipt: ${result.receipt.transactionId}`);
   return true;
