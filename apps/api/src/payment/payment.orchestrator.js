@@ -4,6 +4,7 @@ const { selectRail } = require('../blockchain/railSelector');
 const { createQuote } = require('../pricing/pricing.service');
 const { writeAuditLog } = require('../common/audit.service');
 const { enforceTransactionPolicy } = require('../compliance/compliance.service');
+const { markTransactionFailed } = require('./markFailed');
 const prisma = require('../common/prisma');
 const { withIdAlias } = require('../common/records');
 
@@ -130,12 +131,13 @@ const executePayment = async ({
 
     return { transaction: withIdAlias(transaction), quote, receipt: buildReceipt({ transaction }) };
   } catch (error) {
-    await prisma.transaction.update({
-      where: { id: transaction.id },
-      data: {
-        status: 'failed',
-        metadata: { ...transaction.metadata, error: error.message },
-      },
+    // Guarded: if this bookkeeping update itself rejects, the original
+    // payment error is still the one thrown to the caller.
+    await markTransactionFailed({
+      prisma,
+      transactionId: transaction.id,
+      metadata: transaction.metadata,
+      error,
     });
     throw error;
   }
