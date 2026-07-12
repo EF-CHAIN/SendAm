@@ -117,7 +117,36 @@ module.exports = {
   // the live send flow — see paymaster.service.js.
   paymaster: {
     serviceUrl: process.env.PAYMASTER_SERVICE_URL,
+    // HMAC shared secret for the X-Sendam-Signature calling contract.
+    secret: process.env.PAYMASTER_SERVICE_SECRET,
+    // Deprecated: legacy bearer token, superseded by PAYMASTER_SERVICE_SECRET.
     apiKey: process.env.PAYMASTER_API_KEY,
+  },
+  // Privately-operated service clients (see services/serviceClient.js for
+  // the shared HMAC calling contract). Each is DOUBLY gated: the ENABLE_*
+  // flag must be "true" AND the URL + secret must be set — anything less
+  // means the client is disabled and its feature degrades gracefully. All
+  // default off; the public repo runs fully standalone without them.
+  ai: {
+    enabled: process.env.ENABLE_AI_INTENT === 'true',
+    serviceUrl: process.env.AI_SERVICE_URL,
+    secret: process.env.AI_SERVICE_SECRET,
+  },
+  policy: {
+    enabled: process.env.ENABLE_POLICY_SERVICE === 'true',
+    serviceUrl: process.env.POLICY_SERVICE_URL,
+    secret: process.env.POLICY_SERVICE_SECRET,
+  },
+  ns: {
+    enabled: process.env.ENABLE_NS_RESOLUTION === 'true',
+    serviceUrl: process.env.NS_SERVICE_URL,
+    secret: process.env.NS_SERVICE_SECRET,
+    domain: process.env.NS_DOMAIN || 'sendam.app',
+  },
+  settlement: {
+    enabled: process.env.ENABLE_SETTLEMENT === 'true',
+    serviceUrl: process.env.SETTLEMENT_SERVICE_URL,
+    secret: process.env.SETTLEMENT_SERVICE_SECRET,
   },
   // NGN display rate. Provider is swappable on purpose — whether SendAm
   // should show the official CBN rate or a parallel-market rate is a
