@@ -6,7 +6,9 @@ const { enforceTransactionPolicy } = require('../compliance/compliance.service')
 const { verifyPin } = require('../compliance/pin.service');
 const { sendTextMessage } = require('../services/whatsapp.service');
 const { aiClient } = require('../services/aiClient');
+const { nsClient } = require('../services/nsClient');
 const { claimPendingSend } = require('./pendingClaim');
+const { createRecipientResolver } = require('./recipientResolver');
 const prisma = require('../common/prisma');
 
 const PENDING_SEND_TTL_MS = 10 * 60 * 1000;
@@ -38,14 +40,10 @@ const parsePaymentIntent = (text) => {
   };
 };
 
-const resolveRecipient = async (user, recipient) => {
-  const alias = String(recipient || '').trim().toLowerCase();
-  const savedAlias = await prisma.alias.findUnique({
-    where: { userId_alias: { userId: user.id, alias } },
-  });
-  if (savedAlias) return { destination: savedAlias.target, label: alias };
-  return { destination: recipient, label: recipient };
-};
+// Precedence: saved contacts → sigil-prefixed global names via sendam-ns →
+// raw address passthrough. See recipientResolver.js; the address-validity
+// check in requestConfirmation still applies to whatever comes back.
+const resolveRecipient = createRecipientResolver({ prisma, nsClient });
 
 const requestConfirmation = async ({ phoneNumber, user, intent }) => {
   const recipient = await resolveRecipient(user, intent.recipient);
