@@ -29,10 +29,9 @@ like a trustline — adds to the requirement. Practical consequences:
 - On **testnet**, [Friendbot](https://friendbot.stellar.org) funds any
   account with 10,000 test XLM — `fundTestnetAccount()` in the adapter
   wraps it with retries.
-- On **mainnet** there is no Friendbot. The planned answer is *sponsored
-  reserves* (a funded sponsor account pays reserves on the user's behalf) —
-  that's what the paymaster client (`services/paymaster.service.js`) exists
-  for.
+- On **mainnet** there is no Friendbot. New wallets need real XLM deposited
+  before they can do anything — see the [ROADMAP](../ROADMAP.md) for the
+  path to production.
 
 ## Assets and trustlines
 
@@ -58,7 +57,7 @@ Consequences you'll hit in code:
   above `isBadSequence()` before touching submission logic.
 - Fees are tiny (100 stroops base = 0.00001 XLM) but nonzero, paid in XLM by
   the source account. *Fee-bump transactions* let a different account pay
-  the fee — the other half of the paymaster plan.
+  the fee, if that's ever needed.
 - Transactions can carry a **memo** (useful later for payment references).
 
 ## Horizon (the API you actually call)

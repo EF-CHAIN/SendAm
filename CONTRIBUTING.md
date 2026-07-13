@@ -33,17 +33,6 @@ leverage:
   container-backed integration harness (Postgres + queue) would be valuable.
 - **Admin dashboard** — usability, filtering, and reporting improvements.
 
-### Operated privately
-
-The other side of the split (see `ARCHITECTURE.md`) runs as private
-services this repo only talks to through thin, HMAC-signed clients:
-**sendam-ai** (intent decoding/styling), **sendam-settlement** (ledger,
-quoting, treasury), **sendam-paymaster** (gas/reserve sponsorship), and
-**sendam-ns** (naming/federation/ENS gateway). Contributions there aren't
-possible directly, but the calling contracts (`apps/api/src/services/*Client.js`
-and `serviceClient.js`) are public — improvements to the clients, their
-fallbacks, and their tests are welcome.
-
 Before contributing a large feature, please open an issue first so we can discuss scope and avoid duplicate work.
 
 ## Ways To Contribute
@@ -69,8 +58,6 @@ Larger areas include:
 - Contact and recipient management.
 - QR-code wallet sharing.
 - Compliance-aware production workflows.
-- Gas sponsorship (paymaster) and NGN price display are built but not yet
-  wired into the live flow — see [`ROADMAP.md`](ROADMAP.md).
 
 ## Local Setup
 

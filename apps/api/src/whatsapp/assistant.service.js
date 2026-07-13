@@ -5,8 +5,6 @@ const { executePayment } = require('../payment/payment.orchestrator');
 const { enforceTransactionPolicy } = require('../compliance/compliance.service');
 const { verifyPin } = require('../compliance/pin.service');
 const { sendTextMessage } = require('../services/whatsapp.service');
-const { aiClient } = require('../services/aiClient');
-const { nsClient } = require('../services/nsClient');
 const { claimPendingSend } = require('./pendingClaim');
 const { createRecipientResolver } = require('./recipientResolver');
 const prisma = require('../common/prisma');
@@ -40,10 +38,10 @@ const parsePaymentIntent = (text) => {
   };
 };
 
-// Precedence: saved contacts → sigil-prefixed global names via sendam-ns →
-// raw address passthrough. See recipientResolver.js; the address-validity
-// check in requestConfirmation still applies to whatever comes back.
-const resolveRecipient = createRecipientResolver({ prisma, nsClient });
+// Precedence: saved contacts → raw address passthrough. See
+// recipientResolver.js; the address-validity check in requestConfirmation
+// still applies to whatever comes back.
+const resolveRecipient = createRecipientResolver({ prisma });
 
 const requestConfirmation = async ({ phoneNumber, user, intent, notify }) => {
   const recipient = await resolveRecipient(user, intent.recipient);
@@ -169,14 +167,7 @@ const processMessage = async (phoneNumber, whatsappName, text, { notify = sendTe
     return;
   }
 
-  // Regex parser stays PRIMARY. The AI decoder is a guarded fallback for
-  // messages the regex can't classify — it only ever proposes; a decoded
-  // send re-enters the exact same confirmation + PIN + policy guardrails.
-  // Off or unreachable, this is a no-op and the help fallback below answers.
-  let paymentIntent = parsePaymentIntent(text);
-  if (!paymentIntent && aiClient.enabled) {
-    paymentIntent = await aiClient.decodeToPaymentIntent(text, user.id);
-  }
+  const paymentIntent = parsePaymentIntent(text);
   if (paymentIntent) {
     await requestConfirmation({ phoneNumber, user, intent: paymentIntent, notify });
     return;
