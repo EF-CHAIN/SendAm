@@ -1,47 +1,50 @@
-const { resolveAdapter, SUPPORTED_CHAINS } = require('./chainRegistry');
+const stellarAdapter = require('./stellar.adapter');
 const { encrypt, decrypt } = require('../services/crypto.service');
 const { writeAuditLog } = require('../common/audit.service');
 const prisma = require('../common/prisma');
 const { withIdAlias, withIdAliases } = require('../common/records');
 const logger = require('../utils/logger');
 
-// One wallet per user per chain, direct custody: the adapter generates a
-// keypair, the secret key is encrypted (crypto.service.js) before it ever
-// touches the database. Callers never see a plaintext secret key.
-const createOrGetWallet = async ({ user, phoneNumber, chain = 'lisk' }) => {
+// SendAm is Stellar-only. The chain column stays on Wallet for legacy rows
+// (a removed Lisk rail once wrote chain='lisk'); those rows are ignored
+// everywhere below.
+const CHAIN = 'stellar';
+
+// One wallet per user, direct custody: the adapter generates a keypair, the
+// secret key is encrypted (crypto.service.js) before it ever touches the
+// database. Callers never see a plaintext secret key.
+const createOrGetWallet = async ({ user, phoneNumber }) => {
   let owner = user;
   if (!owner) {
     owner = await prisma.user.findUnique({ where: { phoneNumber } });
     if (!owner) owner = await prisma.user.create({ data: { phoneNumber } });
   }
 
-  const existing = await prisma.wallet.findUnique({ where: { userId_chain: { userId: owner.id, chain } } });
+  const existing = await prisma.wallet.findUnique({ where: { userId_chain: { userId: owner.id, chain: CHAIN } } });
   if (existing) return withIdAlias(existing);
 
-  const adapter = resolveAdapter(chain);
-  const { publicKey, secretKey } = adapter.createWallet();
+  const { publicKey, secretKey } = stellarAdapter.createWallet();
 
   let wallet = await prisma.wallet.create({
     data: {
       userId: owner.id,
-      chain,
+      chain: CHAIN,
       phoneNumber: owner.phoneNumber,
       publicKey,
       encryptedSecretKey: encrypt(secretKey),
     },
   });
 
-  // Attempt funding immediately for chains with an auto-fund faucet
-  // (Stellar's Friendbot). Lisk has none — the wallet is created unfunded
-  // and callers can retry via fundWallet() later, same as the `fund`
+  // Attempt funding immediately (Stellar Friendbot on testnet). A failure is
+  // non-fatal — callers can retry via fundWallet() later, same as the `fund`
   // WhatsApp command did before.
   try {
-    const result = await adapter.fundTestnetAccount(publicKey);
+    const result = await stellarAdapter.fundTestnetAccount(publicKey);
     if (result.funded) {
       wallet = await prisma.wallet.update({ where: { id: wallet.id }, data: { funded: true } });
     }
   } catch (error) {
-    logger.warn(`Funding failed for new ${chain} wallet ${publicKey}: ${error.message}`);
+    logger.warn(`Funding failed for new ${CHAIN} wallet ${publicKey}: ${error.message}`);
   }
 
   await writeAuditLog({
@@ -50,32 +53,31 @@ const createOrGetWallet = async ({ user, phoneNumber, chain = 'lisk' }) => {
     action: 'wallet.created',
     entityType: 'Wallet',
     entityId: String(wallet.id),
-    metadata: { chain },
+    metadata: { chain: CHAIN },
   });
 
   return withIdAlias(wallet);
 };
 
-// Creates (or fetches) a wallet on every supported chain for a user — the
-// product surface never asks a user to "pick a chain".
+// Creates (or fetches) the user's Stellar wallet. Kept as a list-returning
+// helper because callers render wallet lists.
 const ensureWalletsForUser = async ({ user }) => {
-  const wallets = await Promise.all(SUPPORTED_CHAINS.map((chain) => createOrGetWallet({ user, chain })));
-  return wallets;
+  const wallet = await createOrGetWallet({ user });
+  return [wallet];
 };
 
 const getWalletsByPhoneNumber = async (phoneNumber) => {
-  const wallets = await prisma.wallet.findMany({ where: { phoneNumber } });
+  const wallets = await prisma.wallet.findMany({ where: { phoneNumber, chain: CHAIN } });
   return withIdAliases(wallets);
 };
 
-const getWalletByUserAndChain = async ({ userId, chain }) => {
+const getWalletByUserAndChain = async ({ userId, chain = CHAIN }) => {
   const wallet = await prisma.wallet.findUnique({ where: { userId_chain: { userId, chain } } });
   return withIdAlias(wallet);
 };
 
 const fundWallet = async ({ wallet }) => {
-  const adapter = resolveAdapter(wallet.chain);
-  const result = await adapter.fundTestnetAccount(wallet.publicKey);
+  const result = await stellarAdapter.fundTestnetAccount(wallet.publicKey);
   if (result.funded) {
     return { wallet: withIdAlias(await prisma.wallet.update({ where: { id: wallet.id }, data: { funded: true } })), result };
   }
@@ -83,17 +85,17 @@ const fundWallet = async ({ wallet }) => {
 };
 
 const balance = async ({ wallet }) => {
-  const value = await resolveAdapter(wallet.chain).getBalance(wallet.publicKey);
+  const value = await stellarAdapter.getBalance(wallet.publicKey);
   return { chain: wallet.chain, address: wallet.publicKey, value };
 };
 
-// Balances across every chain a user (or phone number) has a wallet on. Each
-// chain's fetch is isolated so one unreachable RPC/Horizon doesn't blank out
-// the others.
+// Balances for every Stellar wallet a user (or phone number) has. Each fetch
+// is isolated so an unreachable Horizon reports per-wallet instead of
+// blanking the whole reply. Legacy non-Stellar rows are excluded by query.
 const balancesForUser = async ({ userId, phoneNumber }) => {
   const wallets = userId
-    ? await prisma.wallet.findMany({ where: { userId } })
-    : await prisma.wallet.findMany({ where: { phoneNumber } });
+    ? await prisma.wallet.findMany({ where: { userId, chain: CHAIN } })
+    : await prisma.wallet.findMany({ where: { phoneNumber, chain: CHAIN } });
 
   return Promise.all(wallets.map(async (wallet) => {
     try {
@@ -106,7 +108,7 @@ const balancesForUser = async ({ userId, phoneNumber }) => {
 
 const submitPayment = async ({ wallet, destination, amount, asset }) => {
   const secretKey = decrypt(wallet.encryptedSecretKey);
-  return resolveAdapter(wallet.chain).submitPayment({ secretKey, destination, amount, asset });
+  return stellarAdapter.submitPayment({ secretKey, destination, amount, asset });
 };
 
 const transactionHistory = async ({ userId }) => {

@@ -1,6 +1,6 @@
 const { Prisma } = require('@prisma/client');
 const walletService = require('../wallet/wallet.service');
-const { detectChainFromAddress } = require('../wallet/chainRegistry');
+const { validateAddress } = require('../wallet/stellar.adapter');
 const { executePayment } = require('../payment/payment.orchestrator');
 const { enforceTransactionPolicy } = require('../compliance/compliance.service');
 const { verifyPin } = require('../compliance/pin.service');
@@ -48,10 +48,10 @@ const resolveRecipient = createRecipientResolver({ prisma, nsClient });
 const requestConfirmation = async ({ phoneNumber, user, intent }) => {
   const recipient = await resolveRecipient(user, intent.recipient);
 
-  if (!detectChainFromAddress(recipient.destination)) {
+  if (!validateAddress(String(recipient.destination || '').trim())) {
     await sendTextMessage(
       phoneNumber,
-      `"${recipient.label}" isn't a saved contact or a recognized wallet address (Stellar or Lisk). Save it first, or send to a valid address directly.`
+      `"${recipient.label}" isn't a saved contact or a valid Stellar address. Save it first, or send to a valid address directly.`
     );
     return;
   }

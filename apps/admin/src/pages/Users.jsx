@@ -31,17 +31,9 @@ export default function Users() {
   const columns = [
     { header: 'Phone Number', accessor: 'phoneNumber' },
     { header: 'WhatsApp Name', render: (row) => row.whatsappName || <span className="text-gray-400 italic">Unknown</span> },
-    { header: 'Wallets', render: (row) => (
+    { header: 'Wallet', render: (row) => (
       row.wallets && row.wallets.length > 0
-        ? (
-          <div className="flex gap-1 flex-wrap">
-            {row.wallets.map((w) => (
-              <span key={w.chain} className="text-xs px-2 py-0.5 rounded-full bg-gray-100 capitalize">
-                {w.chain}
-              </span>
-            ))}
-          </div>
-        )
+        ? <span className="text-xs px-2 py-0.5 rounded-full bg-gray-100">Created</span>
         : <StatusBadge status="Pending" />
     )},
     { header: 'Created At', render: (row) => formatDate(row.createdAt) },

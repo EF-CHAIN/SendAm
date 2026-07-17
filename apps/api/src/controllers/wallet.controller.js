@@ -1,7 +1,7 @@
 const { isValidPhoneNumber, isValidAmount } = require('../utils/validators');
 const { sendSuccess, sendError } = require('../utils/response');
 const walletService = require('../wallet/wallet.service');
-const { detectChainFromAddress } = require('../wallet/chainRegistry');
+const { validateAddress } = require('../wallet/stellar.adapter');
 const { executePayment } = require('../payment/payment.orchestrator');
 const prisma = require('../common/prisma');
 
@@ -46,8 +46,8 @@ const sendFunds = async (req, res, next) => {
     if (!isValidPhoneNumber(phoneNumber) || !isValidAmount(amount) || !destination) {
       return sendError(res, 'A valid phone number, amount, and destination are required');
     }
-    if (!detectChainFromAddress(destination)) {
-      return sendError(res, 'Destination must be a valid Stellar or Lisk address');
+    if (!validateAddress(String(destination).trim())) {
+      return sendError(res, 'Destination must be a valid Stellar address');
     }
 
     const user = await prisma.user.findUnique({ where: { phoneNumber } });

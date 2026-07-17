@@ -4,31 +4,29 @@ Express backend for the new SendAm architecture: WhatsApp conversational payment
 
 ## Architecture
 
-The API is moving away from the original Stellar-only wallet bot. The current backend now routes work through these modules:
+The backend routes work through these modules:
 
 ```text
 src/
   whatsapp/      Conversational assistant
-  wallet/        Chain adapters (Stellar, Lisk) + WalletService abstraction
+  wallet/        Stellar adapter + WalletService abstraction
   payment/       Payment Orchestrator
   compliance/    KYC tiers, PIN, risk, limits
   voice/         Voice note download + transcription
   pricing/       FX and fee quotes
-  blockchain/    Rail selection
   queues/        BullMQ queue helpers
   jobs/          Background processors
   common/        Shared audit helpers
 ```
 
-## Payment Rails
+## Payment Rail
 
-- Lisk is the primary settlement layer.
-- Stellar is reserved for cross-border corridors.
-- The destination address decides which chain a plain send uses (Stellar `G...` StrKey vs. Lisk `0x...`); users never choose or see the rail explicitly — the Payment Orchestrator records it internally.
+- All payments settle on Stellar.
+- Destinations are Stellar `G...` StrKey addresses; users never see rail mechanics — the Payment Orchestrator records everything internally.
 
 ## Wallets
 
-`src/wallet/wallet.service.js` is the only backend surface that should talk to a chain adapter (`stellar.adapter.js`, `lisk.adapter.js`, resolved via `chainRegistry.js`). Direct custody: each adapter generates a keypair, and the private key is encrypted (AES-256-GCM, `services/crypto.service.js`) before being stored — one `Wallet` row per user per chain.
+`src/wallet/wallet.service.js` is the only backend surface that should talk to the Stellar adapter (`stellar.adapter.js`). Direct custody: the adapter generates a keypair, and the private key is encrypted (AES-256-GCM, `services/crypto.service.js`) before being stored — one `Wallet` row per user.
 
 ## Queues
 
@@ -39,7 +37,6 @@ WhatsApp webhooks return `200` immediately, then enqueue work through BullMQ whe
 Use `.env.example`. The main provider keys are:
 
 ```text
-LISK_RPC_URL=
 REDIS_URL=
 DEEPGRAM_API_KEY=
 SMILE_ID_PARTNER_ID=
@@ -52,7 +49,7 @@ EXCHANGERATE_API_KEY=
 - Node.js
 - Express
 - PostgreSQL (Neon) with Prisma
-- `@stellar/stellar-sdk`, `ethers` (Lisk)
+- `@stellar/stellar-sdk`
 - WhatsApp Business Cloud API
 - BullMQ / Redis
 - Axios
@@ -68,12 +65,11 @@ apps/api/
     config/        Environment and database configuration
     controllers/   Webhook, wallet, and admin request handlers
     whatsapp/      Conversational assistant
-    wallet/        Chain adapters (Stellar, Lisk) + WalletService abstraction
+    wallet/        Stellar adapter + WalletService abstraction
     payment/       Payment Orchestrator
     compliance/    KYC tiers, PIN, risk, limits
     voice/         Voice note download + transcription
     pricing/       FX and fee quotes
-    blockchain/    Rail selection
     queues/        BullMQ queue helpers
     jobs/          Background processors
     middlewares/   Error handling, not-found, admin auth, webhook verify,
@@ -266,7 +262,7 @@ Send a payment:
 ```bash
 curl -X POST http://localhost:3002/api/wallet/send \
   -H "Content-Type: application/json" \
-  -d '{"phoneNumber":"+2348000000000","amount":"5","destination":"0xDESTINATIONADDRESS"}'
+  -d '{"phoneNumber":"+2348000000000","amount":"5","destination":"GDESTINATIONSTELLARADDRESS"}'
 ```
 
 ## Testing WhatsApp Webhooks Locally

@@ -29,7 +29,6 @@ export default function Wallets() {
 
   const columns = [
     { header: 'User Phone', render: (row) => row.userId?.phoneNumber || 'Unknown' },
-    { header: 'Chain', render: (row) => <span className="capitalize">{row.chain}</span> },
     { header: 'Public Key', render: (row) => (
       <span className="font-mono text-xs bg-gray-100 px-2 py-1 rounded text-gray-600">
         {row.publicKey.substring(0, 12)}...{row.publicKey.substring(row.publicKey.length - 4)}

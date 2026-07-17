@@ -48,7 +48,7 @@ export default function Hero() {
             </li>
             <li className="inline-flex items-center gap-1.5">
               <Zap size={16} className="text-primary" aria-hidden="true" />
-              Lisk + Stellar rails
+              Built on Stellar rails
             </li>
           </ul>
         </div>

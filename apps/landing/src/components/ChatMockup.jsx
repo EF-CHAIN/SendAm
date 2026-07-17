@@ -17,7 +17,7 @@ const messages = [
   { from: 'user', text: 'voice note: what is my balance', time: '9:43', voice: true },
   {
     from: 'bot',
-    text: 'Your SendAm balances:\nlisk: 12.4 ETH\nstellar: 340 XLM',
+    text: 'Your SendAm balance:\nstellar: 340 XLM',
     time: '9:43',
   },
 ];

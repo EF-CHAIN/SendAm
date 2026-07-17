@@ -1,8 +1,8 @@
 # SendAm
 
-WhatsApp-first payments with direct-custody wallets, voice-to-cash, and automatic payment-rail routing.
+WhatsApp-first payments on Stellar with direct-custody wallets and voice-to-cash.
 
-SendAm maps a WhatsApp phone number to a Stellar wallet and a Lisk wallet and lets users send, receive, check balances, and request receipts from chat. The user experience hides blockchain complexity: the backend decides whether a payment should use Lisk or Stellar corridor rails, based on the destination address.
+SendAm maps a WhatsApp phone number to a Stellar wallet and lets users send, receive, check balances, and request receipts from chat. The user experience hides blockchain complexity: the backend handles wallets, addresses, and settlement on Stellar so the user only ever talks to a chat assistant.
 
 > Current status: architecture refactor in progress. The project now has production-oriented module boundaries, queue scaffolding, managed-wallet abstractions, compliance models, and expanded admin surfaces. Live money movement still requires provider credentials, KYC onboarding, monitoring, and compliance review.
 
@@ -10,10 +10,9 @@ SendAm maps a WhatsApp phone number to a Stellar wallet and a Lisk wallet and le
 
 - WhatsApp conversational payment assistant.
 - Voice note payment intents with transcription.
-- Phone number as wallet identity — every user gets a Stellar and a Lisk wallet.
+- Phone number as wallet identity — every user gets a Stellar wallet.
 - Direct custody: keys generated and encrypted (AES-256-GCM) locally, not managed by a third-party provider.
-- Lisk as the primary settlement layer.
-- Stellar only for cross-border payment corridors.
+- Stellar as the settlement layer, built for cross-border payment corridors.
 - KYC, PIN verification, audit logs, limits, and risk scoring.
 - BullMQ background processing for webhook, voice, receipt, and settlement jobs.
 
@@ -50,9 +49,8 @@ src/
 
 ## Backend Modules
 
-- `wallet`: Direct-custody chain adapters (Stellar, Lisk) plus a `WalletService` abstraction for create/get wallet, send, balance, and transaction history. App code never imports a chain SDK directly — see `chainRegistry.js`.
+- `wallet`: Direct-custody Stellar adapter plus a `WalletService` abstraction for create/get wallet, send, balance, and transaction history. App code never imports the Stellar SDK directly — only `stellar.adapter.js` does.
 - `payment`: Payment Orchestrator for quotes, fees, rail selection, transaction execution, and receipts.
-- `blockchain`: Rail selection. Lisk is primary; Stellar is selected for cross-border routes.
 - `whatsapp`: Conversational assistant for send money, receive money, balance, contacts, history, and receipts.
 - `voice`: WhatsApp audio download and Deepgram transcription pipeline.
 - `compliance`: KYC tiers, transaction limits, PIN verification, and risk scoring.
@@ -98,7 +96,7 @@ POST /webhook
 
 ## Environment Variables
 
-Use `apps/api/.env.example` as the source of truth. The local `apps/api/.env` has been expanded with blank keys for Lisk, Redis, R2, pricing, KYC, ramps, and voice providers so secrets can be filled in later.
+Use `apps/api/.env.example` as the source of truth. The local `apps/api/.env` has been expanded with blank keys for Redis, R2, pricing, KYC, ramps, and voice providers so secrets can be filled in later.
 
 > The REST wallet API (`/api/wallet/*`) is unauthenticated and is disabled in production unless `ENABLE_WALLET_REST_API=true`. Outside production it defaults to enabled for local testing. WhatsApp is the real, signature-verified surface.
 
@@ -160,7 +158,7 @@ npm run build:admin
 
 ## Production Readiness Gaps
 
-- Support non-native assets per chain (Stellar `changeTrust`, Lisk bridged/ERC-20 USDC).
+- Support non-native Stellar assets via `changeTrust` (USDC and anchor-issued assets).
 - Wire Smile ID or Dojah production KYC callbacks.
 - Apply the Prisma migration to the Neon database and run provider-level smoke tests.
 - Split background workers from the API process in deployment.

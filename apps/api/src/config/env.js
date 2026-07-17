@@ -52,14 +52,6 @@ module.exports = {
     r2AccessKeyId: process.env.CLOUDFLARE_R2_ACCESS_KEY_ID,
     r2SecretAccessKey: process.env.CLOUDFLARE_R2_SECRET_ACCESS_KEY,
   },
-  // Defaults target Lisk Sepolia testnet (chain ID 4202). The official RPC
-  // is rate-limited; https://lisk-sepolia.drpc.org is a documented
-  // alternative if it gets hit hard during development.
-  lisk: {
-    chainId: Number(process.env.LISK_CHAIN_ID || 4202),
-    rpcUrl: process.env.LISK_RPC_URL || 'https://rpc.sepolia-api.lisk.com',
-    explorerUrl: process.env.LISK_EXPLORER_URL || 'https://sepolia-blockscout.lisk.com',
-  },
   stellar: {
     network: process.env.STELLAR_NETWORK || 'testnet',
     horizonUrl: process.env.STELLAR_HORIZON_URL || 'https://horizon-testnet.stellar.org',
@@ -99,11 +91,12 @@ module.exports = {
       ? process.env.ENABLE_WALLET_REST_API === 'true'
       : env !== 'production',
   },
-  // Private relayer that would sponsor Lisk gas so sending feels free. The
-  // relayer itself (a funded gas wallet + signing logic) is not part of this
-  // repo. Both vars are optional: unset means "no paymaster configured", and
-  // the client degrades gracefully rather than erroring. Not yet wired into
-  // the live send flow — see paymaster.service.js.
+  // Private relayer that would sponsor transaction fees (Stellar fee-bump /
+  // sponsored reserves) so sending feels free. The relayer itself (a funded
+  // sponsor wallet + signing logic) is not part of this repo. Both vars are
+  // optional: unset means "no paymaster configured", and the client degrades
+  // gracefully rather than erroring. Not yet wired into the live send flow —
+  // see paymaster.service.js.
   paymaster: {
     serviceUrl: process.env.PAYMASTER_SERVICE_URL,
     // HMAC shared secret for the X-Sendam-Signature calling contract.

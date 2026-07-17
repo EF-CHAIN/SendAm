@@ -14,7 +14,7 @@ const steps = [
   {
     n: '3',
     title: 'Settle quietly',
-    desc: 'The orchestrator picks Lisk or Stellar while the user sees one clean receipt.',
+    desc: 'The orchestrator settles the payment on Stellar while the user sees one clean receipt.',
     command: 'Receipt ready',
   },
 ];

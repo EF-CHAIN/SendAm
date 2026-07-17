@@ -18,7 +18,7 @@ const features = [
   },
   {
     title: 'Multi-chain infrastructure',
-    desc: 'Lisk is the primary settlement layer, with Stellar reserved for cross-border corridors.',
+    desc: 'Payments settle on Stellar — a network built for fast, low-cost cross-border money movement.',
     icon: Network,
   },
 ];

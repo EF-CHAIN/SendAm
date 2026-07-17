@@ -22,36 +22,33 @@ called out explicitly wherever it applies, rather than left implied.
 ### Core platform — Built, deployment in progress
 
 WhatsApp-driven payment orchestration on Postgres/Prisma: direct-custody
-wallets (a Stellar and a Lisk wallet per user, keys generated and encrypted
-locally — see [`ARCHITECTURE.md`](ARCHITECTURE.md)), Lisk as the primary
-settlement rail with Stellar for cross-border corridors, KYC tiers
-with PIN verification, admin dashboard (users, wallets, transactions,
+Stellar wallets (one per user, keys generated and encrypted locally — see
+[`ARCHITECTURE.md`](ARCHITECTURE.md)), Stellar as the settlement rail, KYC
+tiers with PIN verification, admin dashboard (users, wallets, transactions,
 KYC, audit logs, system health), and BullMQ-based background
 processing for webhook/voice/receipt jobs.
 
-### Multi-chain foundation (Lisk) — Built, deployment in progress
+### Stellar-only refocus — Done
 
-- Chain-adapter pattern (`apps/api/src/wallet/`): Stellar and Lisk behind
-  one interface, product code never imports a chain SDK directly.
-- Every user gets a Stellar **and** a Lisk wallet — no "pick a chain" step.
-  `balance` reports both chains; a plain send detects the destination chain
-  from address shape and routes automatically.
-- Known gap, not hidden: Lisk Sepolia (testnet) has no Friendbot-equivalent
-  auto-fund API. New Lisk wallets are created but not auto-funded — the bot
-  gives manual faucet instructions instead of pretending funding happened.
-- Native assets only for now (XLM, native Lisk ETH) — no ERC-20/anchor-asset
-  support yet (the seam for it is `resolveAsset()` in each adapter).
+An earlier iteration ran a second chain (Lisk) behind a chain-registry
+abstraction with automatic rail selection. That was removed deliberately:
+a second chain doubled the custody, audit, and asset-support surface
+without adding user value. The codebase is now flattened to a single
+Stellar adapter; the multi-chain history is preserved in git.
 
-### Gas sponsorship (paymaster) — Client built, private service built, not deployed
+- Native asset only for now (XLM) — no anchor-asset support yet (the seam
+  for it is `resolveAsset()` in the adapter).
+
+### Fee sponsorship (paymaster) — Client built, private service built, not deployed
 
 A complete, real thin client (`apps/api/src/services/paymaster.service.js`,
 now speaking the shared HMAC calling contract) for the privately-operated
 **sendam-paymaster** service, which builds Stellar fee-bump / sponsored-
-reserve envelopes and plans EVM gas top-ups behind spend caps and a kill
-switch. Neither side is deployed yet, so the client always degrades
-gracefully and Lisk sends stay self-funded. Not yet wired into the live send
-flow. Wiring it in, once deployed, is a config change
-(`PAYMASTER_SERVICE_URL` + `PAYMASTER_SERVICE_SECRET`), not a code change.
+reserve envelopes behind spend caps and a kill switch. Neither side is
+deployed yet, so the client always degrades gracefully and sends stay
+self-funded. Not yet wired into the live send flow. Wiring it in, once
+deployed, is a config change (`PAYMASTER_SERVICE_URL` +
+`PAYMASTER_SERVICE_SECRET`), not a code change.
 
 ### Private-service split — Built (clients), services in private repos
 
@@ -102,8 +99,6 @@ deposit-notification poller remains a plausible future addition.
   serverless, see the [README](README.md#deployment) for why).
 - Apply the Prisma migration to a provisioned Neon database.
 - Point the WhatsApp webhook at the deployed host.
-- Configure a real Lisk RPC endpoint (`LISK_RPC_URL`) for mainnet or a less
-  rate-limited testnet provider.
 - Wire the price oracle into a WhatsApp reply.
 
 ## Security & production readiness
@@ -125,14 +120,13 @@ deposit-notification poller remains a plausible future addition.
 
 ## Chain depth
 
-- Support at least one non-native asset per chain (Stellar assets via
-  `changeTrust`, Lisk ERC-20/bridged USDC) — the seam, `resolveAsset()` in
-  each adapter, is already there.
+- Support at least one non-native Stellar asset via `changeTrust` (USDC,
+  anchor-issued assets) — the seam, `resolveAsset()` in the adapter, is
+  already there.
 - Implement SEP-10 (Stellar web authentication) — would give per-user
   authentication to the REST wallet API, currently its main open security
   gap alongside the compliance PIN/KYC-start endpoints.
-- Move from Lisk Sepolia to Lisk mainnet, and Stellar Testnet to mainnet,
-  with a vetted deployment for each.
+- Move from Stellar Testnet to mainnet with a vetted deployment.
 
 ## Test & robustness gaps
 
@@ -170,8 +164,8 @@ solid and deployed.
 - Micro-savings goals.
 - Yield on idle stablecoin balance — real differentiator, real
   smart-contract risk, don't rush.
-- Naira-pegged stablecoin support, if one becomes available on Stellar or
-  Lisk — avoids double FX conversion.
+- Naira-pegged stablecoin support, if one becomes available on Stellar —
+  avoids double FX conversion.
 - QR scan-to-pay (scan a merchant/peer code to pre-fill a send).
 - Family/shared wallet with approval controls.
 
