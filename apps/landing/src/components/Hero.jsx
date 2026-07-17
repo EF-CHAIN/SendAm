@@ -9,13 +9,13 @@ export default function Hero() {
         <div className="animate-fade-up text-center lg:text-left">
 
           <h1 className="mt-5 text-4xl font-extrabold leading-tight tracking-tight text-dark sm:text-5xl lg:text-6xl">
-            WhatsApp payments with <span className="text-primary">voice, escrow, and cash-out</span>.
+            WhatsApp payments with <span className="text-primary">chat and voice</span>.
           </h1>
 
           <p className="mx-auto mt-5 max-w-xl text-base text-slate-600 sm:text-lg lg:mx-0">
             SendAm maps your phone number to a managed wallet, routes each
-            payment over the best rail, and lets you send, receive, escrow, and
-            cash out without installing a crypto app.
+            payment over the best rail, and lets you send and receive money
+            without installing a crypto app.
           </p>
 
           <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:justify-center lg:justify-start">

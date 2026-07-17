@@ -135,7 +135,7 @@ const processMessage = async (phoneNumber, whatsappName, text) => {
   const normalized = String(text || '').trim().toLowerCase();
 
   if (['hi', 'hello', 'help', 'menu'].includes(normalized)) {
-    await sendTextMessage(phoneNumber, 'SendAm can help with send money, receive money, balance, escrow, nearby cash-out, contacts, transaction history, and receipts.');
+    await sendTextMessage(phoneNumber, 'SendAm can help with send money, receive money, balance, contacts, transaction history, and receipts.');
     return;
   }
 
@@ -165,16 +165,6 @@ const processMessage = async (phoneNumber, whatsappName, text) => {
     return;
   }
 
-  if (normalized.includes('cash-out') || normalized.includes('cash out') || normalized.includes('nearby')) {
-    await sendTextMessage(phoneNumber, 'Nearby cash-out is being routed to verified agents. Please share your area or enable the WhatsApp location flow.');
-    return;
-  }
-
-  if (normalized.includes('escrow')) {
-    await sendTextMessage(phoneNumber, 'Escrow is available for protected payments. Tell me the amount, recipient, and release terms.');
-    return;
-  }
-
   // Regex parser stays PRIMARY. The AI decoder is a guarded fallback for
   // messages the regex can't classify — it only ever proposes; a decoded
   // send re-enters the exact same confirmation + PIN + policy guardrails.
@@ -188,7 +178,7 @@ const processMessage = async (phoneNumber, whatsappName, text) => {
     return;
   }
 
-  await sendTextMessage(phoneNumber, 'I can help you send money, check balance, receive money, start escrow, find cash-out agents, or show receipts.');
+  await sendTextMessage(phoneNumber, 'I can help you send money, check balance, receive money, or show receipts.');
 };
 
 module.exports = {

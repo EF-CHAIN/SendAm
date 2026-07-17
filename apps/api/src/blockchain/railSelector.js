@@ -2,11 +2,8 @@ const DOMESTIC_COUNTRIES = new Set(['NG']);
 
 const normalizeCountry = (country) => (country || '').trim().toUpperCase();
 
-const selectRail = ({ sourceCountry = 'NG', destinationCountry = 'NG', routeType, forceRail }) => {
+const selectRail = ({ sourceCountry = 'NG', destinationCountry = 'NG', forceRail }) => {
   if (forceRail) return forceRail;
-  if (routeType === 'cash_in') return 'yellow-card';
-  if (routeType === 'cash_out') return 'paychant';
-  if (routeType === 'escrow') return 'lisk';
 
   const source = normalizeCountry(sourceCountry);
   const destination = normalizeCountry(destinationCountry);

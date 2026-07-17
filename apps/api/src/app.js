@@ -7,7 +7,6 @@ const rateLimit = require('express-rate-limit');
 const webhookRoutes = require('./routes/webhook.routes');
 const walletRoutes = require('./routes/wallet.routes');
 const adminRoutes = require('./routes/admin.routes');
-const escrowRoutes = require('./escrow/escrow.routes');
 const complianceRoutes = require('./compliance/compliance.routes');
 const pricingRoutes = require('./pricing/pricing.routes');
 
@@ -87,7 +86,6 @@ if (config.features.walletRestApi) {
 }
 
 app.use('/api/admin', adminRoutes);
-app.use('/api/escrow', escrowRoutes);
 app.use('/api/compliance', complianceRoutes);
 app.use('/api/pricing', pricingRoutes);
 

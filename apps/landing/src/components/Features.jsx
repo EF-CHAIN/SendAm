@@ -1,4 +1,4 @@
-import { Wallet, Mic, ShieldCheck, MapPin, ArrowLeftRight, Network } from 'lucide-react';
+import { Wallet, Mic, ArrowLeftRight, Network } from 'lucide-react';
 
 const features = [
   {
@@ -10,16 +10,6 @@ const features = [
     title: 'Voice-to-cash',
     desc: 'Send a voice note, confirm with PIN, and SendAm turns the intent into a payment.',
     icon: Mic,
-  },
-  {
-    title: 'Protected escrow',
-    desc: 'Lock funds, release on approval, refund after timeout, or escalate to an arbiter.',
-    icon: ShieldCheck,
-  },
-  {
-    title: 'Nearby cash-out',
-    desc: 'Find verified agents for local cash-out while the backend handles ramp settlement.',
-    icon: MapPin,
   },
   {
     title: 'Cross-border transfers',

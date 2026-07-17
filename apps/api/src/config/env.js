@@ -59,7 +59,6 @@ module.exports = {
     chainId: Number(process.env.LISK_CHAIN_ID || 4202),
     rpcUrl: process.env.LISK_RPC_URL || 'https://rpc.sepolia-api.lisk.com',
     explorerUrl: process.env.LISK_EXPLORER_URL || 'https://sepolia-blockscout.lisk.com',
-    escrowContractAddress: process.env.LISK_ESCROW_CONTRACT_ADDRESS,
   },
   stellar: {
     network: process.env.STELLAR_NETWORK || 'testnet',
@@ -69,16 +68,6 @@ module.exports = {
     coinGeckoBaseUrl: process.env.COINGECKO_BASE_URL || 'https://api.coingecko.com/api/v3',
     coinGeckoApiKey: process.env.COINGECKO_API_KEY,
     exchangeRateApiKey: process.env.EXCHANGERATE_API_KEY,
-  },
-  ramps: {
-    yellowCard: {
-      apiUrl: process.env.YELLOW_CARD_API_URL,
-      apiKey: process.env.YELLOW_CARD_API_KEY,
-    },
-    paychant: {
-      apiUrl: process.env.PAYCHANT_API_URL,
-      apiKey: process.env.PAYCHANT_API_KEY,
-    },
   },
   compliance: {
     provider: process.env.KYC_PROVIDER || 'smileid',

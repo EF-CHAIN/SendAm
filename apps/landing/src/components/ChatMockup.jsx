@@ -11,13 +11,13 @@ const messages = [
   { from: 'user', text: '****', time: '9:42' },
   {
     from: 'bot',
-    text: 'Payment sent.\nReceipt: SDA-9284\nYou can also say: escrow, cash-out, balance, history.',
+    text: 'Payment sent.\nReceipt: SDA-9284\nYou can also say: balance, history.',
     time: '9:42',
   },
-  { from: 'user', text: 'voice note: cash out near Ikeja', time: '9:43', voice: true },
+  { from: 'user', text: 'voice note: what is my balance', time: '9:43', voice: true },
   {
     from: 'bot',
-    text: 'I found nearby cash-out agents. Share location to continue.',
+    text: 'Your SendAm balances:\nlisk: 12.4 ETH\nstellar: 340 XLM',
     time: '9:43',
   },
 ];

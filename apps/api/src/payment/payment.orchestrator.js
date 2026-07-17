@@ -26,7 +26,6 @@ const buildReceipt = ({ transaction }) => {
 };
 
 const NATIVE_ASSET_BY_RAIL = { stellar: 'XLM', lisk: 'ETH' };
-const RAILS_WITH_NO_DESTINATION_CHAIN = ['cash_in', 'cash_out', 'escrow'];
 
 const executePayment = async ({
   sender,
@@ -43,20 +42,17 @@ const executePayment = async ({
   if (!senderUser) throw new Error('Sender not found.');
 
   // A destination address decides which chain a plain P2P send uses — the
-  // user never declares a chain. Ramp/escrow routes have no on-chain
-  // destination to detect a chain from, so they keep selectRail's existing
-  // routeType-based precedence untouched.
+  // user never declares a chain.
   let effectiveForceRail = forceRail;
-  if (!effectiveForceRail && destination && !RAILS_WITH_NO_DESTINATION_CHAIN.includes(routeType)) {
+  if (!effectiveForceRail && destination) {
     const detectedChain = detectChainFromAddress(destination);
     if (detectedChain) effectiveForceRail = detectedChain;
   }
 
-  const rail = selectRail({ sourceCountry, destinationCountry, routeType, forceRail: effectiveForceRail });
+  const rail = selectRail({ sourceCountry, destinationCountry, forceRail: effectiveForceRail });
   // Direct custody only supports each chain's native asset for now (see
   // wallet/stellar.adapter.js and wallet/lisk.adapter.js resolveAsset) — no
-  // ERC-20/anchor-asset support yet. Fiat ramp rails aren't chain-native, so
-  // they keep the USDC default.
+  // ERC-20/anchor-asset support yet.
   const effectiveAsset = asset || NATIVE_ASSET_BY_RAIL[rail] || 'USDC';
 
   const compliance = await enforceTransactionPolicy({
@@ -77,7 +73,7 @@ const executePayment = async ({
   let transaction = await prisma.transaction.create({
     data: {
       userId: senderUser.id,
-      type: routeType === 'escrow' ? 'escrow_create' : 'send',
+      type: 'send',
       amount: String(amount),
       asset: effectiveAsset,
       recipientPhoneNumber,
@@ -95,30 +91,16 @@ const executePayment = async ({
   });
 
   try {
-    if (rail === 'lisk' || rail === 'stellar') {
-      const wallet = await walletService.createOrGetWallet({ user: senderUser, chain: rail });
-      const result = await walletService.submitPayment({ wallet, destination, amount, asset: effectiveAsset });
-      transaction = await prisma.transaction.update({
-        where: { id: transaction.id },
-        data: {
-          status: 'success',
-          txHash: result.txHash,
-          explorerUrl: result.explorerUrl,
-        },
-      });
-    } else {
-      transaction = await prisma.transaction.update({
-        where: { id: transaction.id },
-        data: {
-          status: 'pending',
-          metadata: {
-            ...transaction.metadata,
-            rampProvider: rail,
-            note: 'Fiat ramp provider execution is queued for provider-specific settlement.',
-          },
-        },
-      });
-    }
+    const wallet = await walletService.createOrGetWallet({ user: senderUser, chain: rail });
+    const result = await walletService.submitPayment({ wallet, destination, amount, asset: effectiveAsset });
+    transaction = await prisma.transaction.update({
+      where: { id: transaction.id },
+      data: {
+        status: 'success',
+        txHash: result.txHash,
+        explorerUrl: result.explorerUrl,
+      },
+    });
 
     await writeAuditLog({
       actorType: 'user',

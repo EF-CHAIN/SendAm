@@ -53,11 +53,6 @@ export const getAdminTransactions = async ({ page = 1, limit = 50 } = {}) => {
   return data;
 };
 
-export const getAdminEscrows = async () => {
-  const { data } = await api.get('/admin/escrows');
-  return data;
-};
-
 export const getAdminKyc = async () => {
   const { data } = await api.get('/admin/kyc');
   return data;

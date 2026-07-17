@@ -24,9 +24,9 @@ called out explicitly wherever it applies, rather than left implied.
 WhatsApp-driven payment orchestration on Postgres/Prisma: direct-custody
 wallets (a Stellar and a Lisk wallet per user, keys generated and encrypted
 locally — see [`ARCHITECTURE.md`](ARCHITECTURE.md)), Lisk as the primary
-settlement rail with Stellar for cross-border corridors, escrow, KYC tiers
+settlement rail with Stellar for cross-border corridors, KYC tiers
 with PIN verification, admin dashboard (users, wallets, transactions,
-escrows, KYC, audit logs, system health), and BullMQ-based background
+KYC, audit logs, system health), and BullMQ-based background
 processing for webhook/voice/receipt jobs.
 
 ### Multi-chain foundation (Lisk) — Built, deployment in progress
@@ -139,7 +139,7 @@ deposit-notification poller remains a plausible future addition.
 - Integration tests for the full webhook flow (inbound message → parse →
   confirm → transfer), with the wallet provider and WhatsApp mocked at the
   HTTP boundary. Current suite is unit-only.
-- Tests for the payment orchestrator, escrow lifecycle, and compliance
+- Tests for the payment orchestrator and compliance
   policy enforcement (tier limits, risk scoring).
 - Idempotency tests: duplicate webhook delivery must not double-send.
 - A CI coverage gate once integration tests exist.

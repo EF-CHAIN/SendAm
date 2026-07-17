@@ -50,7 +50,7 @@ transfers) isn't dependent on a third-party provider's API.
 
 Everything that makes SendAm's payment flow work is in this repository:
 wallet creation, balance checks, payment orchestration, rail selection, the
-WhatsApp command flow, compliance/KYC gating, escrow, and the admin
+WhatsApp command flow, compliance/KYC gating, and the admin
 dashboard. A few capabilities depend on infrastructure that has to run
 privately — holding real funds, or credentials that shouldn't ship in a
 public repo — and this repo only contains a thin, well-defined client for

@@ -1,10 +1,10 @@
 # SendAm
 
-WhatsApp-first payments with direct-custody wallets, voice-to-cash, escrow, nearby cash-out, and automatic payment-rail routing.
+WhatsApp-first payments with direct-custody wallets, voice-to-cash, and automatic payment-rail routing.
 
-SendAm maps a WhatsApp phone number to a Stellar wallet and a Lisk wallet and lets users send, receive, escrow, check balances, request receipts, and find cash-out options from chat. The user experience hides blockchain complexity: the backend decides whether a payment should use Lisk, Stellar corridor rails, or a fiat on/off-ramp provider, based on the destination address.
+SendAm maps a WhatsApp phone number to a Stellar wallet and a Lisk wallet and lets users send, receive, check balances, and request receipts from chat. The user experience hides blockchain complexity: the backend decides whether a payment should use Lisk or Stellar corridor rails, based on the destination address.
 
-> Current status: architecture refactor in progress. The project now has production-oriented module boundaries, queue scaffolding, managed-wallet abstractions, compliance models, and expanded admin surfaces. Live money movement still requires provider credentials, Lisk escrow contracts, KYC/ramp onboarding, monitoring, and compliance review.
+> Current status: architecture refactor in progress. The project now has production-oriented module boundaries, queue scaffolding, managed-wallet abstractions, compliance models, and expanded admin surfaces. Live money movement still requires provider credentials, KYC onboarding, monitoring, and compliance review.
 
 ## Product Direction
 
@@ -14,7 +14,6 @@ SendAm maps a WhatsApp phone number to a Stellar wallet and a Lisk wallet and le
 - Direct custody: keys generated and encrypted (AES-256-GCM) locally, not managed by a third-party provider.
 - Lisk as the primary settlement layer.
 - Stellar only for cross-border payment corridors.
-- Yellow Card and Paychant for fiat on/off ramp flows.
 - KYC, PIN verification, audit logs, limits, and risk scoring.
 - BullMQ background processing for webhook, voice, receipt, and settlement jobs.
 
@@ -38,7 +37,6 @@ src/
   whatsapp/
   wallet/
   payment/
-  escrow/
   compliance/
   voice/
   notifications/
@@ -55,13 +53,12 @@ src/
 - `wallet`: Direct-custody chain adapters (Stellar, Lisk) plus a `WalletService` abstraction for create/get wallet, send, balance, and transaction history. App code never imports a chain SDK directly — see `chainRegistry.js`.
 - `payment`: Payment Orchestrator for quotes, fees, rail selection, transaction execution, and receipts.
 - `blockchain`: Rail selection. Lisk is primary; Stellar is selected for cross-border routes.
-- `whatsapp`: Conversational assistant for send money, receive money, balance, escrow, cash-out, contacts, history, and receipts.
+- `whatsapp`: Conversational assistant for send money, receive money, balance, contacts, history, and receipts.
 - `voice`: WhatsApp audio download and Deepgram transcription pipeline.
-- `escrow`: Lisk escrow lifecycle scaffolding for create, release, refund, dispute, and arbiter approval.
 - `compliance`: KYC tiers, transaction limits, PIN verification, and risk scoring.
-- `pricing`: FX/quote service hooks for ExchangeRate API, CoinGecko, and ramp quotes.
+- `pricing`: FX/quote service hooks for ExchangeRate API and CoinGecko.
 - `queues/jobs`: BullMQ processors for asynchronous webhook and voice processing.
-- `admin`: Monitoring endpoints for transactions, KYC, escrows, audit logs, and system health.
+- `admin`: Monitoring endpoints for transactions, KYC, audit logs, and system health.
 
 ## API Summary
 
@@ -70,12 +67,6 @@ POST /api/wallet/create
 GET  /api/wallet/:phone/balance
 GET  /api/wallet/:phone/transactions
 POST /api/wallet/send
-
-POST /api/escrow
-GET  /api/escrow
-POST /api/escrow/:id/dispute
-POST /api/escrow/:id/release
-POST /api/escrow/:id/refund
 
 POST /api/pricing/quote
 
@@ -88,7 +79,6 @@ GET  /api/admin/stats
 GET  /api/admin/users
 GET  /api/admin/wallets
 GET  /api/admin/transactions
-GET  /api/admin/escrows
 GET  /api/admin/kyc
 GET  /api/admin/audit-logs
 GET  /api/admin/system-health
@@ -170,13 +160,11 @@ npm run build:admin
 
 ## Production Readiness Gaps
 
-- Deploy and verify Lisk escrow smart contracts.
 - Support non-native assets per chain (Stellar `changeTrust`, Lisk bridged/ERC-20 USDC).
 - Wire Smile ID or Dojah production KYC callbacks.
-- Wire Yellow Card and Paychant quote/execution callbacks.
 - Apply the Prisma migration to the Neon database and run provider-level smoke tests.
 - Split background workers from the API process in deployment.
-- Add automated tests for orchestrator, wallet, webhook, voice, compliance, and escrow flows.
+- Add automated tests for orchestrator, wallet, webhook, voice, and compliance flows.
 - Add monitoring, alerting, audit review workflows, and admin RBAC.
 - Build real per-user authentication for the compliance PIN and KYC-start endpoints — they're gated off in production by default (`ENABLE_WALLET_REST_API`, same as the wallet REST API) until then, so they have no working production path yet.
 
@@ -226,7 +214,6 @@ Admin app (`apps/admin`):
 /users            User table
 /wallets          Wallet table
 /transactions     Transaction table
-/escrows          Escrow table
 /kyc              KYC review
 /audit-logs       Audit logs
 /system-health    System health
@@ -251,7 +238,7 @@ Still required before a real-money launch:
 - Build real per-user authentication for `POST /api/compliance/pin` and `POST /api/compliance/kyc/start` so they can be enabled in production — right now they're only usable with the flag on, which means no user can self-serve a PIN or start KYC in production at all.
 - Add secure, managed secret/key management (KMS/HSM) instead of a single static `ENCRYPTION_KEY` for wallet private keys; support key rotation.
 - Add audit-log coverage for all sensitive admin and compliance actions, plus monitoring/alerting.
-- Expand the automated test suite to cover the payment orchestrator, wallet, webhook, voice, compliance, and escrow flows.
+- Expand the automated test suite to cover the payment orchestrator, wallet, webhook, voice, and compliance flows.
 - Replace the single shared admin password with real admin accounts and roles.
 - Complete legal, compliance, KYC, AML, and custody review where required.
 
