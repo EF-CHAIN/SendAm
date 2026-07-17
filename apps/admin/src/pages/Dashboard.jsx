@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { getAdminStats } from '@/lib/adminApi';
 import StatCard from '@/components/StatCard';
 import Loader from '@shared/Loader';
-import { Users, Wallet, ArrowRightLeft, CheckCircle2, XCircle, ShieldCheck, FileSearch, MapPin } from 'lucide-react';
+import { Users, Wallet, ArrowRightLeft, CheckCircle2, XCircle, FileSearch } from 'lucide-react';
 
 export default function Dashboard() {
   const [stats, setStats] = useState(null);
@@ -37,15 +37,13 @@ export default function Dashboard() {
         <StatCard title="Successful Txs" value={stats?.successfulTransactions || 0} icon={CheckCircle2} colorClass="text-green-500" />
         <StatCard title="Failed Txs" value={stats?.failedTransactions || 0} icon={XCircle} colorClass="text-red-500" />
         <StatCard title="Pending Txs" value={stats?.pendingTransactions || 0} icon={ArrowRightLeft} colorClass="text-amber-500" />
-        <StatCard title="Open Escrows" value={stats?.openEscrows || 0} icon={ShieldCheck} colorClass="text-emerald-500" />
         <StatCard title="Pending KYC" value={stats?.pendingKyc || 0} icon={FileSearch} colorClass="text-indigo-500" />
-        <StatCard title="Cash-out Locations" value={stats?.activeCashoutLocations || 0} icon={MapPin} colorClass="text-sky-500" />
       </div>
 
       <div className="mt-8 sm:mt-12 bg-white p-5 sm:p-8 rounded-2xl border border-gray-100 shadow-sm">
         <h3 className="text-lg font-bold mb-4">Welcome to SendAm Admin</h3>
         <p className="text-gray-600 leading-relaxed max-w-3xl">
-          This dashboard monitors the upgraded SendAm architecture: managed wallets, payment routing, escrow, KYC, cash-out locations, audit logs, and system health. Lisk is the primary settlement layer, while Stellar is reserved for cross-border corridors.
+          This dashboard monitors the SendAm architecture: direct-custody wallets, payment orchestration, KYC, audit logs, and system health. All payments settle on Stellar.
         </p>
       </div>
     </div>

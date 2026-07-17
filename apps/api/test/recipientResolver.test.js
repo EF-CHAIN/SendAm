@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const { createRecipientResolver } = require('../src/whatsapp/recipientResolver');
 
 const STELLAR_ACCOUNT = `G${'A'.repeat(55)}`;
+const CONTACT_ACCOUNT = `G${'B'.repeat(55)}`;
 const user = { id: 'u_1' };
 
 const prismaWithAliases = (aliases) => ({
@@ -22,11 +23,11 @@ const nsWith = (names, enabled = true) => ({
 
 test('saved contacts win for bare names', async () => {
   const resolve = createRecipientResolver({
-    prisma: prismaWithAliases({ mama: { target: '0xab12ab12ab12ab12ab12ab12ab12ab12ab12ab12', targetType: 'lisk' } }),
+    prisma: prismaWithAliases({ mama: { target: CONTACT_ACCOUNT, targetType: 'stellar' } }),
     nsClient: nsWith({}),
   });
   const result = await resolve(user, 'Mama ');
-  assert.deepEqual(result, { destination: '0xab12ab12ab12ab12ab12ab12ab12ab12ab12ab12', label: 'mama' });
+  assert.deepEqual(result, { destination: CONTACT_ACCOUNT, label: 'mama' });
 });
 
 test('sigil-prefixed names resolve through the NS', async () => {
@@ -39,7 +40,7 @@ test('sigil-prefixed names resolve through the NS', async () => {
 });
 
 test('collision rule: bare name hits the contact, @name hits the global registry', async () => {
-  const contactTarget = '0xcd34cd34cd34cd34cd34cd34cd34cd34cd34cd34';
+  const contactTarget = CONTACT_ACCOUNT;
   const resolve = createRecipientResolver({
     prisma: prismaWithAliases({ ada: { target: contactTarget } }),
     nsClient: nsWith({ ada: STELLAR_ACCOUNT }),
@@ -50,7 +51,7 @@ test('collision rule: bare name hits the contact, @name hits the global registry
 });
 
 test('a saved alias that IS sigil-form still wins over NS (contacts first)', async () => {
-  const contactTarget = '0xcd34cd34cd34cd34cd34cd34cd34cd34cd34cd34';
+  const contactTarget = CONTACT_ACCOUNT;
   const resolve = createRecipientResolver({
     prisma: prismaWithAliases({ '@ada': { target: contactTarget } }),
     nsClient: nsWith({ ada: STELLAR_ACCOUNT }),

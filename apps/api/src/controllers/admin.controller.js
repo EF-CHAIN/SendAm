@@ -33,10 +33,8 @@ const getStats = async (req, res, next) => {
       successfulTransactions,
       failedTransactions,
       pendingTransactions,
-      openEscrows,
       pendingKyc,
       voiceCommands,
-      activeCashoutLocations,
     ] = await Promise.all([
       prisma.user.count(),
       prisma.wallet.count(),
@@ -44,10 +42,8 @@ const getStats = async (req, res, next) => {
       prisma.transaction.count({ where: { status: 'success' } }),
       prisma.transaction.count({ where: { status: 'failed' } }),
       prisma.transaction.count({ where: { status: { in: ['pending', 'processing'] } } }),
-      prisma.escrow.count({ where: { status: { in: ['funding', 'locked', 'disputed'] } } }),
       prisma.kycProfile.count({ where: { status: { in: ['pending', 'review'] } } }),
       prisma.voiceCommand.count(),
-      prisma.cashoutLocation.count({ where: { status: 'active' } }),
     ]);
 
     sendSuccess(res, {
@@ -57,10 +53,8 @@ const getStats = async (req, res, next) => {
       successfulTransactions,
       failedTransactions,
       pendingTransactions,
-      openEscrows,
       pendingKyc,
       voiceCommands,
-      activeCashoutLocations,
     });
   } catch (error) {
     next(error);
@@ -131,21 +125,6 @@ const getTransactions = async (req, res, next) => {
   }
 };
 
-const getEscrows = async (_req, res, next) => {
-  try {
-    const escrows = await prisma.escrow.findMany({
-      include: { creator: { select: { phoneNumber: true, whatsappName: true } } },
-      orderBy: { createdAt: 'desc' },
-    });
-    sendSuccess(res, withIdAliases(escrows.map((escrow) => ({
-      ...escrow,
-      creatorId: escrow.creator,
-    }))));
-  } catch (error) {
-    next(error);
-  }
-};
-
 const getKycProfiles = async (_req, res, next) => {
   try {
     const profiles = await prisma.kycProfile.findMany({
@@ -179,8 +158,7 @@ const getSystemHealth = async (_req, res, next) => {
       api: 'ok',
       database: 'ok',
       queues: process.env.REDIS_URL || process.env.UPSTASH_REDIS_URL ? 'redis-configured' : 'inline-dev-mode',
-      primarySettlement: 'lisk',
-      corridorRail: 'stellar',
+      settlementRail: 'stellar',
       custodyModel: 'direct',
       timestamp: new Date().toISOString(),
     });
@@ -195,7 +173,6 @@ module.exports = {
   getUsers,
   getWallets,
   getTransactions,
-  getEscrows,
   getKycProfiles,
   getAuditLogs,
   getSystemHealth,

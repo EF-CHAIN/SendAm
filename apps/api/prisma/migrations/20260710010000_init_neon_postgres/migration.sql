@@ -95,7 +95,7 @@ CREATE TABLE "Escrow" (
     "arbiterId" TEXT,
     "amount" TEXT NOT NULL,
     "asset" TEXT NOT NULL DEFAULT 'USDC',
-    "chain" TEXT NOT NULL DEFAULT 'lisk',
+    "chain" TEXT NOT NULL DEFAULT 'stellar',
     "contractAddress" TEXT,
     "contractEscrowId" TEXT,
     "status" TEXT NOT NULL DEFAULT 'draft',

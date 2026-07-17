@@ -8,7 +8,7 @@ const faqs = [
   },
   {
     q: 'Which blockchain does SendAm use?',
-    a: 'Lisk is the primary settlement layer. Stellar is used only for cross-border corridors where it is the better payment rail.',
+    a: 'SendAm settles on Stellar, a payment network designed for fast, low-cost transfers and cross-border corridors.',
   },
   {
     q: 'How are wallets managed?',

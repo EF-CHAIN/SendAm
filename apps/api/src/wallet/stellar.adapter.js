@@ -1,4 +1,5 @@
-// Stellar implementation of the chain-adapter interface (see ./chainRegistry.js).
+// Stellar wallet adapter — keypair creation, Friendbot funding, balance,
+// and payment submission. The only chain SDK integration in the codebase.
 const { server, StellarSdk } = require('../config/stellar');
 const axios = require('axios');
 const logger = require('../utils/logger');

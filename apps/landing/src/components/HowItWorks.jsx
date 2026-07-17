@@ -2,7 +2,7 @@ const steps = [
   {
     n: '1',
     title: 'Chat or speak',
-    desc: 'Send a message or voice note for balance, payment, escrow, receipt, or cash-out.',
+    desc: 'Send a message or voice note for balance, payment, or receipt.',
     command: 'Send 25000 NGN to Ada',
   },
   {
@@ -14,7 +14,7 @@ const steps = [
   {
     n: '3',
     title: 'Settle quietly',
-    desc: 'The orchestrator picks Lisk, Stellar, or ramp partners while the user sees one clean receipt.',
+    desc: 'The orchestrator settles the payment on Stellar while the user sees one clean receipt.',
     command: 'Receipt ready',
   },
 ];

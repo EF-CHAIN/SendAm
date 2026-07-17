@@ -1,6 +1,5 @@
 const walletService = require('../wallet/wallet.service');
-const { detectChainFromAddress } = require('../wallet/chainRegistry');
-const { selectRail } = require('../blockchain/railSelector');
+const { validateAddress } = require('../wallet/stellar.adapter');
 const { createQuote } = require('../pricing/pricing.service');
 const { writeAuditLog } = require('../common/audit.service');
 const { enforceTransactionPolicy } = require('../compliance/compliance.service');
@@ -25,8 +24,10 @@ const buildReceipt = ({ transaction }) => {
   };
 };
 
-const NATIVE_ASSET_BY_RAIL = { stellar: 'XLM', lisk: 'ETH' };
-const RAILS_WITH_NO_DESTINATION_CHAIN = ['cash_in', 'cash_out', 'escrow'];
+// Stellar-only: every payment settles on Stellar. routeType survives as a
+// compliance/reporting label computed from the countries involved.
+const RAIL = 'stellar';
+const NATIVE_ASSET = 'XLM';
 
 const executePayment = async ({
   sender,
@@ -37,32 +38,25 @@ const executePayment = async ({
   sourceCountry = 'NG',
   destinationCountry = 'NG',
   routeType,
-  forceRail,
 }) => {
   const senderUser = sender;
   if (!senderUser) throw new Error('Sender not found.');
 
-  // A destination address decides which chain a plain P2P send uses — the
-  // user never declares a chain. Ramp/escrow routes have no on-chain
-  // destination to detect a chain from, so they keep selectRail's existing
-  // routeType-based precedence untouched.
-  let effectiveForceRail = forceRail;
-  if (!effectiveForceRail && destination && !RAILS_WITH_NO_DESTINATION_CHAIN.includes(routeType)) {
-    const detectedChain = detectChainFromAddress(destination);
-    if (detectedChain) effectiveForceRail = detectedChain;
+  if (destination && !validateAddress(String(destination).trim())) {
+    throw new Error('Destination must be a valid Stellar address.');
   }
 
-  const rail = selectRail({ sourceCountry, destinationCountry, routeType, forceRail: effectiveForceRail });
-  // Direct custody only supports each chain's native asset for now (see
-  // wallet/stellar.adapter.js and wallet/lisk.adapter.js resolveAsset) — no
-  // ERC-20/anchor-asset support yet. Fiat ramp rails aren't chain-native, so
-  // they keep the USDC default.
-  const effectiveAsset = asset || NATIVE_ASSET_BY_RAIL[rail] || 'USDC';
+  const rail = RAIL;
+  // Direct custody only supports the native asset for now (see
+  // wallet/stellar.adapter.js resolveAsset) — no anchor-asset support yet.
+  const effectiveAsset = asset || NATIVE_ASSET;
+  const effectiveRouteType = routeType
+    || (sourceCountry && destinationCountry && sourceCountry !== destinationCountry ? 'cross_border' : 'domestic');
 
   const compliance = await enforceTransactionPolicy({
     user: senderUser,
     amount,
-    routeType: routeType || (rail === 'stellar' ? 'cross_border' : 'domestic'),
+    routeType: effectiveRouteType,
     destinationCountry,
   });
   const quote = await createQuote({
@@ -77,13 +71,13 @@ const executePayment = async ({
   let transaction = await prisma.transaction.create({
     data: {
       userId: senderUser.id,
-      type: routeType === 'escrow' ? 'escrow_create' : 'send',
+      type: 'send',
       amount: String(amount),
       asset: effectiveAsset,
       recipientPhoneNumber,
       destination,
       rail,
-      routeType: routeType || (rail === 'stellar' ? 'cross_border' : 'domestic'),
+      routeType: effectiveRouteType,
       quoteId: quote.id,
       status: 'processing',
       metadata: {
@@ -95,30 +89,16 @@ const executePayment = async ({
   });
 
   try {
-    if (rail === 'lisk' || rail === 'stellar') {
-      const wallet = await walletService.createOrGetWallet({ user: senderUser, chain: rail });
-      const result = await walletService.submitPayment({ wallet, destination, amount, asset: effectiveAsset });
-      transaction = await prisma.transaction.update({
-        where: { id: transaction.id },
-        data: {
-          status: 'success',
-          txHash: result.txHash,
-          explorerUrl: result.explorerUrl,
-        },
-      });
-    } else {
-      transaction = await prisma.transaction.update({
-        where: { id: transaction.id },
-        data: {
-          status: 'pending',
-          metadata: {
-            ...transaction.metadata,
-            rampProvider: rail,
-            note: 'Fiat ramp provider execution is queued for provider-specific settlement.',
-          },
-        },
-      });
-    }
+    const wallet = await walletService.createOrGetWallet({ user: senderUser });
+    const result = await walletService.submitPayment({ wallet, destination, amount, asset: effectiveAsset });
+    transaction = await prisma.transaction.update({
+      where: { id: transaction.id },
+      data: {
+        status: 'success',
+        txHash: result.txHash,
+        explorerUrl: result.explorerUrl,
+      },
+    });
 
     await writeAuditLog({
       actorType: 'user',

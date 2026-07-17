@@ -1,36 +1,32 @@
 # SendAm API
 
-Express backend for the new SendAm architecture: WhatsApp conversational payments, direct-custody wallets, payment orchestration, compliance, voice transcription, escrow, pricing, queues, and admin monitoring.
+Express backend for the new SendAm architecture: WhatsApp conversational payments, direct-custody wallets, payment orchestration, compliance, voice transcription, pricing, queues, and admin monitoring.
 
 ## Architecture
 
-The API is moving away from the original Stellar-only wallet bot. The current backend now routes work through these modules:
+The backend routes work through these modules:
 
 ```text
 src/
   whatsapp/      Conversational assistant
-  wallet/        Chain adapters (Stellar, Lisk) + WalletService abstraction
+  wallet/        Stellar adapter + WalletService abstraction
   payment/       Payment Orchestrator
-  escrow/        Lisk escrow lifecycle
   compliance/    KYC tiers, PIN, risk, limits
   voice/         Voice note download + transcription
   pricing/       FX and fee quotes
-  blockchain/    Rail selection
   queues/        BullMQ queue helpers
   jobs/          Background processors
   common/        Shared audit helpers
 ```
 
-## Payment Rails
+## Payment Rail
 
-- Lisk is the primary settlement layer.
-- Stellar is reserved for cross-border corridors.
-- Yellow Card and Paychant are intended for NGN/USDC cash-in and cash-out.
-- The destination address decides which chain a plain send uses (Stellar `G...` StrKey vs. Lisk `0x...`); users never choose or see the rail explicitly — the Payment Orchestrator records it internally.
+- All payments settle on Stellar.
+- Destinations are Stellar `G...` StrKey addresses; users never see rail mechanics — the Payment Orchestrator records everything internally.
 
 ## Wallets
 
-`src/wallet/wallet.service.js` is the only backend surface that should talk to a chain adapter (`stellar.adapter.js`, `lisk.adapter.js`, resolved via `chainRegistry.js`). Direct custody: each adapter generates a keypair, and the private key is encrypted (AES-256-GCM, `services/crypto.service.js`) before being stored — one `Wallet` row per user per chain.
+`src/wallet/wallet.service.js` is the only backend surface that should talk to the Stellar adapter (`stellar.adapter.js`). Direct custody: the adapter generates a keypair, and the private key is encrypted (AES-256-GCM, `services/crypto.service.js`) before being stored — one `Wallet` row per user.
 
 ## Queues
 
@@ -41,14 +37,10 @@ WhatsApp webhooks return `200` immediately, then enqueue work through BullMQ whe
 Use `.env.example`. The main provider keys are:
 
 ```text
-LISK_RPC_URL=
-LISK_ESCROW_CONTRACT_ADDRESS=
 REDIS_URL=
 DEEPGRAM_API_KEY=
 SMILE_ID_PARTNER_ID=
 SMILE_ID_API_KEY=
-YELLOW_CARD_API_KEY=
-PAYCHANT_API_KEY=
 EXCHANGERATE_API_KEY=
 ```
 
@@ -57,7 +49,7 @@ EXCHANGERATE_API_KEY=
 - Node.js
 - Express
 - PostgreSQL (Neon) with Prisma
-- `@stellar/stellar-sdk`, `ethers` (Lisk)
+- `@stellar/stellar-sdk`
 - WhatsApp Business Cloud API
 - BullMQ / Redis
 - Axios
@@ -73,13 +65,11 @@ apps/api/
     config/        Environment and database configuration
     controllers/   Webhook, wallet, and admin request handlers
     whatsapp/      Conversational assistant
-    wallet/        Chain adapters (Stellar, Lisk) + WalletService abstraction
+    wallet/        Stellar adapter + WalletService abstraction
     payment/       Payment Orchestrator
-    escrow/        Lisk escrow lifecycle
     compliance/    KYC tiers, PIN, risk, limits
     voice/         Voice note download + transcription
     pricing/       FX and fee quotes
-    blockchain/    Rail selection
     queues/        BullMQ queue helpers
     jobs/          Background processors
     middlewares/   Error handling, not-found, admin auth, webhook verify,
@@ -128,7 +118,6 @@ GET  /api/admin/stats          (requires Bearer token)
 GET  /api/admin/users          (requires Bearer token)
 GET  /api/admin/wallets        (requires Bearer token)
 GET  /api/admin/transactions   (requires Bearer token)
-GET  /api/admin/escrows        (requires Bearer token)
 GET  /api/admin/kyc            (requires Bearer token)
 GET  /api/admin/audit-logs     (requires Bearer token)
 GET  /api/admin/system-health  (requires Bearer token)
@@ -273,7 +262,7 @@ Send a payment:
 ```bash
 curl -X POST http://localhost:3002/api/wallet/send \
   -H "Content-Type: application/json" \
-  -d '{"phoneNumber":"+2348000000000","amount":"5","destination":"0xDESTINATIONADDRESS"}'
+  -d '{"phoneNumber":"+2348000000000","amount":"5","destination":"GDESTINATIONSTELLARADDRESS"}'
 ```
 
 ## Testing WhatsApp Webhooks Locally
@@ -305,7 +294,7 @@ Before a real-money launch, this backend still needs:
 - Managed secret/key management (KMS/HSM) for provider credentials, with key rotation.
 - Audit-log coverage for all sensitive admin and compliance actions, plus monitoring and alerting.
 - Replacement of the single shared admin password with real admin accounts and roles.
-- Broader automated test coverage (payment orchestrator, wallet, webhook, voice, compliance, and escrow flows).
+- Broader automated test coverage (payment orchestrator, wallet, webhook, voice, and compliance flows).
 - Legal, compliance, KYC, AML, and custody review where required.
 
 ## Current Limitations
@@ -314,4 +303,4 @@ Before a real-money launch, this backend still needs:
 - Single shared admin password (no per-admin accounts or roles yet).
 - REST wallet API, compliance PIN, and KYC-start endpoints are unauthenticated by design and disabled in production by default (see above) — no working production path until real per-user auth exists.
 - No customer web login/signup — WhatsApp phone number is the identity.
-- Stellar corridor and fiat ramp execution are stubbed pending provider/custody onboarding.
+- Stellar corridor execution is stubbed pending provider/custody onboarding.

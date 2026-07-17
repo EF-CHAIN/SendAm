@@ -1,6 +1,6 @@
 //# Contributing to SendAm
 
-Thank you for your interest in contributing to SendAm. SendAm is an open-source WhatsApp-first payments MVP (Lisk + Stellar, direct-custody wallets) focused on making blockchain payments easier for mobile-first users.
+Thank you for your interest in contributing to SendAm. SendAm is an open-source WhatsApp-first payments MVP (Stellar, direct-custody wallets) focused on making blockchain payments easier for mobile-first users.
 
 Contributions are welcome across product, engineering, documentation, testing, security, and Stellar ecosystem integrations.
 
@@ -11,8 +11,8 @@ By participating in this project you agree to abide by our [Code of Conduct](COD
 SendAm currently focuses on:
 
 - WhatsApp-based wallet commands.
-- Direct-custody wallet creation on Stellar and Lisk (testnets).
-- Native-asset balance checks and transfers (XLM, Lisk ETH).
+- Direct-custody wallet creation on Stellar (testnet).
+- Native-asset balance checks and transfers (XLM).
 - Saved recipient aliases, with optional global-name resolution via the
   private naming service.
 - Confirmation-based payment flow (PIN + policy guardrails).
@@ -239,22 +239,6 @@ When contributing Stellar functionality:
 - Include Stellar Expert links where useful.
 - Be careful with custody-related changes.
 - Document any assumptions around assets, issuers, trustlines, or anchors.
-
-## Lisk Contribution Notes
-
-Lisk is reached through the managed Wallet-as-a-Service provider
-(`apps/api/src/wallet/`), not direct chain integration — see
-[`ARCHITECTURE.md`](ARCHITECTURE.md). When contributing Lisk-related
-functionality:
-
-- Use a testnet provider configuration, not mainnet.
-- Do not use real funds in development.
-- Product-level code (payment orchestration, the WhatsApp assistant, admin
-  reporting) should never call a provider SDK directly — go through
-  `WalletService`.
-- Document any assumptions around gas sponsorship or asset support — these
-  depend on privately-operated services described in `ARCHITECTURE.md`, not
-  code that ships in this repository.
 
 ## Documentation Contributions
 
