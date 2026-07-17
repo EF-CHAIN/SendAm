@@ -12,6 +12,7 @@
     "dev:api": "npm run dev --workspace=apps/api",
     "dev:landing": "npm run dev --workspace=apps/landing",
     "dev:admin": "npm run dev --workspace=apps/admin",
+    "dev:chat-sim": "npm run start --workspace=apps/chat-sim",
     "dev": "npm run dev:api & npm run dev:landing & npm run dev:admin",
     "build:landing": "npm run build --workspace=apps/landing",
     "build:admin": "npm run build --workspace=apps/admin",
