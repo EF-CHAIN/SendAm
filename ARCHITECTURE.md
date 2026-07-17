@@ -4,6 +4,40 @@ This document describes how SendAm's backend is structured internally, and
 the boundary between what ships in this open-source repository and what
 runs as a privately-operated service.
 
+## System overview
+
+```mermaid
+flowchart LR
+    subgraph Surfaces
+        WA[WhatsApp user] --> META[Meta Cloud API webhook]
+        SIM[Chat simulator\napps/chat-sim] -.-> SIMAPI[POST /api/sim/message]
+        ADMIN[Admin dashboard\napps/admin] --> ADMINAPI[/api/admin/*/]
+    end
+
+    META --> WH[webhook.controller\nverify signature, dedup, throttle]
+    WH --> Q[queue.service\nBullMQ or inline]
+    Q --> AS[assistant.service\nprocessMessage]
+    SIMAPI -.-> AS
+
+    AS --> RR[recipientResolver\ncontacts → @names → address]
+    AS --> CP[compliance.service\nKYC tiers, limits, PIN, risk]
+    AS --> PO[payment.orchestrator]
+
+    PO --> WS[wallet.service\nonly module touching keys]
+    WS --> SA[stellar.adapter\nonly module touching the SDK]
+    SA --> HZ[(Horizon\nStellar network)]
+
+    WS --> DB[(PostgreSQL\nPrisma)]
+    PO --> DB
+    CP --> DB
+    ADMINAPI --> DB
+
+    AS -.optional, HMAC clients.-> PRIV[Private services\nsendam-ai / ns / paymaster / settlement]
+```
+
+Dotted lines are optional paths: the simulator is dev-only, and every
+private-service client degrades gracefully when unconfigured.
+
 ## Wallets: direct custody on Stellar
 
 SendAm generates and holds each user's keys itself — there is no managed
