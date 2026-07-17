@@ -171,9 +171,6 @@ solid and deployed.
 
 **Growth / distribution**
 - Merchant/business accounts with simple invoicing.
-- Referral/agent network for offline cash-in/cash-out onboarding —
-  operationally heavy (KYC, agent management, physical cash), but the
-  biggest lever for reaching genuinely unbanked users.
 - Referral rewards (lighter-weight invite-a-friend loop).
 
 **Trust / production readiness**
