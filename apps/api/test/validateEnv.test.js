@@ -11,6 +11,7 @@ const baseConfig = () => ({
   encryptionKey: validKey,
   admin: { jwtSecret: validSecret, password: 'correct horse battery staple' },
   whatsapp: { appSecret: undefined },
+  messageTransport: 'meta',
 });
 
 test('valid config does not throw', () => {
@@ -64,4 +65,19 @@ test('multiple violations are all reported in one error', () => {
     assert.match(err.message, /ADMIN_PASSWORD/);
     return true;
   });
+});
+
+test('invalid MESSAGE_TRANSPORT throws', () => {
+  const config = baseConfig();
+  config.messageTransport = 'invalid';
+  assert.throws(() => validateEnv(config), /MESSAGE_TRANSPORT/);
+});
+
+test('valid MESSAGE_TRANSPORT does not throw', () => {
+  const config = baseConfig();
+  config.messageTransport = 'sim';
+  assert.doesNotThrow(() => validateEnv(config));
+  
+  config.messageTransport = 'meta';
+  assert.doesNotThrow(() => validateEnv(config));
 });

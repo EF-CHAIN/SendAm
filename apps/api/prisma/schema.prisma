@@ -231,3 +231,13 @@ model RateLimitHit {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
+
+model SimMessage {
+  id          String   @id @default(cuid())
+  phoneNumber String
+  direction   String   // "in" (user → bot) | "out" (bot → user)
+  text        String
+  createdAt   DateTime @default(now())
+
+  @@index([phoneNumber, createdAt])
+}

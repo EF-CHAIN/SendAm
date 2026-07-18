@@ -23,6 +23,10 @@ const validateEnv = (config) => {
     problems.push('WHATSAPP_APP_SECRET must be set in production — without it, inbound webhook signatures cannot be verified.');
   }
 
+  if (!['meta', 'sim'].includes(config.messageTransport)) {
+    problems.push(`MESSAGE_TRANSPORT must be either 'meta' or 'sim' (got '${config.messageTransport}').`);
+  }
+
   if (problems.length > 0) {
     throw new Error(`Invalid configuration:\n  - ${problems.join('\n  - ')}`);
   }
