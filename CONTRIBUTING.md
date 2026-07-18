@@ -155,7 +155,16 @@ Please keep pull requests focused. A good pull request should include:
 - Any new environment variables.
 - Any security or data-model implications.
 
-Avoid mixing unrelated changes in one pull request. For example, do not combine a UI redesign, backend auth changes, and README edits unless they are part of one clear feature.
+- Avoid mixing unrelated changes in one pull request. For example, do not combine a UI redesign, backend auth changes, and README edits unless they are part of one clear feature.
+
+### Tests are required
+
+Every PR must include tests for any new or changed code. PRs without tests will be closed unreviewed.
+
+The test suite uses plain `node:test`. See `apps/api/test/` for example test files you can copy.
+
+Also, the 2-implementation-files-per-PR scoping rule applies (see above).
+
 
 ## Code Style
 
