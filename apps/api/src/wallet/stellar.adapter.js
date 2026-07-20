@@ -66,6 +66,33 @@ const getBalance = async (publicKey) => {
   }
 };
 
+// Every relevant balance for a wallet: XLM plus USDC when the account holds
+// a trustline for it. Horizon lists all trustlines regardless of issuer, so
+// USDC is only reported when both the asset code *and* the configured
+// issuer match — a same-code trustline from another issuer is a different,
+// unrelated asset and must not be surfaced as USDC.
+const getBalances = async (publicKey) => {
+  try {
+    const account = await server.loadAccount(publicKey);
+    const balances = [];
+
+    const xlmBalance = account.balances.find((b) => b.asset_type === 'native');
+    balances.push({ asset: 'XLM', value: xlmBalance ? xlmBalance.balance : '0' });
+
+    const usdcBalance = account.balances.find(
+      (b) => b.asset_code === 'USDC' && b.asset_issuer === config.stellar.usdcIssuer,
+    );
+    if (usdcBalance) {
+      balances.push({ asset: 'USDC', value: usdcBalance.balance });
+    }
+
+    return balances;
+  } catch (error) {
+    logger.error('Error getting balances', error.message);
+    throw new Error('Could not fetch balances. Check if account is funded.');
+  }
+};
+
 // Resolve an asset code to a Stellar SDK Asset. Native XLM is the only
 // asset wired today; this is the seam where future assets (e.g. USDC and
 // other anchor-issued assets used by on/off-ramps and swaps) get added by
@@ -160,6 +187,7 @@ module.exports = {
   chain,
   createWallet,
   getBalance,
+  getBalances,
   submitPayment,
   resolveAsset,
   validateAddress,

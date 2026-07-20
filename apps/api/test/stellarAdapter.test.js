@@ -1,9 +1,14 @@
-const { test } = require('node:test');
+const { test, mock, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
 
 process.env.ENCRYPTION_KEY = process.env.ENCRYPTION_KEY || 'a'.repeat(64);
 
 const stellarAdapter = require('../src/wallet/stellar.adapter');
+const { server } = require('../src/config/stellar');
+const config = require('../src/config/env');
+
+const USDC_ISSUER = config.stellar.usdcIssuer;
+const OTHER_ISSUER = 'GAQAA5L65LSYH7CQ3VTJ7F3HHNTNCQIKEO7YPC2FUYAKQNRFAWSFTNZK';
 
 test('createWallet returns a valid Stellar keypair', () => {
   const { publicKey, secretKey } = stellarAdapter.createWallet();
@@ -32,4 +37,44 @@ test('resolveAsset maps XLM/native and rejects unknown assets', () => {
 
 test('adapter identifies as the stellar chain', () => {
   assert.equal(stellarAdapter.chain, 'stellar');
+});
+
+afterEach(() => {
+  mock.restoreAll();
+});
+
+test('getBalances returns XLM and USDC rows when both trustlines exist', async () => {
+  mock.method(server, 'loadAccount', async () => ({
+    balances: [
+      { asset_type: 'native', balance: '42.5000000' },
+      { asset_type: 'credit_alphanum4', asset_code: 'USDC', asset_issuer: USDC_ISSUER, balance: '10.0000000' },
+    ],
+  }));
+
+  const balances = await stellarAdapter.getBalances('GABCD');
+  assert.deepEqual(balances, [
+    { asset: 'XLM', value: '42.5000000' },
+    { asset: 'USDC', value: '10.0000000' },
+  ]);
+});
+
+test('getBalances returns only XLM for an XLM-only account', async () => {
+  mock.method(server, 'loadAccount', async () => ({
+    balances: [{ asset_type: 'native', balance: '5.0000000' }],
+  }));
+
+  const balances = await stellarAdapter.getBalances('GABCD');
+  assert.deepEqual(balances, [{ asset: 'XLM', value: '5.0000000' }]);
+});
+
+test('getBalances ignores a USDC-code trustline from an untrusted issuer', async () => {
+  mock.method(server, 'loadAccount', async () => ({
+    balances: [
+      { asset_type: 'native', balance: '1.0000000' },
+      { asset_type: 'credit_alphanum4', asset_code: 'USDC', asset_issuer: OTHER_ISSUER, balance: '999.0000000' },
+    ],
+  }));
+
+  const balances = await stellarAdapter.getBalances('GABCD');
+  assert.deepEqual(balances, [{ asset: 'XLM', value: '1.0000000' }]);
 });
