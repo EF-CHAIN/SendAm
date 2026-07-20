@@ -52,15 +52,6 @@ module.exports = {
     r2AccessKeyId: process.env.CLOUDFLARE_R2_ACCESS_KEY_ID,
     r2SecretAccessKey: process.env.CLOUDFLARE_R2_SECRET_ACCESS_KEY,
   },
-  // Defaults target Lisk Sepolia testnet (chain ID 4202). The official RPC
-  // is rate-limited; https://lisk-sepolia.drpc.org is a documented
-  // alternative if it gets hit hard during development.
-  lisk: {
-    chainId: Number(process.env.LISK_CHAIN_ID || 4202),
-    rpcUrl: process.env.LISK_RPC_URL || 'https://rpc.sepolia-api.lisk.com',
-    explorerUrl: process.env.LISK_EXPLORER_URL || 'https://sepolia-blockscout.lisk.com',
-    escrowContractAddress: process.env.LISK_ESCROW_CONTRACT_ADDRESS,
-  },
   stellar: {
     network: process.env.STELLAR_NETWORK || 'testnet',
     horizonUrl: process.env.STELLAR_HORIZON_URL || 'https://horizon-testnet.stellar.org',
@@ -69,16 +60,6 @@ module.exports = {
     coinGeckoBaseUrl: process.env.COINGECKO_BASE_URL || 'https://api.coingecko.com/api/v3',
     coinGeckoApiKey: process.env.COINGECKO_API_KEY,
     exchangeRateApiKey: process.env.EXCHANGERATE_API_KEY,
-  },
-  ramps: {
-    yellowCard: {
-      apiUrl: process.env.YELLOW_CARD_API_URL,
-      apiKey: process.env.YELLOW_CARD_API_KEY,
-    },
-    paychant: {
-      apiUrl: process.env.PAYCHANT_API_URL,
-      apiKey: process.env.PAYCHANT_API_KEY,
-    },
   },
   compliance: {
     provider: process.env.KYC_PROVIDER || 'smileid',
@@ -110,14 +91,44 @@ module.exports = {
       ? process.env.ENABLE_WALLET_REST_API === 'true'
       : env !== 'production',
   },
-  // Private relayer that would sponsor Lisk gas so sending feels free. The
-  // relayer itself (a funded gas wallet + signing logic) is not part of this
-  // repo. Both vars are optional: unset means "no paymaster configured", and
-  // the client degrades gracefully rather than erroring. Not yet wired into
-  // the live send flow — see paymaster.service.js.
+  // Private relayer that would sponsor transaction fees (Stellar fee-bump /
+  // sponsored reserves) so sending feels free. The relayer itself (a funded
+  // sponsor wallet + signing logic) is not part of this repo. Both vars are
+  // optional: unset means "no paymaster configured", and the client degrades
+  // gracefully rather than erroring. Not yet wired into the live send flow —
+  // see paymaster.service.js.
   paymaster: {
     serviceUrl: process.env.PAYMASTER_SERVICE_URL,
+    // HMAC shared secret for the X-Sendam-Signature calling contract.
+    secret: process.env.PAYMASTER_SERVICE_SECRET,
+    // Deprecated: legacy bearer token, superseded by PAYMASTER_SERVICE_SECRET.
     apiKey: process.env.PAYMASTER_API_KEY,
+  },
+  // Privately-operated service clients (see services/serviceClient.js for
+  // the shared HMAC calling contract). Each is DOUBLY gated: the ENABLE_*
+  // flag must be "true" AND the URL + secret must be set — anything less
+  // means the client is disabled and its feature degrades gracefully. All
+  // default off; the public repo runs fully standalone without them.
+  ai: {
+    enabled: process.env.ENABLE_AI_INTENT === 'true',
+    serviceUrl: process.env.AI_SERVICE_URL,
+    secret: process.env.AI_SERVICE_SECRET,
+  },
+  policy: {
+    enabled: process.env.ENABLE_POLICY_SERVICE === 'true',
+    serviceUrl: process.env.POLICY_SERVICE_URL,
+    secret: process.env.POLICY_SERVICE_SECRET,
+  },
+  ns: {
+    enabled: process.env.ENABLE_NS_RESOLUTION === 'true',
+    serviceUrl: process.env.NS_SERVICE_URL,
+    secret: process.env.NS_SERVICE_SECRET,
+    domain: process.env.NS_DOMAIN || 'sendam.app',
+  },
+  settlement: {
+    enabled: process.env.ENABLE_SETTLEMENT === 'true',
+    serviceUrl: process.env.SETTLEMENT_SERVICE_URL,
+    secret: process.env.SETTLEMENT_SERVICE_SECRET,
   },
   // NGN display rate. Provider is swappable on purpose — whether SendAm
   // should show the official CBN rate or a parallel-market rate is a

@@ -3,7 +3,7 @@
 
 const shortenPublicKey = (publicKey) => `${publicKey.substring(0, 8)}...${publicKey.slice(-4)}`;
 
-const chainLabel = (chain) => (chain === 'lisk' ? 'Lisk' : 'Stellar');
+const chainLabel = () => 'Stellar';
 
 // One line per wallet, used by both the create-wallet and fund flows since
 // they report the same shape: { chain, publicKey, funded, manual?, instructions? }.
@@ -27,10 +27,10 @@ const replies = {
   help: () =>
     [
       'Available commands:',
-      '- create wallet: Create your Stellar and Lisk wallets',
-      '- fund: Retry funding any wallet that is not yet funded',
-      '- balance: Check your balances across chains',
-      '- save <name> <address>: Save a contact (Stellar or Lisk address)',
+      '- create wallet: Create your Stellar wallet',
+      '- fund: Retry funding your wallet if it is not yet funded',
+      '- balance: Check your balance',
+      '- save <name> <address>: Save a contact (Stellar address)',
       '- contacts: List saved contacts',
       '- send <amount> <asset> <address-or-name>: Prepare a transfer',
       '- yes: Confirm a pending transfer',
@@ -39,7 +39,6 @@ const replies = {
       'Examples:',
       'save ada GABC...',
       'send 5 xlm ada',
-      'send 0.01 eth 0x1234...',
     ].join('\n'),
 
   unknown: () => `Sorry, I didn't understand that. Reply with 'help' to see what I can do.`,
@@ -47,7 +46,7 @@ const replies = {
   rateLimited: () => `You're sending messages too quickly. Please wait a moment and try again.`,
 
   // Wallet
-  creatingWallet: () => `Creating your Stellar and Lisk wallets...`,
+  creatingWallet: () => `Creating your Stellar wallet...`,
   walletsReady: (wallets) => `Wallet setup complete.\n\n${walletStatusLines(wallets)}`,
   walletsExist: (wallets) => `You already have wallets.\n\n${walletStatusLines(wallets)}`,
   noWallet: () => `You don't have a wallet yet. Send 'create wallet' first.`,
@@ -63,9 +62,9 @@ const replies = {
 
   // Contacts
   invalidAddress: () =>
-    `That is not a valid Stellar or Lisk address. Please check it and try again.`,
+    `That is not a valid Stellar address. Please check it and try again.`,
   contactSaved: (alias, publicKey, chain) =>
-    `Saved ${alias} (${chainLabel(chain)}) as ${shortenPublicKey(publicKey)}.\n\nYou can now send with: send 5 ${chain === 'lisk' ? 'eth' : 'xlm'} ${alias}`,
+    `Saved ${alias} (${chainLabel(chain)}) as ${shortenPublicKey(publicKey)}.\n\nYou can now send with: send 5 xlm ${alias}`,
   contactSaveError: (message) => `Could not save contact: ${message}`,
   noContacts: () => `You do not have saved contacts yet.\n\nUse: save <name> <address>`,
   contactList: (contacts) =>
@@ -73,11 +72,11 @@ const replies = {
 
   // Send
   invalidSendFormat: () =>
-    `Invalid send format. Please use: send <amount> <asset> <address-or-name>\nExample: send 5 xlm GABC... or send 0.01 eth 0x...`,
+    `Invalid send format. Please use: send <amount> <asset> <address-or-name>\nExample: send 5 xlm GABC...`,
   invalidSaveFormat: () =>
     `Invalid save format. Please use: save <name> <address>\nExample: save ada GABC...`,
   recipientNotFound: (recipient) =>
-    `I could not find "${recipient}" in your contacts, and it is not a valid Stellar or Lisk address.\n\nUse: save ${recipient.toLowerCase()} <address>`,
+    `I could not find "${recipient}" in your contacts, and it is not a valid Stellar address.\n\nUse: save ${recipient.toLowerCase()} <address>`,
   confirmTransfer: (amount, asset, label, destination, chain) =>
     `Confirm transfer on ${chainLabel(chain)}:\n\nAmount: ${amount} ${asset}\nTo: ${label}\nAddress: ${destination}\n\nReply YES to send or NO to cancel. This request expires in 10 minutes.`,
   prepareError: (message) => `Could not prepare transfer: ${message}`,

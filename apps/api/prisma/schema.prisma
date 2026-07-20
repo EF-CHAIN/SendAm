@@ -27,7 +27,6 @@ model User {
   voiceCommands VoiceCommand[]
   notifications Notification[]
   quotes        Quote[]
-  escrows       Escrow[]       @relation("EscrowCreator")
 }
 
 // One row per user per chain — direct custody. `encryptedSecretKey` holds
@@ -108,30 +107,6 @@ model Alias {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([userId, alias])
-}
-
-model Escrow {
-  id              String    @id @default(cuid())
-  creatorId       String
-  counterpartyId  String?
-  arbiterId       String?
-  amount          String
-  asset           String    @default("USDC")
-  chain           String    @default("lisk")
-  contractAddress String?
-  contractEscrowId String?
-  status          String    @default("draft")
-  releaseAfter    DateTime?
-  terms           String?
-  metadata        Json      @default("{}")
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
-
-  creator User   @relation("EscrowCreator", fields: [creatorId], references: [id], onDelete: Cascade)
-  arbiter Agent? @relation(fields: [arbiterId], references: [id])
-
-  @@index([status])
-  @@index([creatorId])
 }
 
 model KycProfile {
@@ -231,38 +206,6 @@ model Quote {
 
   @@index([userId])
   @@index([expiresAt])
-}
-
-model Agent {
-  id          String   @id @default(cuid())
-  name        String
-  phoneNumber String   @unique
-  role        String   @default("cashout_agent")
-  status      String   @default("pending")
-  locationId  String?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-
-  location CashoutLocation? @relation(fields: [locationId], references: [id])
-  escrows  Escrow[]
-}
-
-model CashoutLocation {
-  id                  String   @id @default(cuid())
-  name                String
-  address             String?
-  city                String?
-  country             String   @default("NG")
-  latitude            Float?
-  longitude           Float?
-  supportedCurrencies String[] @default(["NGN"])
-  status              String   @default("active")
-  createdAt           DateTime @default(now())
-  updatedAt           DateTime @updatedAt
-
-  agents Agent[]
-
-  @@index([status])
 }
 
 model AdminRole {

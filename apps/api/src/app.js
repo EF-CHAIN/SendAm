@@ -7,9 +7,9 @@ const rateLimit = require('express-rate-limit');
 const webhookRoutes = require('./routes/webhook.routes');
 const walletRoutes = require('./routes/wallet.routes');
 const adminRoutes = require('./routes/admin.routes');
-const escrowRoutes = require('./escrow/escrow.routes');
 const complianceRoutes = require('./compliance/compliance.routes');
 const pricingRoutes = require('./pricing/pricing.routes');
+const simRoutes = require('./routes/sim.routes');
 
 const errorHandler = require('./middlewares/errorHandler');
 const notFound = require('./middlewares/notFound');
@@ -87,9 +87,9 @@ if (config.features.walletRestApi) {
 }
 
 app.use('/api/admin', adminRoutes);
-app.use('/api/escrow', escrowRoutes);
 app.use('/api/compliance', complianceRoutes);
 app.use('/api/pricing', pricingRoutes);
+app.use('/api/sim', simRoutes);
 
 // Error Handling
 app.use(notFound);

@@ -1,4 +1,4 @@
-import { Wallet, Mic, ShieldCheck, MapPin, ArrowLeftRight, Network } from 'lucide-react';
+import { Wallet, Mic, ArrowLeftRight, Network } from 'lucide-react';
 
 const features = [
   {
@@ -12,23 +12,13 @@ const features = [
     icon: Mic,
   },
   {
-    title: 'Protected escrow',
-    desc: 'Lock funds, release on approval, refund after timeout, or escalate to an arbiter.',
-    icon: ShieldCheck,
-  },
-  {
-    title: 'Nearby cash-out',
-    desc: 'Find verified agents for local cash-out while the backend handles ramp settlement.',
-    icon: MapPin,
-  },
-  {
     title: 'Cross-border transfers',
     desc: 'Payments can move through corridor rails when a route needs international settlement.',
     icon: ArrowLeftRight,
   },
   {
     title: 'Multi-chain infrastructure',
-    desc: 'Lisk is the primary settlement layer, with Stellar reserved for cross-border corridors.',
+    desc: 'Payments settle on Stellar — a network built for fast, low-cost cross-border money movement.',
     icon: Network,
   },
 ];
