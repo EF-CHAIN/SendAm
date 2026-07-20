@@ -175,6 +175,8 @@ npm test                            # from the repo root
 npm run test --workspace=apps/api   # equivalently
 ```
 
+CI also fails a PR that touches `apps/api/src/**` without touching `apps/api/test/**` (see the `api-test-coverage` job in `.github/workflows/ci.yml`). It's a crude heuristic — maintainers can override — meant to catch untested backend changes before merge.
+
 ## Deployment
 
 The three apps deploy differently because of how they run:
