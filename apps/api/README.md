@@ -146,6 +146,17 @@ POST /api/compliance/pin         { phoneNumber, pin }
 
 > ⚠️ Same story as the wallet routes above — no per-user identity check, gated behind the same `ENABLE_WALLET_REST_API` flag (`middlewares/requireRestApiEnabled`), and disabled in production by default. `GET /api/compliance/kyc/:phone` and `POST /api/compliance/kyc/:id/review` are different: those require an admin Bearer token and are always on.
 
+### Chat Simulator Routes (optional, for testing without WhatsApp)
+
+```text
+POST /api/sim/message           { phoneNumber, name?, text }   -> { replies: ["…"] }
+GET  /api/sim/messages/:phone?since=<ISO date>                 -> { messages: [{ direction, text, createdAt }] }
+```
+
+Runs the same `processMessage` pipeline the WhatsApp webhook uses and returns its replies directly in the response instead of sending them through Meta, so a chat client can drive the bot without a WhatsApp number.
+
+> ⚠️ Same story as the wallet and compliance routes above — no per-user identity check, gated behind `ENABLE_WALLET_REST_API`, and disabled in production by default. The conversation history is currently held in an **in-process memory store** (not persisted, not shared across instances) as a stand-in for the `SimMessage` table + store service tracked in issues #8/#9 — swap it out once those land.
+
 ## Environment Variables
 
 Create an `.env` file in `apps/api` using `.env.example` as a guide. The app **fails fast at startup** if the required secrets are missing or weak.

@@ -28,10 +28,7 @@ A recipient in `send` can be, in resolution order:
 
 1. **A saved contact name** — e.g. `send 5 xlm mama`. Saved contacts always
    win over everything else.
-2. **A global name** — `@ada` or `ada*sendam.app`, resolved through the
-   naming service **only when `ENABLE_NS_RESOLUTION=true`**. Bare names are
-   never sent to the naming service.
-3. **A raw Stellar address** — a `G...` public key.
+2. **A raw Stellar address** — a `G...` public key.
 
 Anything that resolves to something other than a valid Stellar address is
 rejected with a clear error before any money moves.

@@ -236,6 +236,14 @@ model SimMessage {
   id          String   @id @default(cuid())
   phoneNumber String
   direction   String   // "in" (user → bot) | "out" (bot → user)
+// Chat simulator message log (see docs/CHAT-SIM.md). Model only, no migration
+// here — issue #7 / PR #55 (unmerged as of this change) owns the migration
+// for this table; this addition just unblocks #9's service layer against the
+// matching Prisma types. Rebase onto whatever migration #7 lands with.
+model SimMessage {
+  id          String   @id @default(cuid())
+  phoneNumber String
+  direction   String
   text        String
   createdAt   DateTime @default(now())
 
