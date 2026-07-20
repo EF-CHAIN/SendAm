@@ -45,11 +45,11 @@ const parsePaymentIntent = (text) => {
 // check in requestConfirmation still applies to whatever comes back.
 const resolveRecipient = createRecipientResolver({ prisma, nsClient });
 
-const requestConfirmation = async ({ phoneNumber, user, intent }) => {
+const requestConfirmation = async ({ phoneNumber, user, intent, notify }) => {
   const recipient = await resolveRecipient(user, intent.recipient);
 
   if (!validateAddress(String(recipient.destination || '').trim())) {
-    await sendTextMessage(
+    await notify(
       phoneNumber,
       `"${recipient.label}" isn't a saved contact or a valid Stellar address. Save it first, or send to a valid address directly.`
     );
@@ -69,32 +69,32 @@ const requestConfirmation = async ({ phoneNumber, user, intent }) => {
     data: { pendingSend },
   });
 
-  await sendTextMessage(
+  await notify(
     phoneNumber,
     `Please confirm this payment:\nAmount: ${intent.amount} ${intent.asset}\nTo: ${recipient.label}\nReply with your PIN to send, or "no" to cancel.`
   );
 };
 
-const handlePendingPin = async ({ phoneNumber, user, text }) => {
+const handlePendingPin = async ({ phoneNumber, user, text, notify }) => {
   if (!user.pendingSend?.destination) return false;
 
   const lowered = String(text).trim().toLowerCase();
   if (lowered === 'no' || lowered === 'cancel') {
     // Json? columns need Prisma.DbNull — a plain null in `data` throws at runtime.
     await prisma.user.update({ where: { id: user.id }, data: { pendingSend: Prisma.DbNull } });
-    await sendTextMessage(phoneNumber, 'Payment cancelled.');
+    await notify(phoneNumber, 'Payment cancelled.');
     return true;
   }
 
   if (Date.now() - new Date(user.pendingSend.requestedAt).getTime() > PENDING_SEND_TTL_MS) {
     await prisma.user.update({ where: { id: user.id }, data: { pendingSend: Prisma.DbNull } });
-    await sendTextMessage(phoneNumber, 'That payment request expired. Please start again.');
+    await notify(phoneNumber, 'That payment request expired. Please start again.');
     return true;
   }
 
   const userWithPin = await prisma.user.findUnique({ where: { id: user.id } });
   if (!verifyPin(text, userWithPin.pinHash)) {
-    await sendTextMessage(phoneNumber, 'PIN verification failed. Please try again or reply "no" to cancel.');
+    await notify(phoneNumber, 'PIN verification failed. Please try again or reply "no" to cancel.');
     return true;
   }
 
@@ -105,7 +105,7 @@ const handlePendingPin = async ({ phoneNumber, user, text }) => {
   // claim requires the user to start the send again — the safe direction.
   const pending = user.pendingSend;
   if (!(await claimPendingSend({ prisma, Prisma, userId: user.id }))) {
-    await sendTextMessage(phoneNumber, 'That payment was already processed or cancelled.');
+    await notify(phoneNumber, 'That payment was already processed or cancelled.');
     return true;
   }
 
@@ -124,18 +124,22 @@ const handlePendingPin = async ({ phoneNumber, user, text }) => {
     routeType: pending.routeType,
   });
 
-  await sendTextMessage(phoneNumber, `Payment ${result.transaction.status}. Receipt: ${result.receipt.transactionId}`);
+  await notify(phoneNumber, `Payment ${result.transaction.status}. Receipt: ${result.receipt.transactionId}`);
   return true;
 };
 
-const processMessage = async (phoneNumber, whatsappName, text) => {
+// `notify` defaults to the real WhatsApp send so the webhook path (the only
+// caller before the sim endpoints existed) is unaffected. The sim controller
+// passes its own `notify` to capture replies inline instead of calling Meta —
+// see apps/api/src/controllers/sim.controller.js.
+const processMessage = async (phoneNumber, whatsappName, text, { notify = sendTextMessage } = {}) => {
   const user = await resolveUser(phoneNumber, whatsappName);
-  if (await handlePendingPin({ phoneNumber, user, text })) return;
+  if (await handlePendingPin({ phoneNumber, user, text, notify })) return;
 
   const normalized = String(text || '').trim().toLowerCase();
 
   if (['hi', 'hello', 'help', 'menu'].includes(normalized)) {
-    await sendTextMessage(phoneNumber, 'SendAm can help with send money, receive money, balance, contacts, transaction history, and receipts.');
+    await notify(phoneNumber, 'SendAm can help with send money, receive money, balance, contacts, transaction history, and receipts.');
     return;
   }
 
@@ -143,14 +147,14 @@ const processMessage = async (phoneNumber, whatsappName, text) => {
     await walletService.ensureWalletsForUser({ user });
     const balances = await walletService.balancesForUser({ userId: user.id });
     const lines = balances.map((b) => (b.value !== null ? `${b.chain}: ${b.value}` : `${b.chain}: unavailable (${b.error})`));
-    await sendTextMessage(phoneNumber, `Your SendAm balances:\n${lines.join('\n')}`);
+    await notify(phoneNumber, `Your SendAm balances:\n${lines.join('\n')}`);
     return;
   }
 
   if (normalized.includes('receive')) {
     const wallets = await walletService.ensureWalletsForUser({ user });
     const lines = wallets.map((w) => `${w.chain}: ${w.publicKey}`);
-    await sendTextMessage(phoneNumber, `Share one of these to receive money on SendAm:\n${lines.join('\n')}`);
+    await notify(phoneNumber, `Share one of these to receive money on SendAm:\n${lines.join('\n')}`);
     return;
   }
 
@@ -161,7 +165,7 @@ const processMessage = async (phoneNumber, whatsappName, text) => {
       take: 5,
     });
     const lines = transactions.map((tx) => `${tx.type}: ${tx.amount} ${tx.asset} - ${tx.status}`);
-    await sendTextMessage(phoneNumber, lines.length ? lines.join('\n') : 'No transactions yet.');
+    await notify(phoneNumber, lines.length ? lines.join('\n') : 'No transactions yet.');
     return;
   }
 
@@ -174,11 +178,11 @@ const processMessage = async (phoneNumber, whatsappName, text) => {
     paymentIntent = await aiClient.decodeToPaymentIntent(text, user.id);
   }
   if (paymentIntent) {
-    await requestConfirmation({ phoneNumber, user, intent: paymentIntent });
+    await requestConfirmation({ phoneNumber, user, intent: paymentIntent, notify });
     return;
   }
 
-  await sendTextMessage(phoneNumber, 'I can help you send money, check balance, receive money, or show receipts.');
+  await notify(phoneNumber, 'I can help you send money, check balance, receive money, or show receipts.');
 };
 
 module.exports = {
