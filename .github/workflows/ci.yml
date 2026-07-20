@@ -35,3 +35,24 @@ jobs:
       - run: npm run lint --workspace=apps/admin
       - run: npm run build --workspace=apps/landing
       - run: npm run build --workspace=apps/admin
+
+  api-test-coverage:
+    name: Flag untested apps/api/src changes
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+      # Crude heuristic: if a PR touches apps/api/src/** but no apps/api/test/**,
+      # fail the check. Maintainers can still override and merge anyway.
+      - name: Check for tests alongside apps/api/src changes
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          git diff --name-only "$BASE_SHA" "$HEAD_SHA" \
+            | xargs -d '\n' --no-run-if-empty node apps/api/scripts/check-test-coverage.js
