@@ -6,14 +6,14 @@
 /**
  * @param {number} amount
  * @param {string} asset - 'USDC' | 'XLM'
- * @param {number|null} rate - USD-per-NGN rate, or null if unavailable
+ * @param {number|null} rate - NGN-per-USD rate (see priceOracle.service.js:getUsdToNgnRate), or null if unavailable
  * @returns {string}
  */
 const formatWithNgn = (amount, asset, rate) => {
   const base = `${amount} ${asset}`;
 
-  // XLM has no USD feed at MVP; USDC is treated 1:1 with USD so `rate` (a
-  // USD/NGN rate) applies to it directly.
+  // XLM has no USD feed at MVP; USDC is treated 1:1 with USD so `rate` (an
+  // NGN-per-USD rate) applies to it directly.
   if (asset === 'XLM' || rate == null) {
     return base;
   }
