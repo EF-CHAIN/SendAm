@@ -2,8 +2,26 @@ const axios = require('axios');
 const config = require('../config/env');
 const logger = require('../utils/logger');
 
-const sendTextMessage = async (to, body) => {
+const sendTextMessage = async (to, body, options = {}) => {
+  const {
+    messageTransport = config.messageTransport,
+    prisma = null,
+    axiosImpl = axios,
+  } = options;
+
   try {
+    if (messageTransport === 'sim') {
+      const db = prisma || require('../common/prisma');
+      const result = await db.simMessage.create({
+        data: {
+          phoneNumber: to,
+          direction: 'out',
+          text: body,
+        },
+      });
+      return result;
+    }
+
     const url = `https://graph.facebook.com/v19.0/${config.whatsapp.phoneNumberId}/messages`;
     
     const payload = {
@@ -17,7 +35,7 @@ const sendTextMessage = async (to, body) => {
       }
     };
 
-    const response = await axios.post(url, payload, {
+    const response = await axiosImpl.post(url, payload, {
       headers: {
         'Authorization': `Bearer ${config.whatsapp.token}`,
         'Content-Type': 'application/json'

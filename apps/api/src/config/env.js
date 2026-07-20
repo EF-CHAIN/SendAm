@@ -7,6 +7,7 @@ module.exports = {
   env,
   isProduction: env === 'production',
   databaseUrl: process.env.DATABASE_URL,
+  messageTransport: process.env.MESSAGE_TRANSPORT || 'meta',
   encryptionKey: process.env.ENCRYPTION_KEY,
   // Comma-separated list of origins allowed to call the REST API. Empty means
   // "no allowlist configured" — see app.js for the dev/prod behaviour.
