@@ -315,3 +315,73 @@ Before a real-money launch, this backend still needs:
 - REST wallet API, compliance PIN, and KYC-start endpoints are unauthenticated by design and disabled in production by default (see above) — no working production path until real per-user auth exists.
 - No customer web login/signup — WhatsApp phone number is the identity.
 - Stellar corridor execution is stubbed pending provider/custody onboarding.
+
+## Testing without WhatsApp
+
+You can test the conversational assistant locally without a WhatsApp number by using the built-in chat simulator.
+
+### 1. Configure the environment
+
+Set the following environment variables in `apps/api/.env`:
+
+```env
+MESSAGE_TRANSPORT=sim
+ENABLE_CHAT_SIM=true
+```
+
+- `MESSAGE_TRANSPORT=sim` stores outbound bot messages in the simulator instead of sending them to the WhatsApp Cloud API.
+- `ENABLE_CHAT_SIM=true` enables the simulator endpoints.
+
+### 2. Start the API
+
+```bash
+npm install
+npm run prisma:generate --workspace=apps/api
+npm run prisma:deploy --workspace=apps/api
+npm run dev --workspace=apps/api
+```
+
+### 3. Send a message
+
+```bash
+curl -X POST http://localhost:3002/api/sim/message \
+  -H "Content-Type: application/json" \
+  -d '{
+    "phoneNumber":"+2348000000001",
+    "name":"Ada",
+    "text":"balance"
+  }'
+```
+
+Example response:
+
+```json
+{
+  "replies": ["Your SendAm balances: ..."]
+}
+```
+
+### 4. Fetch the conversation
+
+```bash
+curl http://localhost:3002/api/sim/messages/+2348000000001
+```
+
+Example response:
+
+```json
+{
+  "messages": [
+    {
+      "direction": "in",
+      "text": "balance",
+      "createdAt": "2026-01-01T12:00:00.000Z"
+    },
+    {
+      "direction": "out",
+      "text": "Your SendAm balances: ...",
+      "createdAt": "2026-01-01T12:00:01.000Z"
+    }
+  ]
+}
+```
