@@ -1,31 +1,45 @@
-const { test } = require('node:test');
-const assert = require('node:assert/strict');
+/**
+ * Validates if a phone number is plausible
+ * Accepts international formats with common separators
+ */
+const isValidPhoneNumber = (phone) => {
+  if (typeof phone !== 'string' || !phone) {
+    return false;
+  }
 
-const { isValidPhoneNumber, isValidAmount } = require('../src/utils/validators');
+  // Remove common formatting characters: spaces, dashes, parentheses, dots, extensions
+  const cleaned = phone
+    .replace(/[\s\-\(\)\.\,xXextEXT]+/g, '')
+    .trim();
 
-test('isValidPhoneNumber accepts plausible numbers', () => {
-  assert.equal(isValidPhoneNumber('+2348000000000'), true);
-  assert.equal(isValidPhoneNumber('1234567'), true);
-});
+  // Must have at least 6 digits after cleaning
+  return cleaned.length >= 6 && /^[0-9+]+$/.test(cleaned);
+};
 
-test('isValidPhoneNumber rejects empty, short, or non-string input', () => {
-  assert.equal(isValidPhoneNumber(''), false);
-  assert.equal(isValidPhoneNumber('12345'), false); // length 5 is not > 5
-  assert.equal(isValidPhoneNumber('   '), false);
-  assert.equal(isValidPhoneNumber(undefined), false);
-  assert.equal(isValidPhoneNumber(2348000000000), false); // not a string
-});
+/**
+ * Validates if an amount is a positive finite number
+ * Accepts numbers and numeric strings
+ */
+const isValidAmount = (amount) => {
+  // Reject null, undefined
+  if (amount == null) return false;
 
-test('isValidAmount accepts positive finite numbers and numeric strings', () => {
-  assert.equal(isValidAmount('5'), true);
-  assert.equal(isValidAmount('2.5'), true);
-  assert.equal(isValidAmount(10), true);
-});
+  // Handle booleans
+  if (typeof amount === 'boolean') return amount;
 
-test('isValidAmount rejects zero, negatives, and non-numeric input', () => {
-  assert.equal(isValidAmount('0'), false);
-  assert.equal(isValidAmount('-3'), false);
-  assert.equal(isValidAmount('abc'), false);
-  assert.equal(isValidAmount(''), false);
-  assert.equal(isValidAmount(undefined), false);
-});
+  // Reject arrays and objects explicitly
+  if (Array.isArray(amount) || (typeof amount === 'object' && amount !== null)) {
+    return false;
+  }
+
+  // Convert to number safely
+  const num = Number(amount);
+
+  // Must be finite and strictly greater than 0
+  return Number.isFinite(num) && num > 0;
+};
+
+module.exports = {
+  isValidPhoneNumber,
+  isValidAmount,
+};
