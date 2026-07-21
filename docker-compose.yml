@@ -1,0 +1,20 @@
+services:
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: sendam
+      POSTGRES_PASSWORD: sendam
+      POSTGRES_DB: sendam
+    ports:
+      - '5432:5432'
+    volumes:
+      - sendam_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U sendam -d sendam']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  sendam_postgres_data:
