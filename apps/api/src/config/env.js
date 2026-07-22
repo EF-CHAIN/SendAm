@@ -1,18 +1,18 @@
-require("dotenv").config();
+require('dotenv').config();
 
-const env = process.env.NODE_ENV || "development";
+const env = process.env.NODE_ENV || 'development';
 
 module.exports = {
   port: process.env.PORT || 3002,
   env,
-  isProduction: env === "production",
+  isProduction: env === 'production',
   databaseUrl: process.env.DATABASE_URL,
-  messageTransport: process.env.MESSAGE_TRANSPORT || "meta",
+  messageTransport: process.env.MESSAGE_TRANSPORT || 'meta',
   encryptionKey: process.env.ENCRYPTION_KEY,
   // Comma-separated list of origins allowed to call the REST API. Empty means
   // "no allowlist configured" — see app.js for the dev/prod behaviour.
-  corsOrigins: (process.env.CORS_ORIGINS || "")
-    .split(",")
+  corsOrigins: (process.env.CORS_ORIGINS || '')
+    .split(',')
     .map((o) => o.trim())
     .filter(Boolean),
   admin: {
@@ -54,23 +54,19 @@ module.exports = {
     r2SecretAccessKey: process.env.CLOUDFLARE_R2_SECRET_ACCESS_KEY,
   },
   stellar: {
-    network: process.env.STELLAR_NETWORK || "testnet",
-    horizonUrl:
-      process.env.STELLAR_HORIZON_URL || "https://horizon-testnet.stellar.org",
+    network: process.env.STELLAR_NETWORK || 'testnet',
+    horizonUrl: process.env.STELLAR_HORIZON_URL || 'https://horizon-testnet.stellar.org',
     // Circle's official Testnet USDC issuer, so multi-asset balance lookups
     // work out of the box in dev; override for mainnet or a custom issuer.
-    usdcIssuer:
-      process.env.STELLAR_USDC_ISSUER ||
-      "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA",
+    usdcIssuer: process.env.STELLAR_USDC_ISSUER || 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA',
   },
   pricing: {
-    coinGeckoBaseUrl:
-      process.env.COINGECKO_BASE_URL || "https://api.coingecko.com/api/v3",
+    coinGeckoBaseUrl: process.env.COINGECKO_BASE_URL || 'https://api.coingecko.com/api/v3',
     coinGeckoApiKey: process.env.COINGECKO_API_KEY,
     exchangeRateApiKey: process.env.EXCHANGERATE_API_KEY,
   },
   compliance: {
-    provider: process.env.KYC_PROVIDER || "smileid",
+    provider: process.env.KYC_PROVIDER || 'smileid',
     smileId: {
       partnerId: process.env.SMILE_ID_PARTNER_ID,
       apiKey: process.env.SMILE_ID_API_KEY,
@@ -82,7 +78,7 @@ module.exports = {
     pinPepper: process.env.PIN_PEPPER,
   },
   voice: {
-    provider: process.env.VOICE_PROVIDER || "deepgram",
+    provider: process.env.VOICE_PROVIDER || 'deepgram',
     deepgramApiKey: process.env.DEEPGRAM_API_KEY,
     whisperApiKey: process.env.WHISPER_API_KEY || process.env.OPENAI_API_KEY,
   },
@@ -96,11 +92,7 @@ module.exports = {
     // WhatsApp (signature-verified), so all of these are OFF in production
     // unless explicitly enabled, and ON elsewhere for local testing.
     walletRestApi: process.env.ENABLE_WALLET_REST_API
-      ? process.env.ENABLE_WALLET_REST_API === "true"
-      : env !== "production",
-
-    chatSim: process.env.ENABLE_CHAT_SIM
-      ? process.env.ENABLE_CHAT_SIM === "true"
-      : env !== "production",
+      ? process.env.ENABLE_WALLET_REST_API === 'true'
+      : env !== 'production',
   },
 };
