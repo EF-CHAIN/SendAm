@@ -89,9 +89,11 @@ const balance = async ({ wallet }) => {
   return { chain: wallet.chain, address: wallet.publicKey, value };
 };
 
-// Balances for every Stellar wallet a user (or phone number) has. Each fetch
-// is isolated so an unreachable Horizon reports per-wallet instead of
-// blanking the whole reply. Legacy non-Stellar rows are excluded by query.
+// Balances for every Stellar wallet a user (or phone number) has. Each wallet
+// returns per-asset rows via getBalances() so XLM and USDC (and future assets)
+// are surfaced individually. Each fetch is isolated — a Horizon failure for
+// one wallet sets error and leaves assets empty rather than blanking the whole
+// reply. Legacy non-Stellar rows are excluded by query.
 const balancesForUser = async ({ userId, phoneNumber }) => {
   const wallets = userId
     ? await prisma.wallet.findMany({ where: { userId, chain: CHAIN } })
@@ -99,9 +101,10 @@ const balancesForUser = async ({ userId, phoneNumber }) => {
 
   return Promise.all(wallets.map(async (wallet) => {
     try {
-      return await balance({ wallet });
+      const assets = await stellarAdapter.getBalances(wallet.publicKey);
+      return { chain: wallet.chain, address: wallet.publicKey, assets };
     } catch (error) {
-      return { chain: wallet.chain, address: wallet.publicKey, value: null, error: error.message };
+      return { chain: wallet.chain, address: wallet.publicKey, assets: [], error: error.message };
     }
   }));
 };

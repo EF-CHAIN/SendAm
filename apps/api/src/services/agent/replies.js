@@ -53,9 +53,19 @@ const replies = {
   fundingWallets: () => `Checking funding status...`,
   allWalletsFunded: (wallets) => `All your wallets are already funded.\n\n${walletStatusLines(wallets)}`,
 
-  // Balance
-  balances: (wallets) =>
-    `Your balances:\n\n${wallets.map((w) => `${chainLabel(w.chain)}: ${w.balance}${w.error ? ` (${w.error})` : ''}`).join('\n')}`,
+  // Balance — one line per asset across all wallets.
+  // A wallet with no USDC trustline shows only XLM.
+  // A wallet whose Horizon fetch failed shows a single error line instead of
+  // asset rows so the rest of the reply is still rendered.
+  balances: (wallets) => {
+    const lines = wallets.flatMap((w) => {
+      if (w.error) {
+        return [`${chainLabel(w.chain)}: unavailable (${w.error})`];
+      }
+      return (w.assets || []).map((a) => `${a.asset}: ${a.value}`);
+    });
+    return `Your balances:\n\n${lines.join('\n')}`;
+  },
   balanceError: (message) => `Error getting balance: ${message}`,
   insufficientBalance: (chain, balance, amount, asset) =>
     `Insufficient balance. You're trying to send ${amount} ${asset} but your ${chainLabel(chain)} balance is ${balance}.`,

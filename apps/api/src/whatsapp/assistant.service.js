@@ -144,7 +144,10 @@ const processMessage = async (phoneNumber, whatsappName, text, { notify = sendTe
   if (normalized.includes('balance')) {
     await walletService.ensureWalletsForUser({ user });
     const balances = await walletService.balancesForUser({ userId: user.id });
-    const lines = balances.map((b) => (b.value !== null ? `${b.chain}: ${b.value}` : `${b.chain}: unavailable (${b.error})`));
+    const lines = balances.flatMap((b) => {
+      if (b.error) return [`${b.chain}: unavailable (${b.error})`];
+      return (b.assets || []).map((a) => `${a.asset}: ${a.value}`);
+    });
     await notify(phoneNumber, `Your SendAm balances:\n${lines.join('\n')}`);
     return;
   }
