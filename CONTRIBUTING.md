@@ -65,8 +65,11 @@ Larger areas include:
 
 - Node.js 20 or newer (see `.nvmrc`).
 - npm.
-- A PostgreSQL database (e.g. local Postgres or Neon) for `DATABASE_URL` —
-  not needed just to run the unit tests, which are fully offline.
+- A PostgreSQL database for `DATABASE_URL` — not needed just to run the unit
+  tests, which are fully offline. Run `docker compose up -d` from the repo
+  root for a local Postgres with no cloud account required (see the root
+  [`README.md`](README.md#local-postgres-no-cloud-account-needed)); a cloud
+  database (e.g. Neon) also works.
 - Stellar Testnet configuration.
 - WhatsApp Business Cloud API credentials if testing webhooks.
 

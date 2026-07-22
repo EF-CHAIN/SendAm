@@ -123,8 +123,28 @@ example `https://admin.your-domain.com`.
 
 - Node.js 18 or newer
 - npm
-- A PostgreSQL connection string (e.g. Neon) for `DATABASE_URL`
+- A PostgreSQL connection string for `DATABASE_URL` — either a local Postgres
+  via Docker Compose (below) or a cloud database (e.g. Neon)
+- Docker, if using the local Postgres option
 - WhatsApp Business Cloud API credentials for webhook testing
+
+### Local Postgres (no cloud account needed)
+
+A `docker-compose.yml` at the repo root runs a local Postgres so you don't
+need a Neon (or any cloud) account to get started:
+
+```bash
+docker compose up -d
+```
+
+Then in `apps/api/.env`, set:
+
+```env
+DATABASE_URL=postgresql://sendam:sendam@localhost:5432/sendam
+```
+
+(Skip `sslmode=require` from the `.env.example` placeholder — the local
+container doesn't use SSL.)
 
 ### Install Dependencies
 
