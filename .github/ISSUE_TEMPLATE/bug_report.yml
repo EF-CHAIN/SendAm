@@ -1,0 +1,79 @@
+name: Bug report
+description: Report something that is not working
+title: "[Bug] "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: >-
+        Thanks for reporting a bug. Do not include secrets or report security
+        vulnerabilities here; use the private security advisory link instead.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: Describe the problem and the actual behavior you observed.
+      placeholder: Tell us what went wrong.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected-behavior
+    attributes:
+      label: What did you expect to happen?
+      description: Describe the behavior you expected instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction-steps
+    attributes:
+      label: Steps to reproduce
+      description: Provide the smallest reliable sequence that reproduces the problem.
+      placeholder: |
+        1. Go to ...
+        2. Run ...
+        3. Observe ...
+    validations:
+      required: true
+
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Affected surface
+      description: Where did the problem occur?
+      options:
+        - WhatsApp bot
+        - Chat simulator
+        - REST API
+        - Admin dashboard
+        - Landing page
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Include the details relevant to the affected surface.
+      placeholder: |
+        OS and version:
+        Browser or client version:
+        Node.js version:
+        Stellar network:
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: Remove secrets, private keys, access tokens, and personal data first.
+      render: shell
+
+  - type: textarea
+    id: additional-context
+    attributes:
+      label: Additional context
+      description: Add screenshots or other details that may help reproduce the problem.
