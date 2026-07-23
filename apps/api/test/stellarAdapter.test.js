@@ -28,10 +28,16 @@ test('validateAddress rejects non-Stellar input', () => {
   assert.equal(stellarAdapter.validateAddress(`G${'A'.repeat(55)}`), false);
 });
 
-test('resolveAsset maps XLM/native and rejects unknown assets', () => {
+test('resolveAsset maps XLM/native, resolves USDC, and rejects unknown assets', () => {
   assert.equal(stellarAdapter.resolveAsset('XLM').isNative(), true);
   assert.equal(stellarAdapter.resolveAsset('native').isNative(), true);
   assert.equal(stellarAdapter.resolveAsset(undefined).isNative(), true);
+  
+  const usdcAsset = stellarAdapter.resolveAsset('USDC');
+  assert.equal(usdcAsset.isNative(), false);
+  assert.equal(usdcAsset.getCode(), 'USDC');
+  assert.equal(usdcAsset.getIssuer(), config.stellar.usdcIssuer);
+
   assert.throws(() => stellarAdapter.resolveAsset('DOGE'), /Unsupported asset/);
 });
 
