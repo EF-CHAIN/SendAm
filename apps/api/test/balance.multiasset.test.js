@@ -28,12 +28,6 @@ const injectMock = (relFromSrc, factory) => {
   require.cache[abs] = { id: abs, filename: abs, loaded: true, exports: factory() };
 };
 
-// Replace a method on an already-loaded module's cached exports.
-const patchExport = (relFromSrc, key, fn) => {
-  const abs = path.resolve(srcRoot, `${relFromSrc}.js`);
-  require.cache[abs].exports[key] = fn;
-};
-
 // ─── set up mocks before loading the SUT ───────────────────────────────────
 
 // Stub out crypto.service so wallet.service can load without a real key store.

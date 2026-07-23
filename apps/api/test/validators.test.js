@@ -9,7 +9,7 @@ const isValidPhoneNumber = (phone) => {
 
   // Remove common formatting characters: spaces, dashes, parentheses, dots, extensions
   const cleaned = phone
-    .replace(/[\s\-\(\)\.\,xXextEXT]+/g, '')
+    .replace(/[\s\-(). ,xXextEXT]+/g, '')
     .trim();
 
   // Must have at least 6 digits after cleaning
