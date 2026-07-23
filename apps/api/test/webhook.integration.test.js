@@ -42,7 +42,7 @@ const prismaMock = {
     },
     create: async ({ data }) => {
       const id = userIdSeq++;
-      const user = { id, phoneNumber: data.phoneNumber, whatsappName: data.whatsappName || null,
+      const user = { phoneNumber: data.phoneNumber, whatsappName: data.whatsappName || null,
         pendingSend: null, pinHash: null, kycTier: 1, riskScore: 0, ...data, id };
       users.set(id, user);
       return { ...user };
@@ -185,7 +185,7 @@ injectMock('pricing/pricing.service', {
 // --- Pending claim (atomic race guard) ------------------------------------
 const pendingClaimResults = [];
 injectMock('whatsapp/pendingClaim', {
-  claimPendingSend: async ({ prisma, Prisma, userId }) => {
+  claimPendingSend: async ({ prisma: _prisma, Prisma: _Prisma, userId: _userId }) => {
     const result = pendingClaimResults.shift();
     return result !== undefined ? result : true;
   },

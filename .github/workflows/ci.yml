@@ -21,6 +21,18 @@ jobs:
       # resolution, validators) — no database required.
       - run: npm test
 
+  backend-lint:
+    name: Backend lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - run: npm run lint --workspace=apps/api
+
   frontend:
     name: Frontend lint & build
     runs-on: ubuntu-latest

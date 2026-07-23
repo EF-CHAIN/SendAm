@@ -10,7 +10,7 @@ try {
   ({ Queue, Worker } = require('bullmq'));
   IORedis = require('ioredis');
   connection = config.redis.url ? new IORedis(config.redis.url, { maxRetriesPerRequest: null }) : undefined;
-} catch (error) {
+} catch (_error) {
   logger.warn('BullMQ is not installed; webhook jobs will run inline in development.');
 }
 

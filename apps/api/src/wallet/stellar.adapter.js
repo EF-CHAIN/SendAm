@@ -133,7 +133,7 @@ const submitPayment = async ({ secretKey, destination, amount, asset = 'XLM' }) 
     // Check if destination exists (once; this doesn't change between retries).
     try {
       await server.loadAccount(destination);
-    } catch (e) {
+    } catch (_e) {
       throw new Error('Destination account does not exist or is not funded.');
     }
 
