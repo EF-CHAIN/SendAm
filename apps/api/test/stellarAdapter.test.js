@@ -4,11 +4,130 @@ const assert = require('node:assert/strict');
 process.env.ENCRYPTION_KEY = process.env.ENCRYPTION_KEY || 'a'.repeat(64);
 
 const stellarAdapter = require('../src/wallet/stellar.adapter');
-const { server } = require('../src/config/stellar');
+const { server, StellarSdk } = require('../src/config/stellar');
 const config = require('../src/config/env');
 
 const USDC_ISSUER = config.stellar.usdcIssuer;
 const OTHER_ISSUER = 'GAQAA5L65LSYH7CQ3VTJ7F3HHNTNCQIKEO7YPC2FUYAKQNRFAWSFTNZK';
+
+const SOURCE_WALLET = stellarAdapter.createWallet();
+const DESTINATION_WALLET = stellarAdapter.createWallet();
+
+const SOURCE_SECRET = SOURCE_WALLET.secretKey;
+const SOURCE_PUBLIC_KEY = SOURCE_WALLET.publicKey;
+const DESTINATION_PUBLIC_KEY = DESTINATION_WALLET.publicKey;
+
+const mockSuccessfulPaymentSetup = () => {
+  mock.method(server, 'loadAccount', async () => {
+    return new StellarSdk.Account(SOURCE_PUBLIC_KEY, '1');
+  });
+
+  mock.method(server, 'fetchBaseFee', async () => '100');
+
+  mock.method(server, 'submitTransaction', async () => ({
+    hash: 'mock-transaction-hash',
+  }));
+};
+
+test('submitPayment returns a friendly error for op_no_trust', async () => {
+  mockSuccessfulPaymentSetup();
+
+  mock.method(server, 'submitTransaction', async () => {
+    const error = new Error('Transaction failed');
+
+    error.response = {
+      data: {
+        extras: {
+          result_codes: {
+            transaction: 'tx_failed',
+            operations: ['op_no_trust'],
+          },
+        },
+      },
+    };
+
+    throw error;
+  });
+
+  await assert.rejects(
+    stellarAdapter.submitPayment({
+      secretKey: SOURCE_SECRET,
+      destination: DESTINATION_PUBLIC_KEY,
+      amount: '10',
+      asset: 'XLM',
+    }),
+    {
+      message: "The recipient can't receive USDC yet.",
+    },
+  );
+});
+
+test('submitPayment returns a friendly error for op_underfunded', async () => {
+  mockSuccessfulPaymentSetup();
+
+  mock.method(server, 'fetchBaseFee', async () => '100');
+
+  mock.method(server, 'submitTransaction', async () => {
+    const error = new Error('Transaction failed');
+    error.response = {
+      data: {
+        extras: {
+          result_codes: {
+            transaction: 'tx_failed',
+            operations: ['op_underfunded'],
+          },
+        },
+      },
+    };
+
+    throw error;
+  });
+
+  await assert.rejects(
+    stellarAdapter.submitPayment({
+      secretKey: SOURCE_SECRET,
+      destination: DESTINATION_PUBLIC_KEY,
+      amount: '10',
+      asset: 'XLM',
+    }),
+    {
+      message: 'Insufficient balance for this payment.',
+    },
+  );
+});
+
+test('submitPayment preserves unknown Horizon errors unchanged', async () => {
+  mockSuccessfulPaymentSetup();
+
+  const originalError = new Error('Transaction failed');
+
+  originalError.response = {
+    data: {
+      extras: {
+        result_codes: {
+          transaction: 'tx_failed',
+          operations: ['op_line_full'],
+        },
+      },
+    },
+  };
+
+  mock.method(server, 'submitTransaction', async () => {
+    throw originalError;
+  });
+
+  await assert.rejects(
+    stellarAdapter.submitPayment({
+      secretKey: SOURCE_SECRET,
+      destination: DESTINATION_PUBLIC_KEY,
+      amount: '10',
+      asset: 'XLM',
+    }),
+    {
+      message: 'Transaction failed',
+    },
+  );
+});
 
 test('createWallet returns a valid Stellar keypair', () => {
   const { publicKey, secretKey } = stellarAdapter.createWallet();
@@ -28,10 +147,16 @@ test('validateAddress rejects non-Stellar input', () => {
   assert.equal(stellarAdapter.validateAddress(`G${'A'.repeat(55)}`), false);
 });
 
-test('resolveAsset maps XLM/native and rejects unknown assets', () => {
+test('resolveAsset maps XLM/native, resolves USDC, and rejects unknown assets', () => {
   assert.equal(stellarAdapter.resolveAsset('XLM').isNative(), true);
   assert.equal(stellarAdapter.resolveAsset('native').isNative(), true);
   assert.equal(stellarAdapter.resolveAsset(undefined).isNative(), true);
+  
+  const usdcAsset = stellarAdapter.resolveAsset('USDC');
+  assert.equal(usdcAsset.isNative(), false);
+  assert.equal(usdcAsset.getCode(), 'USDC');
+  assert.equal(usdcAsset.getIssuer(), config.stellar.usdcIssuer);
+
   assert.throws(() => stellarAdapter.resolveAsset('DOGE'), /Unsupported asset/);
 });
 

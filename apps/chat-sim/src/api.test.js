@@ -33,7 +33,7 @@ describe('Chat Simulator API Client Modules', () => {
     });
 
     it('should propagate a clean ApiError on 4xx/5xx status drops', async () => {
-      global.fetch.mockResolvedValueOnce({
+      global.fetch.mockResolvedValue({
         ok: false,
         status: 400,
         statusText: 'Bad Request',
@@ -66,7 +66,7 @@ describe('Chat Simulator API Client Modules', () => {
     });
 
     it('should cleanly capture hardware level network crashes and turn them into readable failures', async () => {
-      global.fetch.mockRejectedValueOnce(new Error('Network disconnected'));
+      global.fetch.mockRejectedValue(new Error('Network disconnected'));
 
       await expect(fetchMessages('+2348000000001')).rejects.toThrow(ApiError);
       await expect(fetchMessages('+2348000000001')).rejects.toThrow('Failed to fetch messages: Network disconnected');
