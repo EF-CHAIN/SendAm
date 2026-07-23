@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { KeyboardAvoidingView, Platform, Pressable, Text, TextInput, View } from 'react-native';
 import MessageList from './MessageList';
+import usePolling from './usePolling';
 
 const API_BASE_URL = 'http://localhost:3002';
 
@@ -10,6 +11,8 @@ export default function ChatScreen() {
   const [messages, setMessages] = useState([]);
   const [inputText, setInputText] = useState('');
   const [sending, setSending] = useState(false);
+
+  usePolling(phoneNumber, setMessages);
 
   function handleStart() {
     const trimmed = phoneInput.trim();
