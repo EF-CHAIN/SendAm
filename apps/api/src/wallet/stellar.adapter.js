@@ -101,6 +101,9 @@ const resolveAsset = (asset) => {
   if (!asset || asset === 'XLM' || asset === 'native') {
     return StellarSdk.Asset.native();
   }
+  if (asset === 'USDC') {
+    return new StellarSdk.Asset('USDC', config.stellar.usdcIssuer);
+  }
   throw new Error(`Unsupported asset: ${asset}`);
 };
 
