@@ -1,0 +1,64 @@
+name: Feature request
+description: Suggest an idea or improvement to SendAm
+labels: ['enhancement']
+title: '[Feature] '
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for your interest in improving SendAm! 
+        
+        **Before opening this issue**, please ensure you're focusing on a **feature that affects at most 2 files** in the project. For larger features or architectural changes, please open an issue to discuss scope first—see [CONTRIBUTING.md](../CONTRIBUTING.md).
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: 'Problem'
+      description: 'What problem does this solve, or what is the use case?'
+      placeholder: |
+        Describe the problem you're trying to solve. 
+        Example: "Users need a way to..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposed-solution
+    attributes:
+      label: 'Proposed solution'
+      description: "What would you like to happen?"
+      placeholder: |
+        Describe the feature you'd like to see.
+        Example: "Add a new endpoint that..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: 'Alternatives considered'
+      description: 'What other approaches or workarounds did you explore?'
+      placeholder: |
+        Describe any alternative approaches you considered.
+        Example: "Instead of an endpoint, we could..."
+    validations:
+      required: false
+
+  - type: textarea
+    id: context
+    attributes:
+      label: 'Additional context'
+      description: 'Any other information that might be helpful?'
+      placeholder: 'Add any screenshots, links, or other context here.'
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: acknowledgments
+    attributes:
+      label: 'Acknowledgments'
+      description: 'Please confirm the following:'
+      options:
+        - label: 'I have read [CONTRIBUTING.md](../CONTRIBUTING.md) and confirm this feature change affects **at most 2 files**'
+          required: true
+        - label: 'I agree to follow the code of conduct'
+          required: false
