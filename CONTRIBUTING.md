@@ -253,6 +253,38 @@ Useful docs contributions include:
 - Security and compliance notes.
 - Stellar integration explanations.
 
+## Labels and Triage
+
+### Label Taxonomy
+
+Every issue and pull request is tagged with one or more labels. The full set:
+
+| Label | Purpose |
+|---|---|
+| `core` | Core product work — wallet, payment, WhatsApp, compliance, voice flows. Requires deeper context. |
+| `docs` | Documentation-only changes — README, CONTRIBUTING, guides, inline comments. |
+| `ci` | CI/CD pipeline changes — GitHub Actions workflows, build scripts, lint, test runner config. |
+| `good first issue` | Well-scoped, self-contained issues with clear done criteria. Ideal for first-time contributors. |
+| `help wanted` | Maintainers want outside input or are blocked on bandwidth. Open to anyone regardless of experience level. |
+| `M0` | Milestone 0 — project scaffolding and local dev baseline. |
+| `M1` | Milestone 1 — testnet wallet and WhatsApp send/receive flow. |
+| `M2` | Milestone 2 — compliance, KYC, PIN, limits, and audit logging. |
+| `M3` | Milestone 3 — community health, production hardening, and ecosystem integrations. |
+
+> **Maintainer action required:** The labels above must be created in the GitHub repository settings before they appear on issues. Go to **Issues → Labels → New label** for each entry in the table.
+
+### Triage Flow
+
+1. **Find an issue.** Browse open issues filtered by `good first issue` or `help wanted`. Read the description and done criteria fully before claiming.
+
+2. **Claim by comment.** Leave a comment on the issue saying you are working on it — for example: _"I'd like to take this one."_ A maintainer will assign it to you. Do not open a pull request without first claiming the issue.
+
+3. **One issue at a time.** Please work on one issue at a time. Finish or release your current claim before picking up another.
+
+4. **Stale claims.** If there is no visible progress (no draft PR, no update comment) within **two weeks** of being assigned, the issue will be unassigned and reopened for others. If you need more time, leave a short comment on the issue — that resets the clock.
+
+5. **Releasing a claim.** If you can no longer work on an issue, comment to let the maintainers know so it can be reassigned quickly. No explanation needed.
+
 ## License
 
 By contributing to SendAm, you agree that your contributions will be licensed under the MIT License.
