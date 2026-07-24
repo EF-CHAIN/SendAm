@@ -203,3 +203,77 @@ test('getBalances ignores a USDC-code trustline from an untrusted issuer', async
   const balances = await stellarAdapter.getBalances('GABCD');
   assert.deepEqual(balances, [{ asset: 'XLM', value: '1.0000000' }]);
 });
+
+// A funded account with a sequence so TransactionBuilder can build against it,
+// plus the balances array Horizon returns on loadAccount (used to detect an
+// existing trustline).
+const mockAccount = (balances) => {
+  const account = new StellarSdk.Account(SOURCE_PUBLIC_KEY, '1');
+  account.balances = balances;
+  return account;
+};
+
+test('establishTrustline builds one changeTrust op for the asset and submits it', async () => {
+  mock.method(server, 'loadAccount', async () => mockAccount([
+    { asset_type: 'native', balance: '5.0000000' },
+  ]));
+  mock.method(server, 'fetchBaseFee', async () => '100');
+
+  let submitted;
+  mock.method(server, 'submitTransaction', async (tx) => {
+    submitted = tx;
+    return { hash: 'trustline-tx-hash' };
+  });
+
+  const result = await stellarAdapter.establishTrustline({
+    secretKey: SOURCE_SECRET,
+    assetCode: 'USDC',
+  });
+
+  assert.equal(result.established, true);
+  assert.equal(result.alreadyExisted, false);
+  assert.equal(result.txHash, 'trustline-tx-hash');
+
+  assert.equal(submitted.operations.length, 1);
+  const [op] = submitted.operations;
+  assert.equal(op.type, 'changeTrust');
+  assert.equal(op.line.getCode(), 'USDC');
+  assert.equal(op.line.getIssuer(), USDC_ISSUER);
+});
+
+test('establishTrustline is a no-op reporting alreadyExisted when the trustline exists', async () => {
+  mock.method(server, 'loadAccount', async () => mockAccount([
+    { asset_type: 'native', balance: '5.0000000' },
+    { asset_type: 'credit_alphanum4', asset_code: 'USDC', asset_issuer: USDC_ISSUER, balance: '0.0000000' },
+  ]));
+
+  const submit = mock.method(server, 'submitTransaction', async () => {
+    throw new Error('should not submit');
+  });
+
+  const result = await stellarAdapter.establishTrustline({
+    secretKey: SOURCE_SECRET,
+    assetCode: 'USDC',
+  });
+
+  assert.deepEqual(result, { established: true, alreadyExisted: true });
+  assert.equal(submit.mock.callCount(), 0);
+});
+
+test('establishTrustline gives a readable error for an unfunded account', async () => {
+  mock.method(server, 'loadAccount', async () => {
+    const error = new Error('Not Found');
+    error.response = { status: 404 };
+    throw error;
+  });
+
+  await assert.rejects(
+    stellarAdapter.establishTrustline({
+      secretKey: SOURCE_SECRET,
+      assetCode: 'USDC',
+    }),
+    {
+      message: 'Account is not funded yet — fund it before opening a trustline.',
+    },
+  );
+});
