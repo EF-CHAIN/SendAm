@@ -10,6 +10,24 @@ const logger = require('../utils/logger');
 // everywhere below.
 const CHAIN = 'stellar';
 
+// The issued asset every new wallet should be able to receive from day one.
+const USDC = 'USDC';
+
+// Open the USDC trustline so a funded wallet can receive USDC immediately.
+// Non-fatal, exactly like funding: a failure is logged and the caller carries
+// on. establishTrustline is idempotent (no-op when the trustline already
+// exists), so this is safe to call on every funding attempt — including the
+// fundWallet retry path, which lets a wallet that missed it recover.
+const ensureUsdcTrustline = async ({ secretKey, publicKey }) => {
+  try {
+    await stellarAdapter.establishTrustline({ secretKey, assetCode: USDC });
+  } catch (error) {
+    logger.warn(
+      `USDC trustline failed for ${CHAIN} wallet ${publicKey}: ${error.message}`,
+    );
+  }
+};
+
 // One wallet per user, direct custody: the adapter generates a keypair, the
 // secret key is encrypted (crypto.service.js) before it ever touches the
 // database. Callers never see a plaintext secret key.
@@ -42,6 +60,8 @@ const createOrGetWallet = async ({ user, phoneNumber }) => {
     const result = await stellarAdapter.fundTestnetAccount(publicKey);
     if (result.funded) {
       wallet = await prisma.wallet.update({ where: { id: wallet.id }, data: { funded: true } });
+      // Funded accounts have the XLM reserve needed to open a trustline.
+      await ensureUsdcTrustline({ secretKey, publicKey });
     }
   } catch (error) {
     logger.warn(`Funding failed for new ${CHAIN} wallet ${publicKey}: ${error.message}`);
@@ -79,6 +99,12 @@ const getWalletByUserAndChain = async ({ userId, chain = CHAIN }) => {
 const fundWallet = async ({ wallet }) => {
   const result = await stellarAdapter.fundTestnetAccount(wallet.publicKey);
   if (result.funded) {
+    // Retry the (idempotent) trustline so a wallet that missed it at creation
+    // — e.g. funding succeeded but the trustline call failed — recovers here.
+    await ensureUsdcTrustline({
+      secretKey: decrypt(wallet.encryptedSecretKey),
+      publicKey: wallet.publicKey,
+    });
     return { wallet: withIdAlias(await prisma.wallet.update({ where: { id: wallet.id }, data: { funded: true } })), result };
   }
   return { wallet: withIdAlias(wallet), result };
