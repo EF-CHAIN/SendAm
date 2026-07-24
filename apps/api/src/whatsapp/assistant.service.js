@@ -26,7 +26,9 @@ const resolveUser = async (phoneNumber, whatsappName) => {
 
 const parsePaymentIntent = (text) => {
   const normalized = String(text || '').trim();
-  const sendMatch = normalized.match(/(?:send|pay|transfer)\s+([\d.]+)\s*([a-zA-Z]{2,5})?\s+(?:to\s+)?(.+)/i);
+  const sendMatch = normalized.match(
+    /(?:send|pay|transfer)\s+([\d.]+)\s*((?!to\b)[a-zA-Z]{2,5})?\s+(?:to\s+)?(.+)/i
+  );
   if (!sendMatch) return null;
 
   return {
