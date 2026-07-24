@@ -235,12 +235,77 @@ const submitPayment = async ({
   }
 };
 
+// Open a trustline so the wallet can hold an issued asset (e.g. USDC). This is
+// a `changeTrust` operation the wallet signs for itself, and it costs one XLM
+// reserve entry (see docs/STELLAR.md). Idempotent: callers may retry freely, so
+// if the trustline already exists we report that without submitting anything.
+const establishTrustline = async ({ secretKey, assetCode }) => {
+  const sourceKeypair = StellarSdk.Keypair.fromSecret(secretKey);
+  const sourcePublicKey = sourceKeypair.publicKey();
+
+  const asset = resolveAsset(assetCode);
+  if (asset.isNative()) {
+    throw new Error("XLM is the native asset and needs no trustline.");
+  }
+
+  // An unfunded (nonexistent) account 404s here; surface a clear reason rather
+  // than a raw Horizon error dump.
+  let account;
+  try {
+    account = await server.loadAccount(sourcePublicKey);
+  } catch (error) {
+    logger.error("Error loading account for trustline", error.message);
+    throw new Error(
+      "Account is not funded yet — fund it before opening a trustline.",
+    );
+  }
+
+  // Already trusted (same code *and* issuer): no-op, safe to call repeatedly.
+  const alreadyExisted = account.balances.some(
+    (b) =>
+      b.asset_code === asset.getCode() && b.asset_issuer === asset.getIssuer(),
+  );
+  if (alreadyExisted) {
+    return { established: true, alreadyExisted: true };
+  }
+
+  const fee = await server.fetchBaseFee();
+  const networkPassphrase =
+    config.stellar.network === "testnet"
+      ? StellarSdk.Networks.TESTNET
+      : StellarSdk.Networks.PUBLIC;
+
+  const transaction = new StellarSdk.TransactionBuilder(account, {
+    fee,
+    networkPassphrase,
+  })
+    .addOperation(StellarSdk.Operation.changeTrust({ asset }))
+    .setTimeout(30)
+    .build();
+
+  transaction.sign(sourceKeypair);
+
+  try {
+    const txResponse = await server.submitTransaction(transaction);
+    return {
+      established: true,
+      alreadyExisted: false,
+      txHash: txResponse.hash,
+      explorerUrl: getTransactionUrl(txResponse.hash),
+    };
+  } catch (error) {
+    logger.error("Error establishing trustline", error.message);
+    throw new Error(`Could not establish ${asset.getCode()} trustline.`);
+  }
+};
+
 module.exports = {
   chain,
   createWallet,
   getBalance,
   getBalances,
   submitPayment,
+  establishTrustline,
   resolveAsset,
   validateAddress,
   fundTestnetAccount,
