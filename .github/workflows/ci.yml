@@ -19,8 +19,8 @@ jobs:
       - run: npm ci
       - run: npm run lint --workspace=apps/api
 
-  frontend:
-    name: Frontend lint & build
+  frontend-lint:
+    name: Frontend lint
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -31,8 +31,7 @@ jobs:
       - run: npm ci
       - run: npm run lint --workspace=apps/landing
       - run: npm run lint --workspace=apps/admin
-      - run: npm run build --workspace=apps/landing
-      - run: npm run build --workspace=apps/admin
+      # Frontend builds live in the Test workflow (test.yml → frontend-build).
 
   api-test-coverage:
     name: Flag untested apps/api/src changes

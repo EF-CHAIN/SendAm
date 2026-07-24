@@ -20,3 +20,18 @@ jobs:
       # Unit tests (parser, crypto, admin auth, transfer guardrails, recipient
       # resolution, validators) — no database required.
       - run: npm test
+
+  frontend-build:
+    name: Frontend build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      # Build both Vite frontends so a compile break in either app fails the
+      # check and blocks the merge, exactly like a failing test.
+      - run: npm run build:landing
+      - run: npm run build:admin
