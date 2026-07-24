@@ -38,10 +38,10 @@ const parsePaymentIntent = (text) => {
   };
 };
 
-// Precedence: saved contacts → raw address passthrough. See
+// Precedence: saved contacts → phone numbers → raw address passthrough. See
 // recipientResolver.js; the address-validity check in requestConfirmation
 // still applies to whatever comes back.
-const resolveRecipient = createRecipientResolver({ prisma });
+const resolveRecipient = createRecipientResolver({ prisma, walletService });
 
 const requestConfirmation = async ({ phoneNumber, user, intent, notify }) => {
   const recipient = await resolveRecipient(user, intent.recipient);
