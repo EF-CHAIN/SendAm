@@ -16,20 +16,31 @@ SendAm is currently a **Stellar Testnet MVP**. It is not configured for real-mon
 - Transaction-signing or transfer-authorization vulnerabilities.
 - Production credential or secret leaks.
 
-Instead, report privately through one of these channels:
+Instead, report privately through **GitHub private vulnerability reporting**:
 
-1. **GitHub private vulnerability reporting (preferred):** open a report at
-   <https://github.com/Gozirimdev/SendAm/security/advisories/new>. This keeps the
-   details private to the maintainers until a fix is ready.
-2. If you cannot use that, open a **minimal** public issue stating only that you
-   found a security concern and asking for a private contact — do not post
-   exploit details or proof-of-concept publicly.
+1. Go to <https://github.com/EF-CHAIN/SendAm/security/advisories/new> and fill
+   in the advisory form. This keeps the details private to the maintainers
+   until a fix is ready.
 
-> Maintainers: enable "Private vulnerability reporting" in the repository's
-> Settings → Security so the link above is active, and add a direct email here
-> if you have a dedicated security contact.
+Please include when you can: affected component, reproduction steps, impact, and
+any suggested fix. We aim to **acknowledge reports within 48 hours** and will
+coordinate disclosure once a fix is available.
 
-Please include, when you can: affected component, reproduction steps, impact, and any suggested fix. We aim to acknowledge reports promptly and will coordinate disclosure once a fix is available.
+## Safe Harbor
+
+We consider security research conducted in accordance with this policy to be:
+
+- **Authorized** under applicable anti-hacking laws, and we will not initiate
+  legal action against you for your research.
+- **Exempt** from the DMCA, and you are not liable for circumvention of
+  technology controls to the extent your activity is covered by this policy.
+- **Helpful and conducted in good faith**, so we will work with you to resolve
+  any issues before public disclosure.
+
+We ask that you make a good-faith effort to avoid privacy violations,
+destruction of data, and disruption of production services. Do not access or
+modify data that does not belong to you, and stop testing and report immediately
+once you have confirmed a vulnerability.
 
 ## Current Security Posture
 
