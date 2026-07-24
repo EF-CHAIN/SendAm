@@ -33,6 +33,11 @@ model User {
 // One row per user per chain — direct custody. `encryptedSecretKey` holds
 // the chain's private key, AES-256-GCM encrypted (see crypto.service.js).
 // Never store or return the plaintext secret key outside wallet.service.js.
+//
+// `paymentCursor` is the Horizon paging token advanced by the deposit poller
+// (jobs/deposits.jobs.js). A null value means the wallet has never been
+// polled; the first poll initialises it to the latest cursor without
+// notifying so old history is never replayed.
 model Wallet {
   id                 String   @id @default(cuid())
   userId             String
@@ -42,6 +47,7 @@ model Wallet {
   encryptedSecretKey String?
   funded             Boolean  @default(false)
   network            String   @default("testnet")
+  paymentCursor      String?
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
 
