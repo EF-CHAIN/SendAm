@@ -14,6 +14,7 @@ const simRoutes = require('./routes/sim.routes');
 const errorHandler = require('./middlewares/errorHandler');
 const notFound = require('./middlewares/notFound');
 const PostgresRateStore = require('./middlewares/postgresRateStore');
+const requireChatSimEnabled = require('./middlewares/requireChatSimEnabled');
 const config = require('./config/env');
 const logger = require('./utils/logger');
 const prisma = require('./common/prisma');
@@ -89,7 +90,18 @@ if (config.features.walletRestApi) {
 app.use('/api/admin', adminRoutes);
 app.use('/api/compliance', complianceRoutes);
 app.use('/api/pricing', pricingRoutes);
-app.use('/api/sim', simRoutes);
+
+// The chat simulator (/api/sim/*) is an unauthenticated dev/test harness and
+// must not be reachable in production by accident. Gated by ENABLE_CHAT_SIM,
+// defaulting off in production — same pattern as the REST wallet API above.
+if (config.features.chatSim) {
+  if (config.isProduction) {
+    logger.warn('ENABLE_CHAT_SIM=true in production — the unauthenticated /api/sim routes are exposed.');
+  }
+  app.use('/api/sim', simRoutes);
+} else {
+  logger.info('Chat simulator (/api/sim) is disabled. Set ENABLE_CHAT_SIM=true to enable.');
+}
 
 // Error Handling
 app.use(notFound);
