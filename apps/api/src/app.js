@@ -14,7 +14,6 @@ const simRoutes = require('./routes/sim.routes');
 const errorHandler = require('./middlewares/errorHandler');
 const notFound = require('./middlewares/notFound');
 const PostgresRateStore = require('./middlewares/postgresRateStore');
-const requireChatSimEnabled = require('./middlewares/requireChatSimEnabled');
 const config = require('./config/env');
 const logger = require('./utils/logger');
 const prisma = require('./common/prisma');
