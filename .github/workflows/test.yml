@@ -17,6 +17,14 @@ jobs:
           node-version-file: .nvmrc
           cache: npm
       - run: npm ci
+      # Generate the Prisma client. Tests never talk to a database, but any
+      # test that requires a module which imports src/common/prisma.js needs
+      # the generated client to exist or it dies with
+      # "Cannot find module '.prisma/client/default'". prisma.config.ts reads
+      # DATABASE_URL, so a throwaway value is enough — nothing connects.
+      - run: npm run prisma:generate --workspace=apps/api
+        env:
+          DATABASE_URL: postgresql://ci:ci@localhost:5432/ci
       # Unit tests (parser, crypto, admin auth, transfer guardrails, recipient
       # resolution, validators) — no database required.
       - run: npm test
