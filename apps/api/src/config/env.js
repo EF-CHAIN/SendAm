@@ -94,5 +94,13 @@ module.exports = {
     walletRestApi: process.env.ENABLE_WALLET_REST_API
       ? process.env.ENABLE_WALLET_REST_API === 'true'
       : env !== 'production',
+
+    // The chat simulator (/api/sim/*) is a dev/test harness with no auth.
+    // It must never be reachable in a real deployment by accident, so it
+    // follows the same kill-switch pattern: OFF in production unless
+    // explicitly set, ON elsewhere for local testing.
+    chatSim: process.env.ENABLE_CHAT_SIM
+      ? process.env.ENABLE_CHAT_SIM === 'true'
+      : env !== 'production',
   },
 };
