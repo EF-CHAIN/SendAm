@@ -1,13 +1,12 @@
 const { isValidPhoneNumber } = require('../utils/validators');
 
-// Recipient resolution with a fixed, documented precedence:
-//   1. saved contacts (the user's own Alias rows) — bare names live here
-//   2. raw addresses, passed through untouched
-//   3. phone numbers — resolves by creating or fetching wallet
-// Address validity is still enforced downstream (detectChainFromAddress in
-// the confirmation flow).
-//
-// prisma and walletService are injected so this stays unit-testable offline.
+/**
+ * Resolves recipient identifiers in the following precedence order:
+ * 1. Saved contacts (name lookup)
+ * 2. Phone numbers (creates or fetches user wallet)
+ * 3. @names
+ * 4. Raw G... Stellar addresses
+ */
 const createRecipientResolver = ({ prisma, walletService }) => {
   return async (user, recipient) => {
     const raw = String(recipient || '').trim();

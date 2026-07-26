@@ -26,7 +26,9 @@ const resolveUser = async (phoneNumber, whatsappName) => {
 
 const parsePaymentIntent = (text) => {
   const normalized = String(text || '').trim();
-  const sendMatch = normalized.match(/(?:send|pay|transfer)\s+([\d.]+)\s*([a-zA-Z]{2,5})?\s+(?:to\s+)?(.+)/i);
+  const sendMatch = normalized.match(
+    /(?:send|pay|transfer)\s+([\d.]+)\s*((?!to\b)[a-zA-Z]{2,5})?\s+(?:to\s+)?(.+)/i
+  );
   if (!sendMatch) return null;
 
   return {
@@ -38,6 +40,12 @@ const parsePaymentIntent = (text) => {
   };
 };
 
+function createAssistantService({
+  prisma,
+  walletService = defaultWalletService, // 👈 Fallback if not provided
+  ...otherDeps
+} = {}) {
+
 // Precedence: saved contacts → phone numbers → raw address passthrough. See
 // recipientResolver.js; the address-validity check in requestConfirmation
 // still applies to whatever comes back.
@@ -46,13 +54,24 @@ const resolveRecipient = createRecipientResolver({ prisma, walletService });
 const requestConfirmation = async ({ phoneNumber, user, intent, notify }) => {
   const recipient = await resolveRecipient(user, intent.recipient);
 
-  if (!validateAddress(String(recipient.destination || '').trim())) {
-    await notify(
-      phoneNumber,
-      `"${recipient.label}" isn't a saved contact or a valid Stellar address. Save it first, or send to a valid address directly.`
-    );
-    return;
-  }
+  // Inside createRecipientResolver in recipientResolver.js:
+
+// 1. Saved contacts check...
+// 2. Phone number check:
+if (isValidPhoneNumber(recipient)) {
+  const wallet = await walletService.createOrGetWallet({ phoneNumber: recipient });
+  return {
+    destination: wallet.publicKey, // 👈 Must return .destination!
+    label: recipient,               // 👈 Must return .label!
+  };
+}
+
+// 3. Raw address / default fallback:
+return {
+  destination: recipient,
+  label: recipient,
+};
+}
 
   const pendingSend = {
     amount: intent.amount,
