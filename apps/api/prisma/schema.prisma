@@ -45,6 +45,7 @@ model Wallet {
   phoneNumber        String?
   publicKey          String?
   encryptedSecretKey String?
+  paymentCursor      String?
   funded             Boolean  @default(false)
   network            String   @default("testnet")
   paymentCursor      String?
