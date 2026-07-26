@@ -10,6 +10,20 @@ jobs:
   backend:
     name: Backend tests
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: password
+          POSTGRES_DB: sendam_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -17,16 +31,16 @@ jobs:
           node-version-file: .nvmrc
           cache: npm
       - run: npm ci
-      # Generate the Prisma client. Tests never talk to a database, but any
-      # test that requires a module which imports src/common/prisma.js needs
-      # the generated client to exist or it dies with
-      # "Cannot find module '.prisma/client/default'". prisma.config.ts reads
-      # DATABASE_URL, so a throwaway value is enough — nothing connects.
+      # Generate the Prisma client.
       - run: npm run prisma:generate --workspace=apps/api
         env:
-          DATABASE_URL: postgresql://ci:ci@localhost:5432/ci
+          DATABASE_URL: postgresql://postgres:password@localhost:5432/sendam_test
+      # Validate database migrations against clean Postgres instance
+      - run: npx prisma migrate deploy --schema=apps/api/prisma/schema.prisma
+        env:
+          DATABASE_URL: postgresql://postgres:password@localhost:5432/sendam_test
       # Unit tests (parser, crypto, admin auth, transfer guardrails, recipient
-      # resolution, validators) — no database required.
+      # resolution, validators)
       - run: npm test
 
   frontend-build:
