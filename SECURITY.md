@@ -46,7 +46,7 @@ once you have confirmed a vulnerability.
 
 Already in place:
 
-- **Authenticated encryption** of wallet secrets with AES-256-GCM (tamper-detecting). No fallback key — a missing/invalid `ENCRYPTION_KEY` fails loudly at startup.
+- **Authenticated encryption & key versioning** of wallet secrets with AES-256-GCM (`v1:` version header format with support for key rotation and backward compatibility). No fallback key — a missing/invalid `ENCRYPTION_KEY` fails loudly at startup.
 - **Admin authentication** via HMAC-signed, expiring session tokens. The API refuses to start without `ADMIN_PASSWORD` and `JWT_SECRET`; the login endpoint is rate-limited and all admin data routes require a valid Bearer token.
 - **WhatsApp webhook signature verification** against the `X-Hub-Signature-256` header, fail-closed in production.
 - **Idempotency** on inbound WhatsApp messages to prevent duplicate transfers from webhook retries.

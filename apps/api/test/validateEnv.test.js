@@ -52,8 +52,17 @@ test('missing WHATSAPP_APP_SECRET is fine outside production', () => {
 test('missing WHATSAPP_APP_SECRET throws in production', () => {
   const config = baseConfig();
   config.isProduction = true;
+  config.compliance = { pinPepper: 'pepper' };
   config.whatsapp.appSecret = undefined;
   assert.throws(() => validateEnv(config), /WHATSAPP_APP_SECRET/);
+});
+
+test('missing PIN_PEPPER throws in production', () => {
+  const config = baseConfig();
+  config.isProduction = true;
+  config.whatsapp.appSecret = 'secret';
+  config.compliance = { pinPepper: undefined };
+  assert.throws(() => validateEnv(config), /PIN_PEPPER/);
 });
 
 test('multiple violations are all reported in one error', () => {

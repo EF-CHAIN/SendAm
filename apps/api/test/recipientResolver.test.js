@@ -49,17 +49,16 @@ test('raw addresses pass through untouched (validation happens downstream)', asy
 test('phone number for new user creates wallet and returns its address', async () => {
   const resolve = createRecipientResolver({
     prisma: prismaWithAliases({}),
-    walletService: walletServiceMock(),
+    walletService: walletServiceMock,
   });
   const result = await resolve(user, VALID_PHONE);
   assert.deepEqual(result, { destination: WALLET_ACCOUNT, label: VALID_PHONE });
 });
 
 test('phone number for existing user fetches and returns wallet address', async () => {
-  const wallets = { [VALID_PHONE]: { publicKey: WALLET_ACCOUNT, id: 'w_existing' } };
   const resolve = createRecipientResolver({
     prisma: prismaWithAliases({}),
-    walletService: walletServiceMock(wallets),
+    walletService: walletServiceMock,
   });
   const result = await resolve(user, VALID_PHONE);
   assert.deepEqual(result, { destination: WALLET_ACCOUNT, label: VALID_PHONE });
@@ -68,7 +67,7 @@ test('phone number for existing user fetches and returns wallet address', async 
 test('saved contact wins precedence over phone-shaped number', async () => {
   const resolve = createRecipientResolver({
     prisma: prismaWithAliases({ [VALID_PHONE]: { target: CONTACT_ACCOUNT, targetType: 'stellar' } }),
-    walletService: walletServiceMock(),
+    walletService: walletServiceMock,
   });
   const result = await resolve(user, VALID_PHONE);
   // Should return the saved contact, not create/fetch wallet
