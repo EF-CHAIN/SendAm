@@ -14,7 +14,7 @@ const paymentIntents = [
   },
   {
     input: 'pay 10 to +2348000000000',
-    expected: { amount: '10', asset: undefined, recipient: '+2348000000000' },
+    expected: { amount: '10', asset: 'XLM', recipient: '+2348000000000' },
   },
   {
     input: 'transfer 2.5 usdc GABC123',
@@ -22,7 +22,7 @@ const paymentIntents = [
   },
   {
     input: 'send 5 ada',
-    expected: { amount: '5', asset: undefined, recipient: 'ada' },
+    expected: { amount: '5', asset: 'XLM', recipient: 'ada' },
   },
   {
     input: '  send   0.125   xlm   to   GDESTINATION  ',

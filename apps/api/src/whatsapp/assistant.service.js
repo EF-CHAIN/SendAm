@@ -8,8 +8,10 @@ const { sendTextMessage } = require('../services/whatsapp.service');
 const { claimPendingSend } = require('./pendingClaim');
 const { createRecipientResolver } = require('./recipientResolver');
 const prisma = require('../common/prisma');
+const { nativeToScVal } = require('@stellar/stellar-sdk');
 
 const PENDING_SEND_TTL_MS = 10 * 60 * 1000;
+const NATIVE_ASSET = 'XLM';
 
 const resolveUser = async (phoneNumber, whatsappName) => {
   let user = await prisma.user.findUnique({ where: { phoneNumber } });
@@ -30,17 +32,18 @@ const parsePaymentIntent = (text) => {
     /(?:send|pay|transfer)\s+([\d.]+)\s*((?!to\b)[a-zA-Z]{2,5})?\s+(?:to\s+)?(.+)/i
   );
   if (!sendMatch) return null;
-
+  console.log("theis"+sendMatch)
   return {
     amount: sendMatch[1],
     // No unit specified — let payment.orchestrator default to the
     // destination chain's native asset instead of guessing here.
-    asset: sendMatch[2] ? sendMatch[2].toUpperCase() : undefined,
+    
+    asset: sendMatch[2] ? sendMatch[2].toUpperCase() : NATIVE_ASSET,
     recipient: sendMatch[3].trim(),
   };
 };
 
-function createAssistantService({
+ function createAssistantService({
   prisma,
   walletService = defaultWalletService, // 👈 Fallback if not provided
   ...otherDeps
