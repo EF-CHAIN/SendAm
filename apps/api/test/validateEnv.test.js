@@ -12,6 +12,11 @@ const baseConfig = () => ({
   admin: { jwtSecret: validSecret, password: 'correct horse battery staple' },
   whatsapp: { appSecret: undefined },
   messageTransport: 'meta',
+  stellar: {
+    network: 'testnet',
+    isMainnet: false,
+    usdcIssuer: 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5',
+  },
 });
 
 test('valid config does not throw', () => {
@@ -79,5 +84,26 @@ test('valid MESSAGE_TRANSPORT does not throw', () => {
   assert.doesNotThrow(() => validateEnv(config));
   
   config.messageTransport = 'meta';
+  assert.doesNotThrow(() => validateEnv(config));
+});
+
+test('mainnet with testnet USDC issuer throws', () => {
+  const config = baseConfig();
+  config.stellar.isMainnet = true;
+  config.stellar.usdcIssuer = 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5';
+  assert.throws(() => validateEnv(config), /STELLAR_USDC_ISSUER.*must not be the Testnet issuer/);
+});
+
+test('mainnet with mainnet USDC issuer does not throw', () => {
+  const config = baseConfig();
+  config.stellar.isMainnet = true;
+  config.stellar.usdcIssuer = 'GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN';
+  assert.doesNotThrow(() => validateEnv(config));
+});
+
+test('testnet with testnet USDC issuer does not throw', () => {
+  const config = baseConfig();
+  config.stellar.isMainnet = false;
+  config.stellar.usdcIssuer = 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5';
   assert.doesNotThrow(() => validateEnv(config));
 });

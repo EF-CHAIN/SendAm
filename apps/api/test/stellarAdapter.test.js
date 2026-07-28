@@ -277,3 +277,29 @@ test('establishTrustline gives a readable error for an unfunded account', async 
     },
   );
 });
+
+test('fundTestnetAccount is blocked on mainnet', async () => {
+  const originalIsMainnet = config.stellar.isMainnet;
+  config.stellar.isMainnet = true;
+
+  await assert.rejects(
+    stellarAdapter.fundTestnetAccount(SOURCE_PUBLIC_KEY),
+    /Friendbot funding is not available on mainnet/,
+  );
+
+  config.stellar.isMainnet = originalIsMainnet;
+});
+
+test('fundTestnetAccount allows on testnet', async () => {
+  const originalIsMainnet = config.stellar.isMainnet;
+  config.stellar.isMainnet = false;
+
+  mock.method(require('axios'), 'get', async () => ({
+    data: { result: { id: 'mock' } },
+  }));
+
+  const result = await stellarAdapter.fundTestnetAccount(SOURCE_PUBLIC_KEY);
+  assert.equal(result.funded, true);
+
+  config.stellar.isMainnet = originalIsMainnet;
+});

@@ -36,6 +36,13 @@ const FUNDING_MAX_ATTEMPTS = 3;
 // Retry with linear backoff, and treat "account already exists" as success so
 // re-running create/`fund` on an already-funded wallet is idempotent.
 const fundTestnetAccount = async (publicKey) => {
+  if (config.stellar.isMainnet) {
+    throw new Error(
+      'Friendbot funding is not available on mainnet. '
+      + 'Fund the account with real XLM before submitting transactions.',
+    );
+  }
+
   let lastError;
   for (let attempt = 1; attempt <= FUNDING_MAX_ATTEMPTS; attempt += 1) {
     try {
