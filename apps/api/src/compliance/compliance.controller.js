@@ -37,12 +37,30 @@ const reviewKyc = async (req, res, next) => {
   try {
     const profile = await prisma.kycProfile.findUnique({ where: { id: req.params.id } });
     if (!profile) return sendError(res, 'KYC profile not found', 404);
+
+    const allowedStatuses = ['not_started', 'pending', 'approved', 'rejected', 'review'];
+    const allowedSanctions = ['not_screened', 'cleared', 'review', 'blocked'];
+    const allowedCustody = ['not_reviewed', 'approved', 'review', 'denied'];
+
+    const status = req.body.status ?? profile.status;
+    const sanctionsStatus = req.body.sanctionsStatus ?? profile.sanctionsStatus;
+    const custodyStatus = req.body.custodyStatus ?? profile.custodyStatus;
+
+    if (!allowedStatuses.includes(status)) return sendError(res, 'Invalid KYC status', 400);
+    if (!allowedSanctions.includes(sanctionsStatus)) return sendError(res, 'Invalid sanctions status', 400);
+    if (!allowedCustody.includes(custodyStatus)) return sendError(res, 'Invalid custody status', 400);
+
     const reviewed = await prisma.kycProfile.update({
       where: { id: profile.id },
       data: {
-        status: req.body.status,
+        status,
         tier: Number(req.body.tier ?? profile.tier),
         riskScore: Number(req.body.riskScore ?? profile.riskScore),
+        sanctionsStatus,
+        custodyStatus,
+        deniedReason: req.body.deniedReason ?? profile.deniedReason,
+        sanctionsScreenedAt: sanctionsStatus === 'cleared' || sanctionsStatus === 'blocked' || sanctionsStatus === 'review' ? new Date() : profile.sanctionsScreenedAt,
+        custodyReviewedAt: custodyStatus === 'approved' || custodyStatus === 'denied' || custodyStatus === 'review' ? new Date() : profile.custodyReviewedAt,
       },
     });
     await prisma.user.update({

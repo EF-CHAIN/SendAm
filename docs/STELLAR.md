@@ -90,6 +90,50 @@ transaction is invalid. `config.stellar.network` drives the choice; never
 hardcode it. **All development happens on testnet. PRs that touch mainnet
 behavior get extra scrutiny.**
 
+### Mainnet safety controls
+
+The codebase enforces several safety controls when `STELLAR_NETWORK` is set
+to `public` (or any value other than `testnet`):
+
+1. **Friendbot blocked** — `fundTestnetAccount()` in `stellar.adapter.js`
+   immediately throws if `config.stellar.isMainnet` is `true`. This prevents
+   accidental testnet funding calls from reaching mainnet.
+
+2. **USDC issuer validation** — `validateEnv()` rejects startup if the
+   configured `STELLAR_USDC_ISSUER` is the Testnet issuer address while
+   running on mainnet. This catches misconfigured `.env` files before any
+   transactions can execute.
+
+3. **Horizon URL** — defaults to `https://horizon-testnet.stellar.org` for
+   testnet. Mainnet deployments must explicitly set `STELLAR_HORIZON_URL`
+   to a public Horizon instance (e.g. `https://horizon.stellar.org`).
+
+### Environment variables for mainnet
+
+| Variable | Testnet default | Mainnet requirement |
+|---|---|---|
+| `STELLAR_NETWORK` | `testnet` | `public` |
+| `STELLAR_HORIZON_URL` | `https://horizon-testnet.stellar.org` | Must be set to a public Horizon URL |
+| `STELLAR_USDC_ISSUER` | Testnet issuer | Must be Circle's mainnet issuer: `GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN` |
+
+### Rollback
+
+If a mainnet deployment needs to be rolled back:
+
+1. Set `STELLAR_NETWORK=testnet` to disable mainnet controls.
+2. Revert to testnet Horizon URL and USDC issuer.
+3. All pending mainnet transactions remain on-ledger; rollback only affects
+   future operations.
+
+### Operational notes
+
+- **Idempotency**: `fundTestnetAccount` treats "account already exists" as
+  success. `establishTrustline` is a no-op if the trustline already exists.
+  Retries are safe for all financial operations.
+- **Partial failures**: Payment submission retries only on `tx_bad_seq`
+  (concurrent transaction conflict). All other failures are terminal and
+  surfaced with human-readable messages.
+
 ## Ecosystem terms you'll see in discussions
 
 - **Anchor** — a regulated business bridging Stellar assets and bank money
