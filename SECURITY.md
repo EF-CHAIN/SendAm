@@ -52,8 +52,23 @@ Already in place:
 - **Idempotency** on inbound WhatsApp messages to prevent duplicate transfers from webhook retries.
 - **Input validation** of Stellar public keys, amounts, and phone numbers on every surface.
 - **Transfer guardrails**: per-transaction cap plus rolling 24h amount and count limits, with an upfront balance check.
+- **Compliance review workflow**: KYC approval, sanctions screening, and custody review gates are now represented in the backend policy and persisted in `KycProfile`.
+- **Audit logging** for wallet creation and payment execution is already present; the compliance workflow records review decisions and can be extended to log any manual approvals or denials.
 - **CORS allowlist** enforced in production and **Mongo-backed rate limiting** shared across instances (per-IP REST, per-sender WhatsApp).
 - The **unauthenticated REST wallet API** is disabled in production by default (`ENABLE_WALLET_REST_API`); WhatsApp is the signature-verified product surface.
+
+## Compliance Assumptions and Threat Boundaries
+
+- The repo is built for a **direct custody** model: user wallet secret keys are encrypted at rest, and all settlement happens through the server-side Stellar wallet adapter.
+- The compliance workflow assumes an AML program with manual review gates for:
+  - KYC status and tier-based transaction limits.
+  - sanctions screening by destination country and cross-border transfers.
+  - custody review statuses for accounts that require additional operational approval.
+- The current implementation includes a **local sanctions screening baseline** for high-risk and blocked countries, but any production deployment must use a licensed sanctions screening provider and confirm the list with legal counsel.
+- Operational ownership is split as follows:
+  - **Compliance team**: KYC approvals, sanctions clearance, custody review decisions, and maintaining approved jurisdictions.
+  - **Security team**: encryption key management, admin auth, audit logging, and endpoint hardening.
+  - **Operations team**: production monitoring, database backups, and alerts for review queue growth or failed transfers.
 
 ## Known Limitations / Hardening Still Required
 
