@@ -120,6 +120,11 @@ model KycProfile {
   status            String    @default("not_started")
   country           String?
   riskScore         Int       @default(0)
+  sanctionsStatus   String    @default("not_screened")
+  sanctionsScreenedAt DateTime?
+  custodyStatus     String    @default("not_reviewed")
+  custodyReviewedAt DateTime?
+  deniedReason      String?
   lastScreenedAt    DateTime?
   metadata          Json      @default("{}")
   createdAt         DateTime  @default(now())
@@ -128,6 +133,8 @@ model KycProfile {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([status])
+  @@index([sanctionsStatus])
+  @@index([custodyStatus])
 }
 
 model VoiceCommand {
