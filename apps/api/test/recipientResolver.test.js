@@ -17,14 +17,17 @@ const prismaWithAliases = (aliases) => ({
   },
 });
 
-const walletServiceMock = {
+// Factory: pass a map of already-existing wallets keyed by phone number; any
+// other number falls through to a freshly created wallet.
+const walletServiceMock = (wallets = {}) => ({
   createOrGetWallet: async ({ phoneNumber }) => {
+    if (wallets[phoneNumber]) return wallets[phoneNumber];
     if (phoneNumber === VALID_PHONE_2) {
       return { publicKey: WALLET_ACCOUNT_2 };
     }
     return { publicKey: WALLET_ACCOUNT };
   },
-};
+});
 
 test('saved contacts win for bare names', async () => {
   const resolve = createRecipientResolver({
@@ -56,10 +59,9 @@ test('phone number for new user creates wallet and returns its address', async (
 });
 
 test('phone number for existing user fetches and returns wallet address', async () => {
-  const wallets = { [VALID_PHONE]: { publicKey: WALLET_ACCOUNT, id: 'w_existing' } };
   const resolve = createRecipientResolver({
     prisma: prismaWithAliases({}),
-    walletService: walletServiceMock(wallets),
+    walletService: walletServiceMock(),
   });
   const result = await resolve(user, VALID_PHONE);
   assert.deepEqual(result, { destination: WALLET_ACCOUNT, label: VALID_PHONE });

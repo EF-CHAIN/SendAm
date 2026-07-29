@@ -53,46 +53,87 @@ const executePayment = async ({
   const effectiveRouteType = routeType
     || (sourceCountry && destinationCountry && sourceCountry !== destinationCountry ? 'cross_border' : 'domestic');
 
-  const compliance = await enforceTransactionPolicy({
-    user: senderUser,
-    amount,
-    routeType: effectiveRouteType,
-    destinationCountry,
-  });
-  const quote = await createQuote({
-    userId: senderUser.id,
-    sourceCurrency: effectiveAsset,
-    targetCurrency: effectiveAsset,
-    sourceAmount: amount,
-    route: rail,
-    provider: rail,
-  });
-
-  let transaction = await prisma.transaction.create({
-    data: {
-      userId: senderUser.id,
-      type: 'send',
-      amount: String(amount),
-      asset: effectiveAsset,
-      recipientPhoneNumber,
-      destination,
-      rail,
+  const { quote, transaction } = await (prisma.$transaction ? prisma.$transaction(async (tx) => {
+    const comp = await enforceTransactionPolicy({
+      user: senderUser,
+      amount,
       routeType: effectiveRouteType,
-      quoteId: quote.id,
-      status: 'processing',
-      metadata: {
-        fee: calculateFee(amount),
-        userHiddenRail: true,
-        riskScore: compliance.riskScore,
+      destinationCountry,
+      tx,
+    });
+    const q = await createQuote({
+      userId: senderUser.id,
+      sourceCurrency: effectiveAsset,
+      targetCurrency: effectiveAsset,
+      sourceAmount: amount,
+      route: rail,
+      provider: rail,
+    });
+    const t = await tx.transaction.create({
+      data: {
+        userId: senderUser.id,
+        type: 'send',
+        amount: String(amount),
+        asset: effectiveAsset,
+        recipientPhoneNumber,
+        destination,
+        rail,
+        routeType: effectiveRouteType,
+        quoteId: q.id,
+        status: 'processing',
+        metadata: {
+          fee: calculateFee(amount),
+          userHiddenRail: true,
+          riskScore: comp.riskScore,
+        },
       },
-    },
-  });
+    });
+    return { compliance: comp, quote: q, transaction: t };
+  }) : (async () => {
+    const comp = await enforceTransactionPolicy({
+      user: senderUser,
+      amount,
+      routeType: effectiveRouteType,
+      destinationCountry,
+      tx: prisma,
+    });
+    const q = await createQuote({
+      userId: senderUser.id,
+      sourceCurrency: effectiveAsset,
+      targetCurrency: effectiveAsset,
+      sourceAmount: amount,
+      route: rail,
+      provider: rail,
+    });
+    const t = await prisma.transaction.create({
+      data: {
+        userId: senderUser.id,
+        type: 'send',
+        amount: String(amount),
+        asset: effectiveAsset,
+        recipientPhoneNumber,
+        destination,
+        rail,
+        routeType: effectiveRouteType,
+        quoteId: q.id,
+        status: 'processing',
+        metadata: {
+          fee: calculateFee(amount),
+          userHiddenRail: true,
+          riskScore: comp.riskScore,
+        },
+      },
+    });
+    return { compliance: comp, quote: q, transaction: t };
+  })());
+
+  let activeTransaction = transaction;
 
   try {
     const wallet = await walletService.createOrGetWallet({ user: senderUser });
     const result = await walletService.submitPayment({ wallet, destination, amount, asset: effectiveAsset });
-    transaction = await prisma.transaction.update({
-      where: { id: transaction.id },
+    activeTransaction = await prisma.transaction.update({
+      where: { id: activeTransaction.id },
       data: {
         status: 'success',
         txHash: result.txHash,
@@ -105,18 +146,18 @@ const executePayment = async ({
       actorId: String(senderUser.id),
       action: 'payment.executed',
       entityType: 'Transaction',
-      entityId: String(transaction.id),
-      metadata: { rail, status: transaction.status },
+      entityId: String(activeTransaction.id),
+      metadata: { rail, status: activeTransaction.status },
     });
 
-    return { transaction: withIdAlias(transaction), quote, receipt: buildReceipt({ transaction }) };
+    return { transaction: withIdAlias(activeTransaction), quote, receipt: buildReceipt({ transaction: activeTransaction }) };
   } catch (error) {
     // Guarded: if this bookkeeping update itself rejects, the original
     // payment error is still the one thrown to the caller.
     await markTransactionFailed({
       prisma,
-      transactionId: transaction.id,
-      metadata: transaction.metadata,
+      transactionId: activeTransaction.id,
+      metadata: activeTransaction.metadata,
       error,
     });
     throw error;

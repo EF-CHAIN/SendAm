@@ -56,6 +56,7 @@ const handleIncomingMessage = async (req, res) => {
       return;
     }
 
+    const options = message.id ? { jobId: message.id } : {};
     await enqueue('whatsapp-inbound', 'message.received', {
       from,
       whatsappName,
@@ -63,7 +64,7 @@ const handleIncomingMessage = async (req, res) => {
       mediaId: message.audio?.id || message.voice?.id,
       messageType: message.type,
       whatsappMessageId: message.id,
-    });
+    }, options);
   } catch (error) {
     logger.error('Webhook processing error:', error);
   }

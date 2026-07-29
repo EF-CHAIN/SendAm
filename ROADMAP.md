@@ -64,6 +64,9 @@ Stellar adapter; the multi-chain history is preserved in git.
   roles.
 - Compliance review (KYC/AML/custody) before any mainnet or real-money
   launch.
+- Add explicit sanctions and custody workflow requirements for deployment,
+  including blocked/high-risk country screening, manual review state,
+  and audit-visible compliance decisions.
 
 ## Chain depth
 

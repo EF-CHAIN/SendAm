@@ -8,7 +8,6 @@ const { sendTextMessage } = require('../services/whatsapp.service');
 const { claimPendingSend } = require('./pendingClaim');
 const { createRecipientResolver } = require('./recipientResolver');
 const prisma = require('../common/prisma');
-const { nativeToScVal } = require('@stellar/stellar-sdk');
 
 const PENDING_SEND_TTL_MS = 10 * 60 * 1000;
 const NATIVE_ASSET = 'XLM';
@@ -32,22 +31,16 @@ const parsePaymentIntent = (text) => {
     /(?:send|pay|transfer)\s+([\d.]+)\s*((?!to\b)[a-zA-Z]{2,5})?\s+(?:to\s+)?(.+)/i
   );
   if (!sendMatch) return null;
-  console.log("theis"+sendMatch)
   return {
     amount: sendMatch[1],
-    // No unit specified — let payment.orchestrator default to the
-    // destination chain's native asset instead of guessing here.
-    
+    // No unit specified — name the native asset here rather than leaving it
+    // undefined. payment.orchestrator resolves the same default (NATIVE_ASSET),
+    // but the confirmation message is built from this value, so leaving it
+    // undefined showed the user "Amount: 10 undefined".
     asset: sendMatch[2] ? sendMatch[2].toUpperCase() : NATIVE_ASSET,
     recipient: sendMatch[3].trim(),
   };
 };
-
- function createAssistantService({
-  prisma,
-  walletService = defaultWalletService, // 👈 Fallback if not provided
-  ...otherDeps
-} = {}) {
 
 // Precedence: saved contacts → phone numbers → raw address passthrough. See
 // recipientResolver.js; the address-validity check in requestConfirmation
@@ -57,24 +50,13 @@ const resolveRecipient = createRecipientResolver({ prisma, walletService });
 const requestConfirmation = async ({ phoneNumber, user, intent, notify }) => {
   const recipient = await resolveRecipient(user, intent.recipient);
 
-  // Inside createRecipientResolver in recipientResolver.js:
-
-// 1. Saved contacts check...
-// 2. Phone number check:
-if (isValidPhoneNumber(recipient)) {
-  const wallet = await walletService.createOrGetWallet({ phoneNumber: recipient });
-  return {
-    destination: wallet.publicKey, // 👈 Must return .destination!
-    label: recipient,               // 👈 Must return .label!
-  };
-}
-
-// 3. Raw address / default fallback:
-return {
-  destination: recipient,
-  label: recipient,
-};
-}
+  if (!validateAddress(String(recipient.destination || '').trim())) {
+    await notify(
+      phoneNumber,
+      `"${recipient.label}" isn't a saved contact or a valid Stellar address. Save it first, or send to a valid address directly.`
+    );
+    return;
+  }
 
   const pendingSend = {
     amount: intent.amount,
