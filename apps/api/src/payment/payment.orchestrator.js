@@ -53,7 +53,7 @@ const executePayment = async ({
   const effectiveRouteType = routeType
     || (sourceCountry && destinationCountry && sourceCountry !== destinationCountry ? 'cross_border' : 'domestic');
 
-  const { compliance, quote, transaction } = await (prisma.$transaction ? prisma.$transaction(async (tx) => {
+  const { quote, transaction } = await (prisma.$transaction ? prisma.$transaction(async (tx) => {
     const comp = await enforceTransactionPolicy({
       user: senderUser,
       amount,
