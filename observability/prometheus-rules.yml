@@ -1,0 +1,68 @@
+groups:
+  - name: sendam-production
+    rules:
+      - alert: SendAmApiDown
+        expr: up{job="sendam-api"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          service: sendam-api
+        annotations:
+          summary: SendAm API metrics target is down
+          runbook_url: https://github.com/EF-CHAIN/SendAm/blob/main/docs/OBSERVABILITY.md#api-down
+
+      - alert: SendAmHighHttpErrorRate
+        expr: |
+          sum(rate(sendam_http_requests_total{status_code=~"5.."}[5m]))
+          /
+          clamp_min(sum(rate(sendam_http_requests_total[5m])), 0.001)
+          > 0.05
+        for: 10m
+        labels:
+          severity: critical
+          service: sendam-api
+        annotations:
+          summary: SendAm HTTP 5xx rate exceeds 5%
+          runbook_url: https://github.com/EF-CHAIN/SendAm/blob/main/docs/OBSERVABILITY.md#high-http-error-rate
+
+      - alert: SendAmHighLatency
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum by (le) (rate(sendam_http_request_duration_seconds_bucket[10m]))
+          ) > 2
+        for: 10m
+        labels:
+          severity: warning
+          service: sendam-api
+        annotations:
+          summary: SendAm p95 HTTP latency exceeds 2 seconds
+
+      - alert: SendAmUnhandledExceptions
+        expr: sum(increase(sendam_exceptions_total[5m])) > 2
+        for: 1m
+        labels:
+          severity: critical
+          service: sendam-api
+        annotations:
+          summary: SendAm is reporting repeated exceptions
+          runbook_url: https://github.com/EF-CHAIN/SendAm/blob/main/docs/OBSERVABILITY.md#exception-spike
+
+      - alert: SendAmQueueFailures
+        expr: sum(increase(sendam_queue_jobs_total{status="failed"}[10m])) > 5
+        for: 5m
+        labels:
+          severity: critical
+          service: sendam-worker
+        annotations:
+          summary: SendAm background jobs are repeatedly failing
+          runbook_url: https://github.com/EF-CHAIN/SendAm/blob/main/docs/OBSERVABILITY.md#queue-failures
+
+      - alert: SendAmDatabaseHealthDegraded
+        expr: increase(sendam_health_checks_total{status="degraded"}[5m]) > 0
+        for: 1m
+        labels:
+          severity: critical
+          service: sendam-api
+        annotations:
+          summary: SendAm database health checks are failing

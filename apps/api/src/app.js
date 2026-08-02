@@ -17,10 +17,14 @@ const PostgresRateStore = require('./middlewares/postgresRateStore');
 const config = require('./config/env');
 const logger = require('./utils/logger');
 const prisma = require('./common/prisma');
+const { correlationMiddleware } = require('./observability/context');
+const { requestMetrics, metricsHandler, increment } = require('./observability/metrics');
 
 const app = express();
 
 // Middlewares
+app.use(correlationMiddleware);
+app.use(requestMetrics);
 app.use(helmet());
 
 // CORS: in production only the configured origins may call the API. Outside
@@ -40,7 +44,17 @@ if (config.corsOrigins.length > 0) {
 // Access logs: the verbose, colorized 'dev' format is great locally but unfit
 // for production log aggregation. Use the standard Apache 'combined' format in
 // production so hosted log drains get parseable, complete request lines.
-app.use(morgan(config.isProduction ? 'combined' : 'dev'));
+if (!config.isProduction) app.use(morgan('dev'));
+app.use((req, res, next) => {
+  const started = process.hrtime.bigint();
+  res.on('finish', () => logger.info('http_request_completed', {
+    method: req.method,
+    path: req.path,
+    statusCode: res.statusCode,
+    durationMs: Number(process.hrtime.bigint() - started) / 1e6,
+  }));
+  next();
+});
 
 // Capture the raw request body so the WhatsApp webhook can verify the
 // X-Hub-Signature-256 HMAC against exactly what Meta signed.
@@ -60,13 +74,20 @@ const limiter = rateLimit({
 });
 app.use('/api/', limiter);
 
+// Prometheus scrape endpoint. It is deliberately outside the API limiter so a
+// traffic spike cannot blind monitoring, and protected by a dedicated token.
+app.get('/metrics', metricsHandler);
+
 // Health check for uptime monitors and platform probes. Not rate-limited and
 // requires no auth; reports 503 if the database link is down.
 app.get('/health', async (req, res) => {
   try {
     await prisma.$queryRaw`SELECT 1`;
+    increment('sendam_health_checks_total', { status: 'ok' });
     res.status(200).json({ status: 'ok', db: 'connected', uptime: process.uptime() });
-  } catch (_error) {
+  } catch (error) {
+    increment('sendam_health_checks_total', { status: 'degraded' });
+    logger.error('health_check_failed', error);
     res.status(503).json({ status: 'degraded', db: 'disconnected', uptime: process.uptime() });
   }
 });

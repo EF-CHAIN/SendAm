@@ -70,6 +70,34 @@ test('missing PIN_PEPPER throws in production', () => {
   assert.throws(() => validateEnv(config), /PIN_PEPPER/);
 });
 
+test('production requires metrics authentication and error alert routing', () => {
+  const config = baseConfig();
+  config.isProduction = true;
+  config.whatsapp.appSecret = 'app-secret';
+  config.compliance = { pinPepper: 'pepper' };
+  config.observability = {};
+  assert.throws(() => validateEnv(config), /METRICS_TOKEN/);
+  assert.throws(() => validateEnv(config), /ERROR_MONITOR_WEBHOOK_URL/);
+
+  config.observability = {
+    metricsToken: 'metrics-token-at-least-32-characters',
+    errorMonitorWebhookUrl: 'https://alerts.example.com/sendam',
+  };
+  assert.doesNotThrow(() => validateEnv(config));
+});
+
+test('production error monitor endpoint must use HTTPS', () => {
+  const config = baseConfig();
+  config.isProduction = true;
+  config.whatsapp.appSecret = 'app-secret';
+  config.compliance = { pinPepper: 'pepper' };
+  config.observability = {
+    metricsToken: 'metrics-token-at-least-32-characters',
+    errorMonitorWebhookUrl: 'http://alerts.example.com/sendam',
+  };
+  assert.throws(() => validateEnv(config), /must use HTTPS/);
+});
+
 test('multiple violations are all reported in one error', () => {
   const config = baseConfig();
   config.encryptionKey = undefined;

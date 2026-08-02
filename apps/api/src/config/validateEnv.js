@@ -30,12 +30,14 @@ const validateEnv = (config) => {
     problems.push('PIN_PEPPER must be set in production for secure PIN hashing.');
   }
 
-  if (config.isProduction && config.compliance?.provider === 'smileid') {
-    const smile = config.compliance.smileId || {};
-    if (!smile.partnerId || !smile.apiKey || !smile.callbackUrl) {
-      problems.push('SMILE_ID_PARTNER_ID, SMILE_ID_API_KEY, and SMILE_ID_CALLBACK_URL are required in production.');
-    } else if (!smile.callbackUrl.startsWith('https://')) {
-      problems.push('SMILE_ID_CALLBACK_URL must use HTTPS in production.');
+  if (config.isProduction) {
+    if (!config.observability?.metricsToken || config.observability.metricsToken.length < 32) {
+      problems.push('METRICS_TOKEN must be at least 32 characters in production.');
+    }
+    if (!config.observability?.errorMonitorWebhookUrl) {
+      problems.push('ERROR_MONITOR_WEBHOOK_URL must be set in production.');
+    } else if (!config.observability.errorMonitorWebhookUrl.startsWith('https://')) {
+      problems.push('ERROR_MONITOR_WEBHOOK_URL must use HTTPS in production.');
     }
   }
 
