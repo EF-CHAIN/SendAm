@@ -70,6 +70,43 @@ test('missing PIN_PEPPER throws in production', () => {
   assert.throws(() => validateEnv(config), /PIN_PEPPER/);
 });
 
+test('production Meta transport requires complete webhook configuration', () => {
+  const config = baseConfig();
+  config.isProduction = true;
+  config.messageTransport = 'meta';
+  config.whatsapp = { appSecret: 'app-secret' };
+  config.compliance = { pinPepper: 'pepper' };
+  assert.throws(() => validateEnv(config), /WHATSAPP_VERIFY_TOKEN/);
+
+  config.whatsapp = {
+    token: 'system-user-token',
+    phoneNumberId: 'phone-id',
+    verifyToken: 'verify-token-at-least-32-characters',
+    appSecret: 'app-secret',
+    callbackUrl: 'https://api.example.com/webhook',
+    businessAccountId: 'waba-id',
+    graphApiVersion: 'v99.0',
+  };
+  assert.doesNotThrow(() => validateEnv(config));
+});
+
+test('production WhatsApp callback URL must use HTTPS', () => {
+  const config = baseConfig();
+  config.isProduction = true;
+  config.messageTransport = 'meta';
+  config.whatsapp = {
+    token: 'system-user-token',
+    phoneNumberId: 'phone-id',
+    verifyToken: 'verify-token-at-least-32-characters',
+    appSecret: 'app-secret',
+    callbackUrl: 'http://api.example.com/webhook',
+    businessAccountId: 'waba-id',
+    graphApiVersion: 'v99.0',
+  };
+  config.compliance = { pinPepper: 'pepper' };
+  assert.throws(() => validateEnv(config), /must use HTTPS/);
+});
+
 test('multiple violations are all reported in one error', () => {
   const config = baseConfig();
   config.encryptionKey = undefined;

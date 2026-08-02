@@ -26,7 +26,8 @@ const verifyWhatsappSignature = (req, res, next) => {
   }
 
   const signature = req.get('X-Hub-Signature-256') || '';
-  if (!signature.startsWith('sha256=') || !req.rawBody) {
+  if (!/^sha256=[a-f0-9]{64}$/i.test(signature) || !Buffer.isBuffer(req.rawBody)) {
+    logger.warn('whatsapp_webhook_signature_rejected', { reason: 'missing_or_malformed' });
     return res.sendStatus(403);
   }
 
@@ -38,10 +39,11 @@ const verifyWhatsappSignature = (req, res, next) => {
   const sigBuf = Buffer.from(signature);
   const expBuf = Buffer.from(expected);
   if (sigBuf.length !== expBuf.length || !crypto.timingSafeEqual(sigBuf, expBuf)) {
-    logger.warn('Rejected webhook POST with invalid signature.');
+    logger.warn('whatsapp_webhook_signature_rejected', { reason: 'mismatch' });
     return res.sendStatus(403);
   }
 
+  logger.info('whatsapp_webhook_signature_verified');
   next();
 };
 

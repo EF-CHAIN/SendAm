@@ -12,8 +12,7 @@
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "prisma:deploy": "prisma migrate deploy",
-    "db:validate": "node scripts/validate-production-db.js",
-    "db:provision": "prisma migrate deploy && node scripts/validate-production-db.js",
+    "whatsapp:webhook:configure": "node scripts/configure-whatsapp-webhook.js",
     "test": "node --test"
   },
   "dependencies": {

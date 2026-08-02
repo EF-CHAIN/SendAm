@@ -26,6 +26,26 @@ const validateEnv = (config) => {
     problems.push('WHATSAPP_APP_SECRET must be set in production — without it, inbound webhook signatures cannot be verified.');
   }
 
+  if (config.isProduction && config.messageTransport === 'meta') {
+    const requiredWhatsApp = [
+      ['WHATSAPP_TOKEN', config.whatsapp?.token],
+      ['WHATSAPP_PHONE_NUMBER_ID', config.whatsapp?.phoneNumberId],
+      ['WHATSAPP_VERIFY_TOKEN', config.whatsapp?.verifyToken],
+      ['WHATSAPP_CALLBACK_URL', config.whatsapp?.callbackUrl],
+      ['WHATSAPP_BUSINESS_ACCOUNT_ID', config.whatsapp?.businessAccountId],
+      ['META_GRAPH_API_VERSION', config.whatsapp?.graphApiVersion],
+    ];
+    for (const [name, value] of requiredWhatsApp) {
+      if (!value) problems.push(`${name} must be set for the production Meta WhatsApp webhook.`);
+    }
+    if (config.whatsapp?.callbackUrl && !config.whatsapp.callbackUrl.startsWith('https://')) {
+      problems.push('WHATSAPP_CALLBACK_URL must use HTTPS in production.');
+    }
+    if (config.whatsapp?.verifyToken && config.whatsapp.verifyToken.length < 32) {
+      problems.push('WHATSAPP_VERIFY_TOKEN must be at least 32 characters in production.');
+    }
+  }
+
   if (config.isProduction && !config.compliance?.pinPepper) {
     problems.push('PIN_PEPPER must be set in production for secure PIN hashing.');
   }
