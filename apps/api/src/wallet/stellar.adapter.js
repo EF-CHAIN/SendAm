@@ -1,6 +1,7 @@
 // Stellar wallet adapter — keypair creation, Friendbot funding, balance,
 // and payment submission. The only chain SDK integration in the codebase.
 const { server, StellarSdk } = require("../config/stellar");
+const { isHorizonWriteUncertain } = require("../config/horizon");
 const axios = require("axios");
 const logger = require("../utils/logger");
 const config = require("../config/env");
@@ -143,6 +144,17 @@ const isBadSequence = (error) => {
   return codes?.transaction === "tx_bad_seq";
 };
 
+// Best-effort hash extraction from a built transaction (used to verify a
+// submission whose response was lost to a timeout).
+const safeHash = (transaction) => {
+  try {
+    const hash = transaction.hash();
+    return typeof hash === "string" ? hash : hash.toString("hex");
+  } catch {
+    return null;
+  }
+};
+
 const getFriendlyPaymentError = (error) => {
   const codes = error?.response?.data?.extras?.result_codes;
 
@@ -222,6 +234,28 @@ const submitPayment = async ({
           );
           await sleep(attempt * 250);
           continue;
+        }
+
+        // Ambiguous write failure (timeout/connection loss): the transaction was
+        // sent to exactly one endpoint and never resubmitted, so we verify
+        // rather than risk a duplicate. If Horizon already ingested it, recover
+        // success; otherwise surface an explicit "uncertain" error.
+        if (isHorizonWriteUncertain(error)) {
+          const hash = safeHash(transaction);
+          if (hash) {
+            try {
+              const found = await server.transactions().transactionHash(hash).call();
+              if (found) {
+                logger.info(`Recovered seemingly-timed-out payment ${hash} via Horizon lookup.`);
+                return { txHash: hash, explorerUrl: getTransactionUrl(hash) };
+              }
+            } catch (_) {
+              // Remains uncertain.
+            }
+          }
+          throw new Error(
+            "Transaction submission status unknown after timeout; not resubmitting to avoid a duplicate.",
+          );
         }
 
         const friendlyMessage = getFriendlyPaymentError(error);

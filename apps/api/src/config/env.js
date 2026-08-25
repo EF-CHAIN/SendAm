@@ -87,6 +87,18 @@ module.exports = {
   stellar: {
     network: process.env.STELLAR_NETWORK || 'testnet',
     horizonUrl: process.env.STELLAR_HORIZON_URL || 'https://horizon-testnet.stellar.org',
+    // Ordered list of approved Horizon endpoints for failover. The first entry
+    // is primary; the rest are tried in order on timeout/outage. Comma-separated.
+    horizonUrls: (process.env.HORIZON_URLS || '')
+      .split(',')
+      .map((u) => u.trim())
+      .filter(Boolean),
+    // Bounded per-request timeout (ms) for Horizon calls.
+    horizonTimeoutMs: Number(process.env.HORIZON_TIMEOUT_MS || 10000),
+    // Circuit breaker: open an endpoint after this many consecutive failures,
+    // and keep it open for this many ms before retrying.
+    horizonCircuitThreshold: Number(process.env.HORIZON_CIRCUIT_THRESHOLD || 3),
+    horizonCircuitCooldownMs: Number(process.env.HORIZON_CIRCUIT_COOLDOWN_MS || 30000),
     // Circle's official Testnet USDC issuer, so multi-asset balance lookups
     // work out of the box in dev; override for mainnet or a custom issuer.
     usdcIssuer: process.env.STELLAR_USDC_ISSUER || 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5',
