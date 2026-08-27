@@ -71,9 +71,11 @@ const fakePrisma = {
   kycProfile: makeDelegate(kycProfiles),
   auditLog: {
     ...makeDelegate(auditLogs),
+    findFirst: async () => auditLogs[0],
     create: async (args) => { auditCalls.push(args.data); return { id: 'audit-new', ...args.data }; },
   },
 };
+fakePrisma.$transaction = async (cb) => cb(fakePrisma);
 
 const inject = (relative, exports) => {
   const filename = path.resolve(__dirname, '../src', `${relative}.js`);

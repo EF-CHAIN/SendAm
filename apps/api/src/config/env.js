@@ -9,6 +9,8 @@ module.exports = {
   databaseUrl: process.env.DATABASE_URL,
   messageTransport: process.env.MESSAGE_TRANSPORT || 'meta',
   encryptionKey: process.env.ENCRYPTION_KEY,
+  activeKeyVersion: process.env.ACTIVE_KEY_VERSION || 'v1',
+  kmsKeyVersions: process.env.KMS_KEY_VERSIONS ? JSON.parse(process.env.KMS_KEY_VERSIONS) : null,
   // Comma-separated list of origins allowed to call the REST API. Empty means
   // "no allowlist configured" — see app.js for the dev/prod behaviour.
   corsOrigins: (process.env.CORS_ORIGINS || '')

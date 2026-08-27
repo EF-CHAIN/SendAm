@@ -29,8 +29,9 @@ const server = new StellarSdk.Horizon.Server(primaryUrl, {
 
 // Attach failover + circuit breaking. No-op (single endpoint) when only one
 // Horizon URL is configured.
-const horizonClient = baseUrls.length
-  ? attachHorizonResilience(server.httpClient, { baseUrls, timeoutMs, circuit })
+const targetHttpClient = server.httpClient || server._httpClient;
+const horizonClient = baseUrls.length && targetHttpClient
+  ? attachHorizonResilience(targetHttpClient, { baseUrls, timeoutMs, circuit })
   : { getHealth: () => [], _endpoints: [] };
 
 module.exports = {

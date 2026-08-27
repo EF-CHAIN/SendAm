@@ -21,27 +21,70 @@ const logger = require('./utils/logger');
 const prisma = require('./common/prisma');
 const { correlationMiddleware } = require('./observability/context');
 const { requestMetrics, metricsHandler, increment } = require('./observability/metrics');
+const { AppError } = require('./errors');
+const { getContext } = require('./observability/context');
 
 const app = express();
 
 // Middlewares
 app.use(correlationMiddleware);
 app.use(requestMetrics);
-app.use(helmet());
+// Security Middlewares
+const cspDirectives = config.isProduction ? {
+  defaultSrc: ["'none'"],
+  frameAncestors: ["'none'"],
+  baseUri: ["'none'"],
+  formAction: ["'none'"]
+} : {
+  defaultSrc: ["'self'"],
+  frameAncestors: ["'none'"],
+};
 
-// CORS: in production only the configured origins may call the API. Outside
-// production we fall back to open CORS for convenience, but warn if no
-// allowlist is set so it isn't forgotten before launch.
-if (config.corsOrigins.length > 0) {
-  app.use(cors({ origin: config.corsOrigins }));
-} else {
-  if (config.isProduction) {
-    logger.error('CORS_ORIGINS is not set in production — refusing all cross-origin requests.');
-  } else {
-    logger.warn('CORS_ORIGINS is not set; allowing all origins (development only).');
+app.use(helmet({
+  contentSecurityPolicy: { directives: cspDirectives },
+  referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
+}));
+app.use((req, res, next) => {
+  res.setHeader('Permissions-Policy', 'geolocation=(), microphone=(), camera=()');
+  next();
+});
+
+// CORS: explicitly define origin allowlists by environment. 
+// Cross-origin access strictly requires configuration.
+const corsOptions = {
+  origin: (origin, callback) => {
+    // Allow non-browser requests (e.g. server-to-server, webhook)
+    if (!origin) {
+      return callback(null, true);
+    }
+    
+    if (origin === 'null') {
+      increment('sendam_cors_rejected_total', { reason: 'null_origin' });
+      const err = new Error('CORS error: null origin not allowed');
+      err.name = 'CorsError';
+      return callback(err);
+    }
+    
+    if (config.corsOrigins.includes(origin)) {
+      return callback(null, true);
+    }
+    
+    increment('sendam_cors_rejected_total', { reason: 'unapproved_origin' });
+    const err = new Error('Not allowed by CORS');
+    err.name = 'CorsError';
+    return callback(err);
+  },
+  credentials: true,
+};
+
+app.use(cors(corsOptions));
+app.use((err, req, res, next) => {
+  if (err.name === 'CorsError' || err.message.includes('CORS')) {
+    logger.warn('CORS request rejected', { origin: req.headers.origin, error: err.message });
+    return res.status(403).json({ success: false, message: err.message });
   }
-  app.use(cors({ origin: config.isProduction ? false : true }));
-}
+  next(err);
+});
 
 // Access logs: the verbose, colorized 'dev' format is great locally but unfit
 // for production log aggregation. Use the standard Apache 'combined' format in
@@ -73,6 +116,9 @@ const limiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   store: new PostgresRateStore(),
+  // 429s flow through the standard error envelope so clients get a stable
+  // `rate_limited` code instead of the express-rate-limit default shape.
+  handler: (_req, _res, next) => next(new AppError('rate_limited')),
 });
 app.use('/api/', limiter);
 
@@ -83,15 +129,23 @@ app.get('/metrics', metricsHandler);
 // Health check for uptime monitors and platform probes. Not rate-limited and
 // requires no auth; reports 503 if the database link is down.
 app.get('/health', async (req, res) => {
+  const correlationId = getContext().correlationId || null;
   try {
     await prisma.$queryRaw`SELECT 1`;
     increment('sendam_health_checks_total', { status: 'ok' });
-    res.status(200).json({ status: 'ok', db: 'connected', uptime: process.uptime() });
+    res.status(200).json({ status: 'ok', db: 'connected', uptime: process.uptime(), correlationId });
   } catch (error) {
     increment('sendam_health_checks_total', { status: 'degraded' });
     logger.error('health_check_failed', error);
-    res.status(503).json({ status: 'degraded', db: 'disconnected', uptime: process.uptime() });
+    res.status(503).json({ status: 'degraded', db: 'disconnected', uptime: process.uptime(), correlationId });
   }
+});
+
+const path = require('path');
+const openapiSpecPath = path.join(__dirname, '../openapi.json');
+
+app.get(['/api/docs/openapi.json', '/api/docs'], (req, res) => {
+  res.sendFile(openapiSpecPath);
 });
 
 // Routes

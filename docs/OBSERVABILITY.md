@@ -30,8 +30,38 @@ receiver URLs with secrets managed by the monitoring platform.
 
 Every API response includes `x-correlation-id`. A safe caller-provided
 `x-correlation-id` or `x-request-id` is preserved; malformed values are replaced
-with a UUID. Queue enqueueing copies the correlation ID into the job payload,
-and the processor restores it along with `jobId` and queue name.
+with a UUID. The correlation ID also appears inside the JSON body of every
+response so clients can match a failure to logs without reading headers. Queue
+enqueueing copies the correlation ID into the job payload, the processor
+restores it along with `jobId` and queue name, and outbound provider calls
+(Smile ID, WhatsApp, Stellar/Friendbot, Deepgram, exchange-rate API) attach it
+as an `x-correlation-id` header so provider-side logs can be correlated too.
+
+## Error envelope
+
+API error responses use a versioned envelope with a stable machine-readable
+code (see `apps/api/src/errors/catalog.js`):
+
+```jsonc
+{
+  "success": false,
+  "message": "…",
+  "correlationId": "…",
+  "error": {
+    "version": "1.0",
+    "code": "validation_error",
+    "message": "…",
+    "correlationId": "…"
+  }
+}
+```
+
+Codes are mapped from validation (400), auth (401/403), not-found (404),
+conflict (409), rate-limit (429), provider (502), unavailable (503), and
+internal (500) failures. `internal_error` responses always use a generic
+message — the real error is logged and reported to the monitor but never
+returned to the client. Clients should branch on `error.code`, never on the
+human-readable `message`.
 
 Production logs are one JSON object per line with timestamp, level, service,
 environment, correlation fields, message, and structured data/error fields.

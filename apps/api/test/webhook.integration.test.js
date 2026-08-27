@@ -62,7 +62,7 @@ const prismaMock = {
     count: async () => 0,
     findMany: async () => [],
   },
-  alias: { findUnique: async () => null },
+  alias: { findUnique: async () => null, findFirst: async () => ({ id: 'alias_1' }) },
   processedMessage: {
     _seen: new Set(),
     _status: new Map(),
@@ -92,7 +92,7 @@ const prismaMock = {
     findUnique: async () => null,
     upsert: async ({ create }) => ({ ...create, resetAt: new Date(Date.now() + 60_000) }),
   },
-  transaction: { findMany: async () => [] },
+  transaction: { findMany: async () => [], findFirst: async () => null },
   wallet: { findUnique: async () => null, create: async ({ data }) => ({ publicKey: 'G' + 'A'.repeat(55), ...data }) },
   kycProfile: {
     findUnique: async ({ where }) => {
@@ -320,7 +320,7 @@ test('full happy path: webhook POST -> parse -> confirmation -> PIN -> receipt',
   await setup();
   try {
     const phone = '+2348000000001';
-    const dest = 'GCXQJ7E6C6TQX7GVV3T6HX3Q7H3P6G6X7Q7J7E6C6TQX7GVV3T6HX3Q7';
+    const dest = 'G' + 'A'.repeat(55);
 
     seedUser(phone);
 
@@ -390,7 +390,7 @@ test('two rapid PIN replies produce exactly one payment (atomic claim)', async (
   await setup();
   try {
     const phone = '+2348000000003';
-    const dest = 'GCXQJ7E6C6TQX7GVV3T6HX3Q7H3P6G6X7Q7J7E6C6TQX7GVV3T6HX3Q7';
+    const dest = 'G' + 'A'.repeat(55);
 
     seedUser(phone);
 

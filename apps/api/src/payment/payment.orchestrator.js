@@ -262,9 +262,11 @@ const executeRefund = async ({ transactionId, reason, amount, adminId }) => {
     where: { type: 'refund', status: 'success' },
   });
 
-  const alreadyRefunded = allRefunds
+  const metaRefundsSum = (originalTx.metadata?.refunds || []).reduce((sum, r) => sum + Number(r.amount || 0), 0);
+  const dbRefundsSum = allRefunds
     .filter((tx) => tx.metadata && tx.metadata.originalTransactionId === originalTx.id)
     .reduce((sum, tx) => sum + Number(tx.amount || 0), 0);
+  const alreadyRefunded = Math.max(metaRefundsSum, dbRefundsSum);
 
   const maxRefundable = Number(originalTx.amount) - alreadyRefunded;
   if (Number(refundAmount) > maxRefundable) {
@@ -287,8 +289,14 @@ const executeRefund = async ({ transactionId, reason, amount, adminId }) => {
       recipientWallet = await prisma.wallet.findUnique({
         where: { userId_chain: { userId: recipientUser.id, chain: RAIL } },
       });
+      if (!recipientWallet) {
+        recipientWallet = await prisma.wallet.findFirst({
+          where: { userId: recipientUser.id },
+        });
+      }
     }
-  } else if (originalTx.destination) {
+  }
+  if (!recipientWallet && originalTx.destination) {
     recipientWallet = await prisma.wallet.findFirst({
       where: { publicKey: originalTx.destination },
     });
@@ -371,7 +379,7 @@ const executeRefund = async ({ transactionId, reason, amount, adminId }) => {
       metadata: { refundTransactionId: updatedRefund.id, amount: String(refundAmount), reason },
     });
 
-    return updatedRefund;
+    return { amount: String(refundAmount), ...updatedRefund };
   } catch (error) {
     const originalMeta = typeof originalTx.metadata === 'object' && originalTx.metadata !== null ? originalTx.metadata : {};
     await prisma.transaction.update({

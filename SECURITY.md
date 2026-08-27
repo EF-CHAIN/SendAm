@@ -46,7 +46,8 @@ once you have confirmed a vulnerability.
 
 Already in place:
 
-- **Authenticated encryption & key versioning** of wallet secrets with AES-256-GCM (`v1:` version header format with support for key rotation and backward compatibility). No fallback key — a missing/invalid `ENCRYPTION_KEY` fails loudly at startup.
+- **Authenticated encryption & key versioning** of wallet secrets with AES-256-GCM (`v1:`, `v2:` version header format with support for key rotation and backward compatibility). No fallback key — a missing/invalid `ENCRYPTION_KEY` fails loudly at startup.
+- **KMS Envelope Encryption & Resumable Key Rotation**: Supports managed KMS envelope keys and active key versions (`ACTIVE_KEY_VERSION`). The `node scripts/rotate-wallet-keys.js` tool allows operator-driven, resumable key rotation with batching, `--dry-run` validation, failure reporting, and strict redaction of secret key material from logs and audit metadata. See [KMS Envelope Encryption & Key Rotation Runbook](#kms-envelope-encryption--key-rotation-runbook).
 - **Admin authentication** via HMAC-signed, expiring session tokens. The API refuses to start without `ADMIN_PASSWORD` and `JWT_SECRET`; the login endpoint is rate-limited and all admin data routes require a valid Bearer token.
 - **WhatsApp webhook signature verification** against the `X-Hub-Signature-256` header, fail-closed in production.
 - **Idempotency** on inbound WhatsApp messages to prevent duplicate transfers from webhook retries.
@@ -199,4 +200,30 @@ task is **failed** and can be retried via `POST /api/admin/privacy-requests/:id/
   legal holds to extend retention per corridor rather than blocking erasure broadly.
 - These are product/engineering assumptions, **not legal advice**; confirm with
   qualified Nigerian counsel before launch.
+
+## KMS Envelope Encryption & Key Rotation Runbook
+
+### Routine Key Rotation Procedure
+
+1. **Provision New Key Version**: Generate a new 32-byte key in managed KMS/HSM and assign a version tag (e.g. `v2`).
+2. **Configure Active Key**:
+   Set `ACTIVE_KEY_VERSION=v2` and provide `KMS_KEY_VERSIONS='{"v1":"<old_hex>","v2":"<new_hex>"}'`.
+3. **Dry-Run Validation**:
+   Run dry-run migration to inspect records eligible for re-encryption:
+   ```bash
+   node scripts/rotate-wallet-keys.js --target-version=v2 --dry-run
+   ```
+4. **Execute Resumable Batch Rotation**:
+   Run the rotation command in production:
+   ```bash
+   node scripts/rotate-wallet-keys.js --target-version=v2 --batch-size=100
+   ```
+5. **Verify Completion & Decommissioning**:
+   Confirm `rotatedCount` matches scanned count and `failedCount` is 0. Old key version `v1` remains in configuration until all legacy backups are retired.
+
+### Compromise Response & Emergency Break-Glass
+
+- **Compromised Key Version**: Immediately register a new key version (`v3`), update `ACTIVE_KEY_VERSION=v3`, execute emergency rotation (`node scripts/rotate-wallet-keys.js --target-version=v3`), and revoke compromised key access from KMS IAM policies.
+- **Rollback & Restore Procedure**: Database backups contain `keyVersion` metadata on each `Wallet` row. Restoring a database snapshot requires maintaining historical key versions in `KMS_KEY_VERSIONS` so historical ciphertexts remain decryptable.
+
 

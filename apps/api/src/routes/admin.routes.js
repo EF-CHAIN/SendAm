@@ -25,6 +25,7 @@ router.post('/transactions/:id/refund', requireAdmin('operations.write'), adminC
 router.get('/kyc', requireAdmin('compliance.read'), adminController.getKycProfiles);
 router.get('/kyc/export', requireAdmin('compliance.read'), adminController.exportKyc);
 router.get('/audit-logs', requireAdmin('admin.read'), adminController.getAuditLogs);
+router.get('/audit-logs/verify', requireAdmin('admin.read'), adminController.verifyAuditLogs);
 
 // Customer privacy lifecycle (admin): review/approve erasure, retry provider
 // deletion, and manage legal holds.

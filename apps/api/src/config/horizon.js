@@ -89,6 +89,9 @@ const isWriteMethod = (config) => {
  * @param {function} [opts.now] - injectable clock for testing.
  */
 const attachHorizonResilience = (httpClient, { baseUrls = [], timeoutMs = 10000, circuit = {}, now = Date.now } = {}) => {
+  if (!httpClient || !httpClient.interceptors) {
+    return httpClient || { getHealth: () => [], _endpoints: [] };
+  }
   const threshold = circuit.threshold ?? 3;
   const cooldownMs = circuit.cooldownMs ?? 30000;
 
@@ -121,9 +124,10 @@ const attachHorizonResilience = (httpClient, { baseUrls = [], timeoutMs = 10000,
     }
   };
 
-  // Rewrite the outgoing request to the first healthy endpoint *before* it hits
-  // the wire, so a known-open (circuit-broken) endpoint is never even contacted.
-  // This also gives us a single, fast fail when every endpoint is open.
+  if (!httpClient || !httpClient.interceptors) {
+    return { getHealth: () => [], _endpoints: [] };
+  }
+
   httpClient.interceptors.request.use((config) => {
     if (config.__horizonRetrying) return config;
     const hosts = available();

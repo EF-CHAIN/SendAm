@@ -7,7 +7,16 @@ const inject = (relative, exports) => {
   require.cache[filename] = { id: filename, filename, loaded: true, exports };
 };
 let logged;
-inject('common/prisma', { auditLog: { create: async () => { throw new Error('audit database unavailable'); } } });
+inject('common/prisma', { 
+  $transaction: async (cb) => { 
+    return await cb({ 
+      auditLog: { 
+        findFirst: async () => null,
+        create: async () => { throw new Error('audit database unavailable'); }
+      } 
+    }); 
+  } 
+});
 inject('utils/logger', { error: (...args) => { logged = args; } });
 
 const { writeAuditLog } = require('../src/common/audit.service');

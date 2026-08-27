@@ -30,6 +30,7 @@
     "dev": "npm run dev:api & npm run dev:landing & npm run dev:admin",
     "build:landing": "npm run build --workspace=apps/landing",
     "build:admin": "npm run build --workspace=apps/admin",
+    "check-budgets": "node scripts/check-frontend-budgets.js",
     "lint": "npm run lint --workspace=apps/api && npm run lint --workspace=apps/landing && npm run lint --workspace=apps/admin",
     "test": "npm run test --workspace=apps/api",
     "test:landing": "npm run test --workspace=apps/landing",
@@ -38,10 +39,10 @@
   },
   "devDependencies": {
     "lru-cache": "^11.5.2",
-    "prisma": "^7.8.0"
+    "prisma": "^7.8.0",
+    "vite": "^6.2.0"
   },
   "optionalDependencies": {
-    "@rolldown/binding-linux-x64-gnu": "1.2.5",
     "@rollup/rollup-linux-x64-gnu": "4.62.4",
     "lightningcss-linux-x64-gnu": "1.33.0"
   },

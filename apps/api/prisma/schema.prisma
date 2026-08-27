@@ -16,7 +16,12 @@ model User {
   pinSetAt     DateTime?
   pendingSend    Json?
   welcomeSentAt  DateTime?
-  contactsJson   Json?
+  contactsJson               Json?
+  lastCustomerInteractionAt  DateTime?
+  messagingConsent           String    @default("opted_in")
+  consentSource             String?   @default("system")
+  consentUpdatedAt          DateTime? @default(now())
+  locale                     String    @default("en")
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
 
@@ -81,6 +86,7 @@ model Wallet {
   phoneNumber        String?
   publicKey          String?
   encryptedSecretKey String?
+  keyVersion         String?  @default("v1")
   paymentCursor      String?
   funded             Boolean  @default(false)
   fundingState       String   @default("pending")
@@ -247,6 +253,8 @@ model AuditLog {
   metadata   Json     @default("{}")
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
+  previousHash String? @unique
+  hash         String? @unique
 
   @@index([actorType])
   @@index([action])
@@ -515,4 +523,30 @@ model PrivacyProviderTask {
 
   @@index([privacyRequestId, status])
   @@index([provider])
+}
+
+// Durable deposit outbox for idempotent deposit alert notifications (#158).
+// Atomic transaction writes this record alongside paymentCursor in Wallet.
+model DepositOutboxRecord {
+  id                String    @id @default(cuid())
+  stellarPaymentId  String    @unique
+  walletId          String
+  userId            String?
+  phoneNumber       String
+  amount            String
+  asset             String
+  fiatRate          Float?
+  message           String
+  status            String    @default("pending") // pending | delivered | failed | dead_letter
+  attempts          Int       @default(0)
+  maxAttempts       Int       @default(5)
+  lastError         String?
+  providerMessageId String?
+  deliveredAt       DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  @@index([status, createdAt])
+  @@index([walletId])
+  @@index([stellarPaymentId])
 }

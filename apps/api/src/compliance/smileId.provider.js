@@ -2,6 +2,7 @@ const crypto = require('crypto');
 const axios = require('axios');
 const config = require('../config/env');
 const { ProviderSkippedError } = require('./providerErrors');
+const { outboundHeaders } = require('../observability/context');
 
 const signatureFor = (timestamp) => crypto
   .createHmac('sha256', config.compliance.smileId.apiKey)
@@ -43,7 +44,7 @@ const submitVerification = async ({ jobId, userId, phoneNumber, applicant }) => 
 
   const response = await axios.post(config.compliance.smileId.baseUrl, payload, {
     timeout: config.compliance.smileId.timeoutMs,
-    headers: { 'content-type': 'application/json' },
+    headers: { 'content-type': 'application/json', ...outboundHeaders() },
   });
   if (!response.data?.success) {
     throw new Error(`Smile ID rejected KYC submission${response.data?.error ? `: ${response.data.error}` : ''}`);
@@ -71,7 +72,7 @@ const deleteSubject = async ({ userId, providerReference }) => {
   if (!url) throw new ProviderSkippedError('Smile ID data deletion not configured');
   await axios.post(url, { user_id: userId, job_id: providerReference }, {
     timeout: config.compliance.smileId.timeoutMs,
-    headers: { 'content-type': 'application/json', Authorization: `Bearer ${config.compliance.smileId.apiKey}` },
+    headers: { 'content-type': 'application/json', Authorization: `Bearer ${config.compliance.smileId.apiKey}`, ...outboundHeaders() },
   });
   return { status: 'success' };
 };

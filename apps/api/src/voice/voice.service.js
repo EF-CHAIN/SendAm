@@ -5,6 +5,7 @@ const { processMessage } = require('../whatsapp/assistant.service');
 const prisma = require('../common/prisma');
 const { canonicalizePhoneNumber } = require('../utils/validators');
 const { ProviderSkippedError } = require('../compliance/providerErrors');
+const { outboundHeaders } = require('../observability/context');
 
 const transcribeWithDeepgram = async (audioBuffer) => {
   if (!config.voice.deepgramApiKey) {
@@ -18,6 +19,7 @@ const transcribeWithDeepgram = async (audioBuffer) => {
       headers: {
         Authorization: `Token ${config.voice.deepgramApiKey}`,
         'Content-Type': 'audio/ogg',
+        ...outboundHeaders(),
       },
       timeout: 60000,
     }
@@ -32,12 +34,12 @@ const downloadWhatsAppMedia = async (mediaId) => {
   }
 
   const metadata = await axios.get(`https://graph.facebook.com/v20.0/${mediaId}`, {
-    headers: { Authorization: `Bearer ${config.whatsapp.token}` },
+    headers: { Authorization: `Bearer ${config.whatsapp.token}`, ...outboundHeaders() },
     timeout: 30000,
   });
 
   const media = await axios.get(metadata.data.url, {
-    headers: { Authorization: `Bearer ${config.whatsapp.token}` },
+    headers: { Authorization: `Bearer ${config.whatsapp.token}`, ...outboundHeaders() },
     responseType: 'arraybuffer',
     timeout: 60000,
   });
@@ -96,7 +98,7 @@ const processVoiceMessage = async ({ phoneNumber, whatsappName, mediaId, whatsap
 const deleteUserData = async (userId) => {
   const url = config.voice.dataDeletionUrl || process.env.DEEPGRAM_DATA_DELETION_URL;
   if (!url) throw new ProviderSkippedError('Voice/media data deletion not configured');
-  await axios.post(url, { user_id: userId }, { timeout: 30000, headers: { 'content-type': 'application/json' } });
+  await axios.post(url, { user_id: userId }, { timeout: 30000, headers: { 'content-type': 'application/json', ...outboundHeaders() } });
   return { status: 'success' };
 };
 

@@ -11,6 +11,14 @@ const correlationIdFrom = (candidate) => (
 const runWithContext = (context, callback) => storage.run(Object.freeze({ ...context }), callback);
 const getContext = () => storage.getStore() || {};
 
+// Headers to attach to outbound provider requests so the current request's
+// correlation ID travels end-to-end (API -> provider) and can be matched in
+// provider logs. Empty object when no correlation ID is in flight.
+const outboundHeaders = () => {
+  const { correlationId } = storage.getStore() || {};
+  return correlationId ? { 'x-correlation-id': correlationId } : {};
+};
+
 const correlationMiddleware = (req, res, next) => {
   const correlationId = correlationIdFrom(req.get('x-correlation-id') || req.get('x-request-id'));
   res.set('x-correlation-id', correlationId);
@@ -27,4 +35,5 @@ module.exports = {
   correlationIdFrom,
   runWithContext,
   getContext,
+  outboundHeaders,
 };

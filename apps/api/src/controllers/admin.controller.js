@@ -440,6 +440,30 @@ const refundTransaction = async (req, res, next) => {
   }
 };
 
+const verifyAuditLogs = async (req, res, next) => {
+  try {
+    const { verifyAuditLogIntegrity } = require('../common/audit.service');
+    const result = await verifyAuditLogIntegrity();
+    
+    await writeAuditLog({
+      actorType: 'administrator',
+      actorId: req.admin.id,
+      action: 'admin.audit.verify',
+      entityType: 'System',
+      metadata: { valid: result.valid, errorCount: result.errors.length },
+      req,
+    });
+
+    if (!result.valid) {
+      return sendError(res, 'Audit log integrity verification failed', 409, { errors: result.errors });
+    }
+
+    return sendSuccess(res, { valid: true }, 'Audit log integrity verified successfully');
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   login,
   acceptInvite,
@@ -460,4 +484,5 @@ module.exports = {
   exportAuditLogs,
   getSystemHealth,
   refundTransaction,
+  verifyAuditLogs,
 };

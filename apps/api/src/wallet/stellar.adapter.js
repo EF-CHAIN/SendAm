@@ -6,6 +6,7 @@ const axios = require("axios");
 const logger = require("../utils/logger");
 const config = require("../config/env");
 const { assertValidAmount } = require("../utils/money");
+const { outboundHeaders } = require("../observability/context");
 
 const chain = "stellar";
 
@@ -112,6 +113,22 @@ const getTransactionUrl = (txHash) => {
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const FUNDING_MAX_ATTEMPTS = 3;
+const NATIVE_BASE_RESERVE = Number(process.env.STELLAR_BASE_RESERVE_XLM || 0.5);
+const NATIVE_RESERVE_BUFFER = Number(process.env.STELLAR_RESERVE_BUFFER_XLM || 0.1);
+
+function assertNativeReserve(account, feeStroops, additionalSubentries = 0) {
+  const native = account.balances.find((balance) => balance.asset_type === 'native');
+  const available = Number(native?.balance || 0);
+  const subentries = Number(account.subentry_count || 0) + additionalSubentries;
+  const required = NATIVE_BASE_RESERVE * (2 + subentries)
+    + NATIVE_RESERVE_BUFFER + Number(feeStroops || 0) / 1e7;
+  if (!Number.isFinite(available) || available < required) {
+    throw new Error(
+      `Insufficient XLM reserve. Keep at least ${required.toFixed(7)} XLM for account reserve and fees, then retry.`,
+    );
+  }
+  return { available, required };
+}
 
 // Friendbot is unreliable (frequent 5xx/timeouts), and a failed first-time
 // funding used to leave a user with an empty wallet and no way to recover.
@@ -130,6 +147,7 @@ const fundTestnetAccount = async (publicKey) => {
     try {
       const response = await axios.get(
         `https://friendbot.stellar.org?addr=${encodeURIComponent(publicKey)}`,
+        { headers: outboundHeaders() },
       );
       return { funded: true, data: response.data };
     } catch (error) {
@@ -292,11 +310,12 @@ const submitPayment = async ({
 
     const stellarMemo = buildStellarMemo({ memo, memoType });
 
-    // Reload the account (fresh sequence), rebuild, sign, and submit on each
-    // attempt. Retry only on tx_bad_seq — any other failure is terminal.
+    let transaction;
+    let hash;
     let lastError;
     for (let attempt = 1; attempt <= SEND_MAX_ATTEMPTS; attempt += 1) {
       const sourceAccount = await server.loadAccount(sourcePublicKey);
+      assertNativeReserve(sourceAccount, fee);
 
       const builder = new StellarSdk.TransactionBuilder(sourceAccount, {
         fee,
@@ -313,9 +332,14 @@ const submitPayment = async ({
         builder.addMemo(stellarMemo);
       }
 
-      const transaction = builder.setTimeout(30).build();
+        if (stellarMemo) {
+          builder.addMemo(stellarMemo);
+        }
 
-      transaction.sign(sourceKeypair);
+        transaction = builder.setTimeout(30).build();
+        transaction.sign(sourceKeypair);
+        hash = safeHash(transaction);
+      }
 
       try {
         const txResponse = await server.submitTransaction(transaction);
@@ -324,21 +348,7 @@ const submitPayment = async ({
           explorerUrl: getTransactionUrl(txResponse.hash),
         };
       } catch (error) {
-        if (isBadSequence(error) && attempt < SEND_MAX_ATTEMPTS) {
-          lastError = error;
-          logger.warn(
-            `Payment hit tx_bad_seq (attempt ${attempt}/${SEND_MAX_ATTEMPTS}); reloading sequence and retrying.`,
-          );
-          await sleep(attempt * 250);
-          continue;
-        }
-
-        // Ambiguous write failure (timeout/connection loss): the transaction was
-        // sent to exactly one endpoint and never resubmitted, so we verify
-        // rather than risk a duplicate. If Horizon already ingested it, recover
-        // success; otherwise surface an explicit "uncertain" error.
         if (isHorizonWriteUncertain(error)) {
-          const hash = safeHash(transaction);
           if (hash) {
             try {
               const found = await server.transactions().transactionHash(hash).call();
@@ -347,12 +357,42 @@ const submitPayment = async ({
                 return { txHash: hash, explorerUrl: getTransactionUrl(hash) };
               }
             } catch (_) {
-              // Remains uncertain.
+              // Ignore lookup errors
             }
           }
-          throw new Error(
-            "Transaction submission status unknown after timeout; not resubmitting to avoid a duplicate.",
-          );
+
+          if (attempt < SEND_MAX_ATTEMPTS) {
+            logger.warn(`Payment uncertain (attempt ${attempt}/${SEND_MAX_ATTEMPTS}); resubmitting same envelope.`);
+            await sleep(attempt * 250);
+            continue;
+          } else {
+            throw new Error(
+              "Transaction submission status unknown after timeout; not resubmitting to avoid a duplicate.",
+            );
+          }
+        }
+
+        if (isBadSequence(error)) {
+          if (hash) {
+            try {
+              const found = await server.transactions().transactionHash(hash).call();
+              if (found) {
+                logger.info(`Recovered tx_bad_seq payment ${hash} via Horizon lookup.`);
+                return { txHash: hash, explorerUrl: getTransactionUrl(hash) };
+              }
+            } catch (_) {
+            }
+          }
+
+          if (attempt < SEND_MAX_ATTEMPTS) {
+            lastError = error;
+            logger.warn(
+              `Payment hit tx_bad_seq (attempt ${attempt}/${SEND_MAX_ATTEMPTS}); reloading sequence and retrying.`,
+            );
+            transaction = null;
+            await sleep(attempt * 250);
+            continue;
+          }
         }
 
         const friendlyMessage = getFriendlyPaymentError(error);
@@ -406,6 +446,7 @@ const establishTrustline = async ({ secretKey, assetCode }) => {
   }
 
   const fee = await server.fetchBaseFee();
+  assertNativeReserve(account, fee, 1);
   const networkPassphrase =
     config.stellar.network === "testnet"
       ? StellarSdk.Networks.TESTNET
@@ -442,6 +483,7 @@ module.exports = {
   getBalances,
   submitPayment,
   establishTrustline,
+  assertNativeReserve,
   resolveAsset,
   validateAddress,
   isMuxedAddress,

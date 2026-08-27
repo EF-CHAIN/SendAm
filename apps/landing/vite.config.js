@@ -17,6 +17,13 @@ export default defineConfig({
   },
   server: {
     port: 3000,
+    headers: {
+      'Content-Security-Policy': "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self' ws: wss:; frame-ancestors 'none'; base-uri 'none'; form-action 'none';",
+      'X-Frame-Options': 'DENY',
+      'X-Content-Type-Options': 'nosniff',
+      'Referrer-Policy': 'strict-origin-when-cross-origin',
+      'Permissions-Policy': 'geolocation=(), microphone=(), camera=()'
+    }
   },
   // @vitejs/plugin-react 6 configures JSX via Vite's newer `oxc.jsx` hook,
   // which Vitest's test transform pipeline doesn't pick up (it falls back to

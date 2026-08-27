@@ -33,8 +33,12 @@ function hasEnv(keys) {
 function skipUnlessCredentials(provider, t) {
   const keys = REQUIRED_FOR_CREDENTIALED[provider] || [];
   if (!hasEnv(keys)) {
+    const missingKeys = keys.filter((k) => !process.env[k] || !process.env[k].trim()).join(", ") || "(none)";
+    if (process.env.REQUIRE_CONTRACT_SECRETS === "true" || process.env.REQUIRE_CONTRACT_SECRETS === "1") {
+      throw new Error(`Scheduled provider contract test failed: missing required environment variables for ${provider}: ${missingKeys}`);
+    }
     t.skip(
-      `Skipping ${provider} credentialed contract test — missing env: ${keys.join(", ") || "(none)"}`,
+      `Skipping ${provider} credentialed contract test — missing env: ${missingKeys}`,
     );
     return true;
   }

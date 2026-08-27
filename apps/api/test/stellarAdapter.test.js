@@ -303,3 +303,56 @@ test('fundTestnetAccount allows on testnet', async () => {
 
   config.stellar.isMainnet = originalIsMainnet;
 });
+
+test('submitPayment handles timeout and tx_bad_seq gracefully by reusing envelope and querying Horizon', async () => {
+  mockSuccessfulPaymentSetup();
+
+  mock.method(server, 'fetchBaseFee', async () => '100');
+
+  let callCount = 0;
+  mock.method(server, 'submitTransaction', async (tx) => {
+    callCount += 1;
+    if (callCount === 1) {
+      const error = new Error('timeout');
+      error.isHorizonWriteUncertain = true;
+      throw error;
+    } else {
+      const error = new Error('tx_bad_seq');
+      error.response = {
+        data: {
+          extras: {
+            result_codes: {
+              transaction: 'tx_bad_seq',
+            },
+          },
+        },
+      };
+      throw error;
+    }
+  });
+
+  let horizonCheckCount = 0;
+  const txEndpointMock = {
+    transactionHash: (h) => ({
+      call: async () => {
+        horizonCheckCount += 1;
+        if (horizonCheckCount === 1) {
+          throw new Error('Not found');
+        }
+        return { hash: h };
+      }
+    })
+  };
+  mock.method(server, 'transactions', () => txEndpointMock);
+
+  const result = await stellarAdapter.submitPayment({
+    secretKey: SOURCE_SECRET,
+    destination: DESTINATION_PUBLIC_KEY,
+    amount: '10',
+    asset: 'XLM',
+  });
+
+  assert.ok(result.txHash);
+  assert.equal(callCount, 2);
+  assert.equal(horizonCheckCount, 2);
+});

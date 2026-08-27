@@ -28,6 +28,8 @@ const getQueue = (name) => {
   return queues.get(name);
 };
 
+const { moveToDeadLetterQueue } = require('./dlq.service');
+
 const registerProcessor = (name, processor) => {
   const observedProcessor = async (job, token) => {
     const correlationId = correlationIdFrom(job.data?.correlationId || String(job.id || ''));
@@ -46,6 +48,13 @@ const registerProcessor = (name, processor) => {
         increment('sendam_queue_jobs_total', { queue: name, status: 'failed' });
         logger.error('queue_job_failed', { queue: name, jobId: job.id, error });
         captureException(error, { source: 'worker', queue: name, jobId: job.id });
+
+        const maxAttempts = job?.opts?.attempts || 3;
+        if (job && (job.attemptsMade || 1) >= maxAttempts) {
+          moveToDeadLetterQueue(job, error, { queueName: name }).catch((dlqErr) => {
+            logger.error('dlq_move_failed', { queue: name, jobId: job.id, error: dlqErr.message });
+          });
+        }
         throw error;
       } finally {
         observeDuration(
@@ -69,13 +78,21 @@ const registerProcessor = (name, processor) => {
       jobId: job.id,
       jobName: job.name,
     }));
-    worker.on('failed', (job, error) => logger.error('queue_job_failed', {
-      queue: name,
-      jobId: job?.id,
-      jobName: job?.name,
-      attemptsMade: job?.attemptsMade,
-      message: error.message,
-    }));
+    worker.on('failed', (job, error) => {
+      logger.error('queue_job_failed', {
+        queue: name,
+        jobId: job?.id,
+        jobName: job?.name,
+        attemptsMade: job?.attemptsMade,
+        message: error.message,
+      });
+      const maxAttempts = job?.opts?.attempts || 3;
+      if (job && (job.attemptsMade || 1) >= maxAttempts) {
+        moveToDeadLetterQueue(job, error, { queueName: name }).catch((dlqErr) => {
+          logger.error('dlq_move_failed', { queue: name, jobId: job?.id, error: dlqErr.message });
+        });
+      }
+    });
     worker.on('error', (error) => {
       logger.error('queue_worker_error', { queue: name, error });
       captureException(error, { source: 'worker_runtime', queue: name });

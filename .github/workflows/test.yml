@@ -116,6 +116,11 @@ jobs:
       # check and blocks the merge, exactly like a failing test.
       - run: npm run build:landing
       - run: npm run build:admin
+      # Enforce JS, CSS and image size budgets. A material regression in bundle
+      # size fails CI with an actionable per-file report so developers know
+      # exactly which chunk or asset crossed the threshold.
+      - name: Check frontend performance budgets
+        run: node scripts/check-frontend-budgets.js
 
   landing-tests:
     name: Landing tests & accessibility

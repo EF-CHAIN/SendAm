@@ -130,4 +130,69 @@ describe('runPhoneCanonicalization migration tool', () => {
     assert.equal(report.collisions[0].totalUsers, 2);
     assert.equal(report.collisions[0].financialUsersCount, 2);
   });
+
+  test('scans and canonicalizes secondary models (Contact, Transaction, VoiceCommand, SimMessage, Notification, Alias)', async () => {
+    const fakePrisma = {
+      user: { findMany: async () => [] },
+      contact: {
+        findMany: async () => [
+          { id: 'c1', ownerId: 'u1', phoneNumber: '08012345678' },
+        ],
+      },
+      transaction: {
+        findMany: async () => [
+          { id: 't1', recipientPhoneNumber: '08022223333' },
+        ],
+      },
+      voiceCommand: {
+        findMany: async () => [
+          { id: 'vc1', phoneNumber: '08033334444' },
+        ],
+      },
+      simMessage: {
+        findMany: async () => [
+          { id: 'sm1', phoneNumber: '08044445555' },
+        ],
+      },
+      notification: {
+        findMany: async () => [
+          { id: 'n1', recipient: '08055556666' },
+        ],
+      },
+      alias: {
+        findMany: async () => [
+          { id: 'a1', targetType: 'phone', target: '08066667777' },
+        ],
+      },
+    };
+
+    const report = await runPhoneCanonicalization({ prisma: fakePrisma, apply: false });
+
+    assert.equal(report.crossModelUpdatesCount, 6);
+    assert.equal(report.secondaryUpdates.contacts[0].newPhoneNumber, '+2348012345678');
+    assert.equal(report.secondaryUpdates.transactions[0].newPhoneNumber, '+2348022223333');
+    assert.equal(report.secondaryUpdates.voiceCommands[0].newPhoneNumber, '+2348033334444');
+    assert.equal(report.secondaryUpdates.simMessages[0].newPhoneNumber, '+2348044445555');
+    assert.equal(report.secondaryUpdates.notifications[0].newRecipient, '+2348055556666');
+    assert.equal(report.secondaryUpdates.aliases[0].newTarget, '+2348066667777');
+  });
+
+  test('detects Contact collisions for same owner and requires manual review', async () => {
+    const fakePrisma = {
+      user: { findMany: async () => [] },
+      contact: {
+        findMany: async () => [
+          { id: 'c1', ownerId: 'u1', phoneNumber: '08012345678' },
+          { id: 'c2', ownerId: 'u1', phoneNumber: '+2348012345678' },
+        ],
+      },
+    };
+
+    const report = await runPhoneCanonicalization({ prisma: fakePrisma, apply: false });
+
+    assert.equal(report.contactCollisions.length, 1);
+    assert.equal(report.contactCollisions[0].canonicalPhone, '+2348012345678');
+    assert.equal(report.contactCollisions[0].requiresManualReview, true);
+    assert.equal(report.secondaryUpdates.contacts.length, 0);
+  });
 });

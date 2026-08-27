@@ -172,22 +172,74 @@ const pollWallet = async (wallet, deps) => {
       record.asset_type === 'native' ? 'native' : (record.asset_code || record.asset_type);
 
     const newCursor = record.paging_token;
-
-    // Rule 5: write cursor BEFORE sending the notification.
-    await prismaClient.wallet.update({
-      where: { id },
-      data: { paymentCursor: newCursor },
-    });
-
+    const stellarPaymentId = String(record.paging_token || record.id);
     const message = formatDepositMessage(amount, asset, fiatRate);
-    await notify(phoneNumber, message, {
-      notification: {
-        userId: userId || null,
-        type: 'deposit_received',
-        referenceType: 'wallet',
-        referenceId: id,
-      },
-    });
+
+    // Rule 5 + #158: atomically write cursor AND outbox intent BEFORE sending.
+    if (prismaClient.depositOutboxRecord) {
+      await prismaClient.$transaction(async (tx) => {
+        await tx.wallet.update({
+          where: { id },
+          data: { paymentCursor: newCursor },
+        });
+        await tx.depositOutboxRecord.upsert({
+          where: { stellarPaymentId },
+          create: {
+            stellarPaymentId,
+            walletId: id,
+            userId: userId || null,
+            phoneNumber,
+            amount: String(amount),
+            asset,
+            fiatRate: fiatRate != null ? Number(fiatRate) : null,
+            message,
+            status: 'pending',
+          },
+          update: {},
+        });
+      });
+    } else {
+      await prismaClient.wallet.update({
+        where: { id },
+        data: { paymentCursor: newCursor },
+      });
+    }
+
+    if (notify) {
+      try {
+        const res = await notify(phoneNumber, message, {
+          notification: {
+            userId: userId || null,
+            type: 'deposit_received',
+            referenceType: 'wallet',
+            referenceId: id,
+          },
+        });
+
+        if (prismaClient.depositOutboxRecord) {
+          const providerMsgId = res && typeof res === 'object' ? (res.messageId || res.id || null) : null;
+          await prismaClient.depositOutboxRecord.updateMany({
+            where: { stellarPaymentId },
+            data: {
+              status: 'delivered',
+              deliveredAt: new Date(),
+              providerMessageId: providerMsgId,
+            },
+          });
+        }
+      } catch (err) {
+        logger.warn(`Outbox alert delivery deferred for payment ${stellarPaymentId}: ${err.message}`);
+        if (prismaClient.depositOutboxRecord) {
+          await prismaClient.depositOutboxRecord.updateMany({
+            where: { stellarPaymentId, status: 'pending' },
+            data: {
+              attempts: { increment: 1 },
+              lastError: err.message,
+            },
+          });
+        }
+      }
+    }
   }
 
   // If the page advanced past the last inbound (e.g. outbound records
@@ -201,6 +253,97 @@ const pollWallet = async (wallet, deps) => {
       });
     }
   }
+};
+
+/**
+ * Process pending deposit outbox records with idempotent retries and dead-letter queue bounds.
+ */
+const processDepositOutbox = async ({ prismaClient = prisma, notify = sendTextMessage, maxAttempts = 5 } = {}) => {
+  if (!prismaClient?.depositOutboxRecord) return { processed: 0, delivered: 0, failed: 0, deadLetters: 0 };
+  const pendingRecords = await prismaClient.depositOutboxRecord.findMany({
+    where: {
+      status: 'pending',
+      attempts: { lt: maxAttempts },
+    },
+    take: 50,
+  });
+
+  let delivered = 0;
+  let failed = 0;
+  let deadLetters = 0;
+
+  for (const record of pendingRecords) {
+    const nextAttempts = record.attempts + 1;
+    try {
+      const res = await notify(record.phoneNumber, record.message, {
+        notification: {
+          userId: record.userId || null,
+          type: 'deposit_received',
+          referenceType: 'wallet',
+          referenceId: record.walletId,
+        },
+      });
+      const providerMsgId = res && typeof res === 'object' ? (res.messageId || res.id || null) : null;
+      await prismaClient.depositOutboxRecord.update({
+        where: { id: record.id },
+        data: {
+          status: 'delivered',
+          deliveredAt: new Date(),
+          providerMessageId: providerMsgId,
+          attempts: nextAttempts,
+        },
+      });
+      delivered += 1;
+    } catch (err) {
+      failed += 1;
+      const isDead = nextAttempts >= maxAttempts;
+      if (isDead) deadLetters += 1;
+      await prismaClient.depositOutboxRecord.update({
+        where: { id: record.id },
+        data: {
+          attempts: nextAttempts,
+          lastError: err.message,
+          status: isDead ? 'dead_letter' : 'pending',
+        },
+      });
+    }
+  }
+
+  return { processed: pendingRecords.length, delivered, failed, deadLetters };
+};
+
+/**
+ * Replay a failed or dead-letter outbox record by setting its status back to pending.
+ */
+const replayFailedDepositOutboxRecord = async ({ outboxId, prismaClient = prisma }) => {
+  return prismaClient.depositOutboxRecord.update({
+    where: { id: outboxId },
+    data: { status: 'pending', attempts: 0, lastError: null },
+  });
+};
+
+/**
+ * Replay all dead-letter outbox records.
+ */
+const replayAllDeadLetters = async ({ prismaClient = prisma }) => {
+  return prismaClient.depositOutboxRecord.updateMany({
+    where: { status: 'dead_letter' },
+    data: { status: 'pending', attempts: 0, lastError: null },
+  });
+};
+
+/**
+ * Retention cleanup rule: delete delivered outbox records older than N days.
+ */
+const cleanupDeliveredOutboxRecords = async ({ olderThanDays = 30, prismaClient = prisma } = {}) => {
+  if (!prismaClient?.depositOutboxRecord) return { count: 0 };
+  const cutoff = new Date(Date.now() - olderThanDays * 24 * 60 * 60 * 1000);
+  return prismaClient.depositOutboxRecord.deleteMany({
+    where: {
+      status: 'delivered',
+      deliveredAt: { lt: cutoff },
+    },
+  });
 };
 
 // ---------------------------------------------------------------------------
@@ -239,6 +382,13 @@ const runDepositSweep = async (deps) => {
         `Deposit poller: error polling wallet ${wallet.publicKey}: ${err.message}`,
       );
     }
+  }
+
+  // Also process pending outbox records
+  try {
+    await processDepositOutbox(deps);
+  } catch (err) {
+    logger.error(`Deposit poller: outbox worker error: ${err.message}`);
   }
 };
 
@@ -294,8 +444,12 @@ const startDepositPoller = ({
 
 module.exports = {
   startDepositPoller,
-  // Exported for unit tests only — not part of the public API.
+  // Exported for unit tests and outbox management
   formatDepositMessage,
   pollWallet,
   runDepositSweep,
+  processDepositOutbox,
+  replayFailedDepositOutboxRecord,
+  replayAllDeadLetters,
+  cleanupDeliveredOutboxRecords,
 };

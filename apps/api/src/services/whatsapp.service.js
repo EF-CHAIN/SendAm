@@ -2,6 +2,7 @@ const axios = require('axios');
 const config = require('../config/env');
 const logger = require('../utils/logger');
 const { increment } = require('../observability/metrics');
+const { outboundHeaders } = require('../observability/context');
 const { ProviderSkippedError } = require('../compliance/providerErrors');
 
 // ---------------------------------------------------------------------------
@@ -50,13 +51,120 @@ const classifyWhatsappFailure = (errorCode) => {
   return { retryable: false, reason: 'unknown' };
 };
 
-const sendTextMessage = async (to, body, options = {}) => {
+const CONVERSATION_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+const isWithinConversationWindow = (lastCustomerInteractionAt) => {
+  if (!lastCustomerInteractionAt) return false;
+  const lastTime = new Date(lastCustomerInteractionAt).getTime();
+  if (Number.isNaN(lastTime)) return false;
+  return Date.now() - lastTime <= CONVERSATION_WINDOW_MS;
+};
+
+const sendTemplateMessage = async (to, templateName, languageCode = 'en', components = [], options = {}) => {
   const {
     messageTransport = config.messageTransport,
     prisma = null,
     axiosImpl = axios,
     notification = null,
   } = options;
+
+  const db = notification ? (prisma || require('../common/prisma')) : null;
+
+  try {
+    if (messageTransport === 'sim') {
+      const simDb = prisma || require('../common/prisma');
+      const body = `[Template: ${templateName}] ${JSON.stringify(components)}`;
+      const result = await simDb.simMessage.create({
+        data: {
+          phoneNumber: to,
+          direction: 'out',
+          text: body,
+        },
+      });
+      if (db && notification) {
+        await recordNotificationCreated(db, notification, { to, body, providerMessageId: null, status: 'sent' });
+      }
+      return result;
+    }
+
+    const url = `https://graph.facebook.com/v19.0/${config.whatsapp.phoneNumberId}/messages`;
+
+    const payload = {
+      messaging_product: 'whatsapp',
+      recipient_type: 'individual',
+      to: to,
+      type: 'template',
+      template: {
+        name: templateName,
+        language: { code: languageCode },
+        ...(components && components.length ? { components } : {}),
+      },
+    };
+
+    const response = await axiosImpl.post(url, payload, {
+      headers: {
+        'Authorization': `Bearer ${config.whatsapp.token}`,
+        'Content-Type': 'application/json',
+      },
+    });
+
+    if (db && notification) {
+      const providerMessageId = response.data?.messages?.[0]?.id || null;
+      await recordNotificationCreated(db, notification, {
+        to,
+        body: `[Template: ${templateName}]`,
+        providerMessageId,
+        status: providerMessageId ? 'sent' : 'queued',
+      });
+    }
+
+    return response.data;
+  } catch (error) {
+    logger.error('WhatsApp Template API Error:', error.response?.data || error.message);
+    if (db && notification) {
+      await recordNotificationCreated(db, notification, {
+        to,
+        body: `[Template: ${templateName}]`,
+        providerMessageId: null,
+        status: 'failed',
+        error: String(error.response?.data?.error?.message || error.message || 'template send failed').slice(0, 500),
+      });
+    }
+    return null;
+  }
+};
+
+const sendTextMessage = async (to, body, options = {}) => {
+  const {
+    messageTransport = config.messageTransport,
+    prisma = null,
+    axiosImpl = axios,
+    notification = null,
+    enforceWindow = false,
+    lastCustomerInteractionAt = null,
+    templateName = null,
+    templateLanguage = 'en',
+    templateComponents = [],
+  } = options;
+
+  // Meta 24-hour Customer Service Window Enforcement (#190)
+  if (enforceWindow && !isWithinConversationWindow(lastCustomerInteractionAt)) {
+    if (templateName) {
+      return sendTemplateMessage(to, templateName, templateLanguage, templateComponents, options);
+    }
+    logger.warn('whatsapp_window_expired', { to, lastCustomerInteractionAt });
+    const db = notification ? (prisma || require('../common/prisma')) : null;
+    if (db && notification) {
+      await recordNotificationCreated(db, notification, {
+        to,
+        body,
+        providerMessageId: null,
+        status: 'failed',
+        error: 'Meta customer service window expired (24h). Approved template required.',
+      });
+    }
+    return null;
+  }
 
   // Notification recording is opt-in: callers that care about delivery
   // lifecycle (financial receipts, deposit alerts, voice replies) pass
@@ -96,7 +204,8 @@ const sendTextMessage = async (to, body, options = {}) => {
     const response = await axiosImpl.post(url, payload, {
       headers: {
         'Authorization': `Bearer ${config.whatsapp.token}`,
-        'Content-Type': 'application/json'
+        'Content-Type': 'application/json',
+        ...outboundHeaders(),
       }
     });
 
@@ -306,12 +415,15 @@ const deleteUserData = async (phoneNumber) => {
   await axios.post(url, {
     user_id: phoneNumber,
     app_id: config.whatsapp.appId || process.env.WHATSAPP_APP_ID,
-  }, { timeout: 30000, headers: { 'content-type': 'application/json' } });
+  }, { timeout: 30000, headers: { 'content-type': 'application/json', ...outboundHeaders() } });
   return { status: 'success' };
 };
 
 module.exports = {
   sendTextMessage,
+  sendTemplateMessage,
+  isWithinConversationWindow,
+  CONVERSATION_WINDOW_MS,
   recordDeliveryStatus,
   classifyWhatsappFailure,
   deleteUserData,

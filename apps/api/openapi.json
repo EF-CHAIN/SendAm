@@ -1,0 +1,622 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "SendAm API",
+    "description": "Machine-readable REST API specification for SendAm Stellar cross-border payment platform.",
+    "version": "1.0.0",
+    "contact": {
+      "name": "EF-CHAIN SendAm Engineering",
+      "url": "https://github.com/EF-CHAIN/SendAm"
+    }
+  },
+  "servers": [
+    {
+      "url": "http://localhost:3002",
+      "description": "Local Development Server"
+    },
+    {
+      "url": "https://api.sendam.app",
+      "description": "Production Server"
+    }
+  ],
+  "tags": [
+    { "name": "System", "description": "Platform health, metrics, and webhooks" },
+    { "name": "Auth", "description": "SEP-10 wallet authentication & session challenges" },
+    { "name": "Wallet", "description": "Stellar wallet balance, transactions, funding, and transfers" },
+    { "name": "Receipts", "description": "Verifiable transaction receipt lookup" },
+    { "name": "Admin", "description": "Administrative management, audit logs, and user operations" },
+    { "name": "Compliance", "description": "KYC verification, sanctions screening, legal holds, and privacy requests" },
+    { "name": "Pricing", "description": "Exchange rates and guaranteed transfer quotes" },
+    { "name": "Simulator", "description": "Unauthenticated chat simulator (development/test harness)" }
+  ],
+  "paths": {
+    "/health": {
+      "get": {
+        "tags": ["System"],
+        "summary": "Health check probe",
+        "description": "Reports platform uptime and database connectivity. Unauthenticated.",
+        "responses": {
+          "200": {
+            "description": "System healthy",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": { "type": "string", "example": "ok" },
+                    "db": { "type": "string", "example": "connected" },
+                    "uptime": { "type": "number", "example": 1234.56 }
+                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "System degraded or database disconnected",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/metrics": {
+      "get": {
+        "tags": ["System"],
+        "summary": "Prometheus metrics scrape endpoint",
+        "description": "Exposes application metrics in Prometheus text format. Protected by Prometheus Token when configured.",
+        "security": [{ "PrometheusToken": [] }],
+        "responses": {
+          "200": {
+            "description": "Prometheus metrics output",
+            "content": {
+              "text/plain": {
+                "schema": { "type": "string" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/webhook/whatsapp": {
+      "post": {
+        "tags": ["System"],
+        "summary": "Meta WhatsApp inbound webhook",
+        "description": "Receives inbound WhatsApp events. Verified against Meta X-Hub-Signature-256 HMAC header.",
+        "security": [{ "WhatsAppSignature": [] }],
+        "responses": {
+          "200": {
+            "description": "Webhook processed successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": { "type": "string", "example": "success" }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid or missing X-Hub-Signature-256 header",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorEnvelope" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/auth/challenge": {
+      "post": {
+        "tags": ["Auth"],
+        "summary": "Initiate SEP-10 authentication challenge",
+        "description": "Generates a cryptographic Stellar challenge transaction for wallet authentication.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["account"],
+                "properties": {
+                  "account": { "type": "string", "example": "GPUBLICKEY1234567890" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Challenge generated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "transaction": { "type": "string" },
+                    "networkPassphrase": { "type": "string" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/auth/token": {
+      "post": {
+        "tags": ["Auth"],
+        "summary": "Exchange signed SEP-10 challenge for REST session token",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["transaction"],
+                "properties": {
+                  "transaction": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Session token issued",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "token": { "type": "string" },
+                    "expiresAt": { "type": "string", "format": "date-time" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/receipts/{id}": {
+      "get": {
+        "tags": ["Receipts"],
+        "summary": "Retrieve immutable transaction receipt",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "example": "SDA-12345678" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Receipt details",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Receipt" }
+              }
+            }
+          },
+          "404": {
+            "description": "Receipt not found",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorEnvelope" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/wallet/balance": {
+      "get": {
+        "tags": ["Wallet"],
+        "summary": "Get user wallet balances",
+        "x-feature-flag": "ENABLE_WALLET_REST_API",
+        "security": [{ "BearerAuth": [] }],
+        "responses": {
+          "200": {
+            "description": "Wallet asset balances",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "balances": {
+                      "type": "array",
+                      "items": { "$ref": "#/components/schemas/AssetBalance" }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/wallet/fund": {
+      "post": {
+        "tags": ["Wallet"],
+        "summary": "Request testnet wallet funding",
+        "x-feature-flag": "ENABLE_WALLET_REST_API",
+        "security": [{ "BearerAuth": [] }],
+        "responses": {
+          "200": {
+            "description": "Funding status",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "funded": { "type": "boolean" },
+                    "fundingState": { "type": "string" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/wallet/trustline": {
+      "post": {
+        "tags": ["Wallet"],
+        "summary": "Ensure USDC trustline on wallet",
+        "x-feature-flag": "ENABLE_WALLET_REST_API",
+        "security": [{ "BearerAuth": [] }],
+        "responses": {
+          "200": {
+            "description": "Trustline status",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "trustlineState": { "type": "string" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/wallet/send": {
+      "post": {
+        "tags": ["Wallet"],
+        "summary": "Initiate token transfer",
+        "x-feature-flag": "ENABLE_WALLET_REST_API",
+        "security": [{ "BearerAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["amount", "recipient"],
+                "properties": {
+                  "amount": { "type": "string", "example": "25.00" },
+                  "asset": { "type": "string", "example": "USDC" },
+                  "recipient": { "type": "string", "example": "+2348012345678" },
+                  "pin": { "type": "string", "example": "1234" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Payment submitted",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Transaction" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/login": {
+      "post": {
+        "tags": ["Admin"],
+        "summary": "Admin user login",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["email", "password"],
+                "properties": {
+                  "email": { "type": "string", "example": "admin@sendam.app" },
+                  "password": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Admin session created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "token": { "type": "string" },
+                    "admin": { "type": "object" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/users": {
+      "get": {
+        "tags": ["Admin"],
+        "summary": "List platform users (cursor paginated)",
+        "security": [{ "AdminSessionToken": [] }],
+        "parameters": [
+          { "name": "cursor", "in": "query", "schema": { "type": "string" } },
+          { "name": "limit", "in": "query", "schema": { "type": "integer", "default": 20, "maximum": 100 } }
+        ],
+        "responses": {
+          "200": {
+            "description": "Paginated list of users",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/PaginatedUsers" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/transactions": {
+      "get": {
+        "tags": ["Admin"],
+        "summary": "List platform transactions (cursor paginated)",
+        "security": [{ "AdminSessionToken": [] }],
+        "parameters": [
+          { "name": "cursor", "in": "query", "schema": { "type": "string" } },
+          { "name": "limit", "in": "query", "schema": { "type": "integer", "default": 20 } },
+          { "name": "status", "in": "query", "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "Paginated list of transactions",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/PaginatedTransactions" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/compliance/kyc/start": {
+      "post": {
+        "tags": ["Compliance"],
+        "summary": "Start KYC identity verification",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["phoneNumber", "country"],
+                "properties": {
+                  "phoneNumber": { "type": "string", "example": "+2348012345678" },
+                  "country": { "type": "string", "example": "NG" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "KYC session initiated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": { "type": "string" },
+                    "provider": { "type": "string" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/pricing/quote": {
+      "post": {
+        "tags": ["Pricing"],
+        "summary": "Request guaranteed transfer quote",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["sourceCurrency", "targetCurrency", "sourceAmount"],
+                "properties": {
+                  "sourceCurrency": { "type": "string", "example": "USDC" },
+                  "targetCurrency": { "type": "string", "example": "NGN" },
+                  "sourceAmount": { "type": "string", "example": "50.00" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Active quote",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Quote" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/sim/message": {
+      "post": {
+        "tags": ["Simulator"],
+        "summary": "Send message to chat simulator",
+        "x-feature-flag": "ENABLE_CHAT_SIM",
+        "description": "Unauthenticated dev simulator harness.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["phoneNumber", "text"],
+                "properties": {
+                  "phoneNumber": { "type": "string", "example": "+2348012345678" },
+                  "text": { "type": "string", "example": "Send 20 USDC to +2348000000002" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Simulator response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "response": { "type": "string" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "BearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT / SEP-10 Token"
+      },
+      "AdminSessionToken": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "Admin Session Bearer Token"
+      },
+      "PrometheusToken": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "Authorization"
+      },
+      "WhatsAppSignature": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-Hub-Signature-256"
+      }
+    },
+    "schemas": {
+      "ErrorEnvelope": {
+        "type": "object",
+        "properties": {
+          "status": { "type": "string", "example": "error" },
+          "error": { "type": "string", "example": "Resource not found" },
+          "code": { "type": "string", "example": "NOT_FOUND" },
+          "timestamp": { "type": "string", "format": "date-time" }
+        }
+      },
+      "Receipt": {
+        "type": "object",
+        "properties": {
+          "receiptId": { "type": "string", "example": "SDA-12345678" },
+          "txHash": { "type": "string" },
+          "amount": { "type": "string", "example": "50.00" },
+          "asset": { "type": "string", "example": "USDC" },
+          "status": { "type": "string", "example": "success" },
+          "createdAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "AssetBalance": {
+        "type": "object",
+        "properties": {
+          "asset": { "type": "string", "example": "USDC" },
+          "balance": { "type": "string", "example": "150.5000000" }
+        }
+      },
+      "Transaction": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "userId": { "type": "string" },
+          "type": { "type": "string", "example": "transfer" },
+          "amount": { "type": "string", "example": "25.00" },
+          "asset": { "type": "string", "example": "USDC" },
+          "status": { "type": "string", "example": "success" },
+          "txHash": { "type": "string" },
+          "createdAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "Quote": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "sourceCurrency": { "type": "string", "example": "USDC" },
+          "targetCurrency": { "type": "string", "example": "NGN" },
+          "sourceAmount": { "type": "string", "example": "50.00" },
+          "targetAmount": { "type": "string", "example": "75000.00" },
+          "rate": { "type": "string", "example": "1500.00" },
+          "expiresAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "PaginatedUsers": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": { "type": "string" },
+                "phoneNumber": { "type": "string" },
+                "createdAt": { "type": "string", "format": "date-time" }
+              }
+            }
+          },
+          "nextCursor": { "type": "string", "nullable": true }
+        }
+      },
+      "PaginatedTransactions": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/Transaction" }
+          },
+          "nextCursor": { "type": "string", "nullable": true }
+        }
+      }
+    }
+  }
+}

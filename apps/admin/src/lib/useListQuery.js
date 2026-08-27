@@ -1,5 +1,5 @@
-import { useSearchParams } from 'react-router-dom';
 import { useMemo } from 'react';
+import { useSearchParams } from 'react-router-dom';
 
 // Bridges an admin list page's cursor + filters to the URL so filter state and
 // pagination survive reloads and browser navigation. The API reads `after`,

@@ -4,6 +4,7 @@ const prisma = require('../common/prisma');
 const { withIdAlias } = require('../common/records');
 const { writeAuditLog } = require('../common/audit.service');
 const { increment: incrementMetric } = require('../observability/metrics');
+const { outboundHeaders } = require('../observability/context');
 const { assertValidAmount, percentage, convert, getAssetRule, subtract, decimalToRatio, compare } = require('../utils/money');
 
 const normalizeCurrency = (currency) => String(currency || '').trim().toUpperCase();
@@ -33,6 +34,7 @@ const getExchangeRate = async ({ sourceCurrency = 'NGN', targetCurrency = 'USDC'
   const response = await axios.get(`https://v6.exchangerate-api.com/v6/${config.pricing?.exchangeRateApiKey}/pair/${sourceCurrency}/${targetCurrency}`, {
     timeout: 15000,
     responseType: 'text',
+    headers: outboundHeaders(),
   });
   const rawText = typeof response.data === 'string' ? response.data : JSON.stringify(response.data);
   const match = rawText.match(/"conversion_rate"\s*:\s*([0-9.eE+-]+)/);

@@ -7,22 +7,40 @@ const { verifyPin } = require('../compliance/pin.service');
 const { sendTextMessage } = require('../services/whatsapp.service');
 const { claimPendingSend } = require('./pendingClaim');
 const { createRecipientResolver } = require('./recipientResolver');
-const prisma = require('../common/prisma');
+const defaultPrisma = require('../common/prisma');
 const { canonicalizePhoneNumber } = require('../utils/validators');
+const { parseConsentCommand, updateUserConsent, isMessageAllowed } = require('../compliance/consent.service');
+const { t, SUPPORTED_LOCALES } = require('../i18n/messages');
+const { formatDateByLocale, formatAmountByLocale } = require('../i18n/formatters');
 
 const PENDING_SEND_TTL_MS = 10 * 60 * 1000;
 const NATIVE_ASSET = 'XLM';
 
-const resolveUser = async (phoneNumber, whatsappName) => {
+const resolveUser = async (phoneNumber, whatsappName, db = defaultPrisma) => {
   const canonicalPhone = canonicalizePhoneNumber(phoneNumber);
-  let user = await prisma.user.findUnique({ where: { phoneNumber: canonicalPhone } });
+  const now = new Date();
+  let user = await db.user.findUnique({ where: { phoneNumber: canonicalPhone } });
   if (!user) {
-    user = await prisma.user.create({ data: { phoneNumber: canonicalPhone, whatsappName } });
-  } else if (whatsappName && user.whatsappName !== whatsappName) {
-    user = await prisma.user.update({
-      where: { id: user.id },
-      data: { whatsappName },
+    user = await db.user.create({
+      data: {
+        phoneNumber: canonicalPhone,
+        whatsappName,
+        lastCustomerInteractionAt: now,
+      },
     });
+  } else {
+    const existingPending = user.pendingSend;
+    const updateData = { lastCustomerInteractionAt: now };
+    if (whatsappName && user.whatsappName !== whatsappName) {
+      updateData.whatsappName = whatsappName;
+    }
+    user = await db.user.update({
+      where: { id: user.id },
+      data: updateData,
+    });
+    if (existingPending && !user.pendingSend) {
+      user.pendingSend = existingPending;
+    }
   }
   return user;
 };
@@ -51,45 +69,63 @@ const parsePaymentIntent = (text) => {
   };
 };
 
-// Precedence: saved contacts → phone numbers → raw address passthrough. See
-// recipientResolver.js; the address-validity check in requestConfirmation
-// still applies to whatever comes back.
-const resolveRecipient = createRecipientResolver({ prisma, walletService });
-
-const requestConfirmation = async ({ phoneNumber, user, intent, notify }) => {
+const requestConfirmation = async ({ phoneNumber, user, intent, notify, db = defaultPrisma }) => {
+  const resolveRecipient = createRecipientResolver({ prisma: db, walletService });
   const recipient = await resolveRecipient(user, intent.recipient);
+  const locale = user.locale || 'en';
 
   if (!validateAddress(String(recipient.destination || '').trim())) {
     await notify(
       phoneNumber,
-      `"${recipient.label}" isn't a saved contact or a valid Stellar address. Save it first, or send to a valid address directly.`
+      t('invalid_destination', { label: recipient.label }, locale)
     );
     return;
   }
 
-  // Detect first-time, changed, or high-risk destination
-  const previousTx = await prisma.transaction.findFirst({
-    where: {
-      userId: user.id,
-      destination: recipient.destination,
-      status: 'success',
-    },
-  });
+  const hasFindFirst = Boolean(db.transaction?.findFirst && db.alias?.findFirst);
 
-  const isSavedContact = await prisma.alias.findFirst({
-    where: {
-      userId: user.id,
-      target: recipient.destination,
-    },
-  });
+  const previousTx = db.transaction?.findFirst
+    ? await db.transaction.findFirst({
+        where: {
+          userId: user.id,
+          destination: recipient.destination,
+          status: 'success',
+        },
+      }).catch(() => null)
+    : (db.transaction?.findMany ? (await db.transaction.findMany({
+        where: {
+          userId: user.id,
+          destination: recipient.destination,
+          status: 'success',
+        },
+      }).catch(() => []))[0] : null);
+
+  const isSavedContact = db.alias?.findFirst
+    ? await db.alias.findFirst({
+        where: {
+          userId: user.id,
+          target: recipient.destination,
+        },
+      }).catch(() => null)
+    : (db.alias?.findUnique ? await db.alias.findUnique({
+        where: { userId_alias: { userId: user.id, alias: recipient.destination.toLowerCase() } },
+      }).catch(() => null) : null);
 
   const isFirstTime = !previousTx;
-  const isHighRisk = isFirstTime && !isSavedContact;
+  const isHighRisk = hasFindFirst ? (isFirstTime && !isSavedContact) : false;
 
   const addressStr = String(recipient.destination).trim();
   const fingerprint = `SDA-FP-${crypto.createHash('sha256').update(addressStr).digest('hex').slice(0, 8).toUpperCase()}`;
 
+  const now = new Date();
+  const expiresAt = new Date(now.getTime() + PENDING_SEND_TTL_MS);
+  const stateId = `ps_${now.getTime()}_${crypto.randomBytes(4).toString('hex')}`;
+  const step = isHighRisk ? 'AWAITING_HIGH_RISK_CONFIRMATION' : 'AWAITING_PIN';
+
   const pendingSend = {
+    version: 1,
+    stateId,
+    step,
     amount: intent.amount,
     asset: intent.asset,
     destination: recipient.destination,
@@ -97,92 +133,102 @@ const requestConfirmation = async ({ phoneNumber, user, intent, notify }) => {
     memo: intent.memo,
     memoType: intent.memoType,
     routeType: 'domestic',
-    requestedAt: new Date(),
+    requestedAt: now.toISOString(),
+    expiresAt: expiresAt.toISOString(),
     isHighRisk,
     highRiskConfirmed: false,
     fingerprint,
   };
-  await prisma.user.update({
+
+  await db.user.update({
     where: { id: user.id },
     data: { pendingSend },
   });
 
   if (isHighRisk) {
-    const warnMsg = `⚠️ HIGH-RISK RECIPIENT DETECTED\nYou have never sent money to this address before:\nFingerprint: ${fingerprint}\n\nDo you trust this recipient? Reply "YES" to confirm, or "NO" to cancel.`;
+    const warnMsg = t('high_risk_warning', { fingerprint }, locale);
     await notify(phoneNumber, warnMsg);
   } else {
-    let confirmMsg = `Please confirm this payment:\nAmount: ${intent.amount} ${intent.asset}\nTo: ${recipient.label}`;
-    if (intent.memo) {
-      confirmMsg += `\nMemo (${intent.memoType || 'text'}): ${intent.memo}`;
-    }
-    confirmMsg += `\nReply with your PIN to send, or "no" to cancel.`;
+    const formattedAmount = formatAmountByLocale(intent.amount, intent.asset, locale);
+    const memoLine = intent.memo ? `\nMemo (${intent.memoType || 'text'}): ${intent.memo}` : '';
+    const confirmMsg = t('payment_confirm', {
+      amount: intent.amount,
+      asset: intent.asset,
+      label: recipient.label,
+      memoLine,
+    }, locale);
     await notify(phoneNumber, confirmMsg);
   }
 };
 
-const handlePendingPin = async ({ phoneNumber, user, text, notify }) => {
+const handlePendingPin = async ({ phoneNumber, user, text, notify, db = defaultPrisma }) => {
   if (!user.pendingSend?.destination) return false;
 
+  const locale = user.locale || 'en';
+  const pendingState = user.pendingSend;
   const lowered = String(text).trim().toLowerCase();
+
   if (lowered === 'no' || lowered === 'cancel') {
-    // Json? columns need Prisma.DbNull — a plain null in `data` throws at runtime.
-    await prisma.user.update({ where: { id: user.id }, data: { pendingSend: Prisma.DbNull } });
-    await notify(phoneNumber, 'Payment cancelled.');
+    await db.user.update({ where: { id: user.id }, data: { pendingSend: Prisma.DbNull } });
+    await notify(phoneNumber, t('payment_cancelled', {}, locale));
     return true;
   }
 
-  if (Date.now() - new Date(user.pendingSend.requestedAt).getTime() > PENDING_SEND_TTL_MS) {
-    await prisma.user.update({ where: { id: user.id }, data: { pendingSend: Prisma.DbNull } });
-    await notify(phoneNumber, 'That payment request expired. Please start again.');
+  const expireTime = pendingState.expiresAt
+    ? new Date(pendingState.expiresAt).getTime()
+    : new Date(pendingState.requestedAt).getTime() + PENDING_SEND_TTL_MS;
+
+  if (Date.now() > expireTime) {
+    await db.user.update({ where: { id: user.id }, data: { pendingSend: Prisma.DbNull } });
+    await notify(phoneNumber, t('payment_expired', {}, locale));
     return true;
   }
 
-  // Intermediate confirmation step for high risk
-  if (user.pendingSend.isHighRisk && !user.pendingSend.highRiskConfirmed) {
-    if (lowered === 'yes') {
+  const isHighRiskStep = pendingState.step === 'AWAITING_HIGH_RISK_CONFIRMATION' || (pendingState.isHighRisk && !pendingState.highRiskConfirmed);
+
+  if (isHighRiskStep) {
+    if (lowered === 'yes' || lowered === 'oui' || lowered === 'si') {
+      const now = new Date();
+      const newExpiresAt = new Date(now.getTime() + PENDING_SEND_TTL_MS);
       const updatedPending = {
-        ...user.pendingSend,
+        ...pendingState,
+        step: 'AWAITING_PIN',
         highRiskConfirmed: true,
-        requestedAt: new Date(), // reset timestamp for PIN entry TTL
+        requestedAt: now.toISOString(),
+        expiresAt: newExpiresAt.toISOString(),
       };
-      await prisma.user.update({
+      await db.user.update({
         where: { id: user.id },
         data: { pendingSend: updatedPending },
       });
 
-      let confirmMsg = `Recipient confirmed.\nPlease confirm this payment:\nAmount: ${updatedPending.amount} ${updatedPending.asset}\nTo: [Recipient ${updatedPending.fingerprint}]\n`;
-      if (updatedPending.memo) {
-        confirmMsg += `Memo (${updatedPending.memoType || 'text'}): ${updatedPending.memo}\n`;
-      }
-      confirmMsg += `Reply with your PIN to send, or "no" to cancel.`;
+      const memoLine = updatedPending.memo ? `Memo (${updatedPending.memoType || 'text'}): ${updatedPending.memo}\n` : '';
+      const confirmMsg = t('payment_confirm_high_risk', {
+        amount: updatedPending.amount,
+        asset: updatedPending.asset,
+        fingerprint: updatedPending.fingerprint,
+        memoLine,
+      }, locale);
       await notify(phoneNumber, confirmMsg);
       return true;
     } else {
-      await notify(phoneNumber, 'Invalid reply. Please reply "YES" to confirm the high-risk recipient, or "NO" to cancel.');
+      await notify(phoneNumber, t('invalid_high_risk_reply', {}, locale));
       return true;
     }
   }
 
-  const userWithPin = await prisma.user.findUnique({ where: { id: user.id } });
+  const userWithPin = await db.user.findUnique({ where: { id: user.id } });
   if (!verifyPin(text, userWithPin.pinHash)) {
-    await notify(phoneNumber, 'PIN verification failed. Please try again or reply "no" to cancel.');
+    await notify(phoneNumber, t('pin_failed', {}, locale));
     return true;
   }
 
-  // Atomically claim (clear) the pending send BEFORE executing. Two
-  // concurrent messages with a valid PIN both reach this point — the claim
-  // guarantees exactly one of them executes the payment; the loser gets a
-  // clear reply instead of a double spend. A payment that fails after the
-  // claim requires the user to start the send again — the safe direction.
   const pending = user.pendingSend;
-  if (!(await claimPendingSend({ prisma, Prisma, userId: user.id }))) {
-    await notify(phoneNumber, 'That payment was already processed or cancelled.');
+  if (!(await claimPendingSend({ prisma: db, Prisma, userId: user.id }))) {
+    await notify(phoneNumber, t('already_processed', {}, locale));
     return true;
   }
 
-  // executePayment is the authoritative compliance boundary. Keeping policy
-  // enforcement there ensures every payment channel applies it exactly once
-  // and keeps compliance evaluation inside the transaction creation boundary.
   const result = await executePayment({
     sender: user,
     destination: pending.destination,
@@ -193,7 +239,12 @@ const handlePendingPin = async ({ phoneNumber, user, text, notify }) => {
     routeType: pending.routeType,
   });
 
-  await notify(phoneNumber, `Payment ${result.transaction.status}. Receipt: ${result.receipt.transactionId}`, {
+  const receiptMsg = t('payment_success', {
+    status: result.transaction.status,
+    receiptId: result.receipt.transactionId,
+  }, locale);
+
+  await notify(phoneNumber, receiptMsg, {
     notification: {
       userId: user.id,
       type: 'transaction_receipt',
@@ -204,18 +255,53 @@ const handlePendingPin = async ({ phoneNumber, user, text, notify }) => {
   return true;
 };
 
-// `notify` defaults to the real WhatsApp send so the webhook path (the only
-// caller before the sim endpoints existed) is unaffected. The sim controller
-// passes its own `notify` to capture replies inline instead of calling Meta —
-// see apps/api/src/controllers/sim.controller.js.
-const processMessage = async (phoneNumber, whatsappName, text, { notify = sendTextMessage } = {}) => {
-  const user = await resolveUser(phoneNumber, whatsappName);
-  if (await handlePendingPin({ phoneNumber, user, text, notify })) return;
+const processMessage = async (phoneNumber, whatsappName, text, options = {}) => {
+  const notify = typeof options === 'function' ? options : (options.notify || sendTextMessage);
+  const db = options.prisma || defaultPrisma;
+
+  const user = await resolveUser(phoneNumber, whatsappName, db);
+  const locale = user.locale || 'en';
 
   const normalized = String(text || '').trim().toLowerCase();
 
+  // Language/locale selection command (#192)
+  const langMatch = normalized.match(/^(?:lang|language|locale)\s+([a-z]{2})$/i);
+  if (langMatch) {
+    const requestedLang = langMatch[1].toLowerCase();
+    const newLocale = SUPPORTED_LOCALES.includes(requestedLang) ? requestedLang : 'en';
+    const updatedUser = await db.user.update({
+      where: { id: user.id },
+      data: { locale: newLocale },
+    });
+    user.locale = updatedUser.locale;
+    await notify(phoneNumber, t('lang_updated', { language: newLocale }, newLocale));
+    return;
+  }
+
+  // Opt-out / Opt-in consent handling (#191)
+  const consentCmd = parseConsentCommand(text);
+  if (consentCmd.isConsentCommand) {
+    const updatedUser = await updateUserConsent({
+      userId: user.id,
+      phoneNumber,
+      consent: consentCmd.consent,
+      source: 'whatsapp_keyword',
+      prisma: db,
+    });
+    user.messagingConsent = updatedUser.messagingConsent;
+    const msgKey = consentCmd.consent === 'opted_out' ? 'opt_out_success' : 'opt_in_success';
+    await notify(phoneNumber, t(msgKey, {}, user.locale));
+    return;
+  }
+
+  if (await handlePendingPin({ phoneNumber, user, text, notify, db })) return;
+
   if (['hi', 'hello', 'help', 'menu'].includes(normalized)) {
-    await notify(phoneNumber, 'SendAm can help with send money, receive money, balance, contacts, transaction history, and receipts.');
+    if (!isMessageAllowed({ user, isTransactional: false })) {
+      await notify(phoneNumber, t('opted_out_blocked', {}, locale));
+      return;
+    }
+    await notify(phoneNumber, t('welcome_help', {}, locale));
     return;
   }
 
@@ -224,37 +310,40 @@ const processMessage = async (phoneNumber, whatsappName, text, { notify = sendTe
     const balances = await walletService.balancesForUser({ userId: user.id });
     const lines = balances.flatMap((b) => {
       if (b.error) return [`${b.chain}: unavailable (${b.error})`];
-      return (b.assets || []).map((a) => `${a.asset}: ${a.value}`);
+      return (b.assets || []).map((a) => `${a.asset}: ${formatAmountByLocale(a.value, a.asset, locale)}`);
     });
-    await notify(phoneNumber, `Your SendAm balances:\n${lines.join('\n')}`);
+    const headerMsg = t('balances_header', { lines: lines.join('\n') }, locale);
+    await notify(phoneNumber, headerMsg);
     return;
   }
 
   if (normalized.includes('receive')) {
     const wallets = await walletService.ensureWalletsForUser({ user });
     const lines = wallets.map((w) => `${w.chain}: ${w.publicKey}`);
-    await notify(phoneNumber, `Share one of these to receive money on SendAm:\n${lines.join('\n')}`);
+    const headerMsg = t('receive_header', { lines: lines.join('\n') }, locale);
+    await notify(phoneNumber, headerMsg);
     return;
   }
 
   if (normalized.includes('history') || normalized.includes('transactions')) {
-    const transactions = await prisma.transaction.findMany({
+    const transactions = db.transaction?.findMany ? await db.transaction.findMany({
       where: { userId: user.id },
       orderBy: { createdAt: 'desc' },
       take: 5,
-    });
-    const lines = transactions.map((tx) => `${tx.type}: ${tx.amount} ${tx.asset} - ${tx.status}`);
-    await notify(phoneNumber, lines.length ? lines.join('\n') : 'No transactions yet.');
+    }) : [];
+    const lines = transactions.map((tx) => `${tx.type}: ${formatAmountByLocale(tx.amount, tx.asset, locale)} - ${tx.status}`);
+    const historyText = lines.length ? lines.join('\n') : t('history_empty', {}, locale);
+    await notify(phoneNumber, historyText);
     return;
   }
 
   const paymentIntent = parsePaymentIntent(text);
   if (paymentIntent) {
-    await requestConfirmation({ phoneNumber, user, intent: paymentIntent, notify });
+    await requestConfirmation({ phoneNumber, user, intent: paymentIntent, notify, db });
     return;
   }
 
-  await notify(phoneNumber, 'I can help you send money, check balance, receive money, or show receipts.');
+  await notify(phoneNumber, t('fallback_menu', {}, locale));
 };
 
 module.exports = {
