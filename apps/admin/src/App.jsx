@@ -1,4 +1,5 @@
 import { Routes, Route } from 'react-router-dom';
+import ErrorBoundary from '@shared/ErrorBoundary.jsx';
 import AdminLayout from './components/AdminLayout.jsx';
 import Login from './pages/Login.jsx';
 import Dashboard from './pages/Dashboard.jsx';
@@ -11,18 +12,20 @@ import SystemHealth from './pages/SystemHealth.jsx';
 
 export default function App() {
   return (
-    <Routes>
-      <Route path="/login" element={<Login />} />
-      <Route element={<AdminLayout />}>
-        <Route path="/" element={<Dashboard />} />
-        <Route path="/users" element={<Users />} />
-        <Route path="/wallets" element={<Wallets />} />
-        <Route path="/transactions" element={<Transactions />} />
-        <Route path="/kyc" element={<KycReview />} />
-        <Route path="/audit-logs" element={<AuditLogs />} />
-        <Route path="/system-health" element={<SystemHealth />} />
-        <Route path="*" element={<Dashboard />} />
-      </Route>
-    </Routes>
+    <ErrorBoundary variant="admin">
+      <Routes>
+        <Route path="/login" element={<Login />} />
+        <Route element={<AdminLayout />}>
+          <Route path="/" element={<ErrorBoundary variant="admin"><Dashboard /></ErrorBoundary>} />
+          <Route path="/users" element={<ErrorBoundary variant="admin"><Users /></ErrorBoundary>} />
+          <Route path="/wallets" element={<ErrorBoundary variant="admin"><Wallets /></ErrorBoundary>} />
+          <Route path="/transactions" element={<ErrorBoundary variant="admin"><Transactions /></ErrorBoundary>} />
+          <Route path="/kyc" element={<ErrorBoundary variant="admin"><KycReview /></ErrorBoundary>} />
+          <Route path="/audit-logs" element={<ErrorBoundary variant="admin"><AuditLogs /></ErrorBoundary>} />
+          <Route path="/system-health" element={<ErrorBoundary variant="admin"><SystemHealth /></ErrorBoundary>} />
+          <Route path="*" element={<ErrorBoundary variant="admin"><Dashboard /></ErrorBoundary>} />
+        </Route>
+      </Routes>
+    </ErrorBoundary>
   );
 }

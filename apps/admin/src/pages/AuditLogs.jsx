@@ -17,14 +17,23 @@ export default function AuditLogs() {
   const [error, setError] = useState('');
 
   useEffect(() => {
-    setLoading(true);
-    getAdminAuditLogs(params)
-      .then((res) => {
-        setRows(res.data || []);
-        setPagination(res.pagination);
-      })
-      .catch((err) => setError(err.message || 'Failed to fetch audit logs'))
-      .finally(() => setLoading(false));
+    let active = true;
+    const fetchLogs = async () => {
+      setLoading(true);
+      try {
+        const res = await getAdminAuditLogs(params);
+        if (active) {
+          setRows(res.data || []);
+          setPagination(res.pagination);
+        }
+      } catch (err) {
+        if (active) setError(err.message || 'Failed to fetch audit logs');
+      } finally {
+        if (active) setLoading(false);
+      }
+    };
+    fetchLogs();
+    return () => { active = false; };
   }, [params]);
 
   const handleExport = async () => {

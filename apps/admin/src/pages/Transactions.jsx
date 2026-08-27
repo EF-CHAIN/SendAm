@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { getAdminTransactions } from '@/lib/adminApi';
 import { useListQuery } from '@/lib/useListQuery';
 import { formatDate } from '@shared/formatDate';
+import { normalizeError } from '@shared/normalizeError.js';
 import DataTable from '@/components/DataTable';
 import Loader from '@shared/Loader';
 import StatusBadge from '@/components/StatusBadge';
@@ -15,16 +16,20 @@ export default function Transactions() {
   const [transactions, setTransactions] = useState([]);
   const [pagination, setPagination] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
 
   useEffect(() => {
     const fetchTransactions = async () => {
       setLoading(true);
+      setError(null);
       try {
         const res = await getAdminTransactions(params);
         setTransactions(res.data);
         setPagination(res.pagination);
       } catch (err) {
-        console.error(err);
+        // Replace silent failure with a safe, observable error state.
+        // normalizeError ensures raw error.message / stack never reaches the UI.
+        setError(normalizeError(err));
       } finally {
         setLoading(false);
       }
@@ -82,6 +87,30 @@ export default function Transactions() {
 
       {loading ? (
         <div className="flex justify-center py-20"><Loader /></div>
+      ) : error ? (
+        <div
+          role="alert"
+          className="mt-4 rounded-lg border border-red-100 bg-red-50 p-6 text-center"
+        >
+          <p className="mb-4 font-medium text-red-700">{error.userMessage}</p>
+          <button
+            type="button"
+            onClick={() => {
+              setError(null);
+              setLoading(true);
+              getAdminTransactions(params)
+                .then((res) => {
+                  setTransactions(res.data);
+                  setPagination(res.pagination);
+                })
+                .catch((err) => setError(normalizeError(err)))
+                .finally(() => setLoading(false));
+            }}
+            className="rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-accent focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
+          >
+            Try again
+          </button>
+        </div>
       ) : (
         <>
           <DataTable columns={columns} data={transactions} keyField="_id" />

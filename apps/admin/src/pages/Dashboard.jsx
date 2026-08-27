@@ -1,30 +1,59 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { getAdminStats } from '@/lib/adminApi';
 import StatCard from '@/components/StatCard';
 import Loader from '@shared/Loader';
+import { normalizeError } from '@shared/normalizeError.js';
 import { Users, Wallet, ArrowRightLeft, CheckCircle2, XCircle, FileSearch } from 'lucide-react';
 
 export default function Dashboard() {
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  // retryCount is incremented by the retry button to trigger a re-fetch via
+  // the effect dependency. Safe: incrementing doesn't mutate data.
+  const [retryCount, setRetryCount] = useState(0);
 
   useEffect(() => {
+    let active = true;
     const fetchStats = async () => {
+      setLoading(true);
+      setError(null);
       try {
         const res = await getAdminStats();
-        setStats(res.data);
+        if (active) setStats(res.data);
       } catch (err) {
-        setError(err.message || 'Failed to load stats');
+        // normalizeError ensures raw error.message / stack never reaches the UI
+        if (active) setError(normalizeError(err));
       } finally {
-        setLoading(false);
+        if (active) setLoading(false);
       }
     };
     fetchStats();
-  }, []);
+    return () => { active = false; };
+  }, [retryCount]);
+
+  const handleRetry = useCallback(() => setRetryCount((c) => c + 1), []);
 
   if (loading) return <div className="flex justify-center py-20"><Loader size={32} /></div>;
-  if (error) return <div className="text-red-500 p-4 bg-red-50 rounded-lg">{error}</div>;
+
+  // Safe error state — renders only the sanitized userMessage, never raw error details
+  if (error) {
+    return (
+      <div
+        role="alert"
+        className="rounded-lg border border-red-100 bg-red-50 p-6 text-center"
+      >
+        <p className="mb-4 font-medium text-red-700">{error.userMessage}</p>
+        <button
+          type="button"
+          onClick={handleRetry}
+          className="rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-accent focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
+        >
+          Try again
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div className="min-w-0">

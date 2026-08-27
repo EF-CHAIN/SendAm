@@ -17,23 +17,22 @@ export default function KycReview() {
 
   useEffect(() => {
     let active = true;
-    setLoading(true);
-    getAdminKyc(params)
-      .then((res) => {
+    const fetchKyc = async () => {
+      setLoading(true);
+      try {
+        const res = await getAdminKyc(params);
         if (active) {
           setRows(res.data || []);
           setPagination(res.pagination);
         }
-      })
-      .catch((err) => {
+      } catch (err) {
         if (active) setError(err.message || 'Failed to fetch KYC profiles');
-      })
-      .finally(() => {
+      } finally {
         if (active) setLoading(false);
-      });
-    return () => {
-      active = false;
+      }
     };
+    fetchKyc();
+    return () => { active = false; };
   }, [params]);
 
   const handleApprove = async (id) => {

@@ -6,6 +6,15 @@ import { describe, it, expect } from 'vitest';
 import { server } from '../mocks/server';
 import { http, HttpResponse } from 'msw';
 
+// Helper: find the StatusBadge span for a given status value.
+// The FilterBar's status <select> also contains the same text as <option>
+// elements, so we scope to the table cell to avoid ambiguity.
+function getBadgeText(status) {
+  return screen.getAllByText(status).find(
+    (el) => el.tagName === 'SPAN' && el.className.includes('rounded-full')
+  );
+}
+
 describe('KycReview Component', () => {
   it('renders KYC profiles and handles approval mutation', async () => {
     render(
@@ -18,15 +27,18 @@ describe('KycReview Component', () => {
       expect(screen.getByRole('table')).toBeInTheDocument();
     });
 
-    expect(screen.getByText('Pending')).toBeInTheDocument();
+    // Confirm the initial 'pending' badge is rendered
+    expect(getBadgeText('pending')).toBeInTheDocument();
+
     const approveButton = screen.getByRole('button', { name: /approve/i });
-    
     await userEvent.click(approveButton);
 
     await waitFor(() => {
-      expect(screen.getByText('Approved')).toBeInTheDocument();
+      // After approval the badge should show 'approved'
+      expect(getBadgeText('approved')).toBeInTheDocument();
     });
     
+    // Approve/Reject action buttons should no longer appear for this record
     expect(screen.queryByRole('button', { name: /approve/i })).not.toBeInTheDocument();
   });
 
@@ -45,7 +57,7 @@ describe('KycReview Component', () => {
     await userEvent.click(rejectButton);
 
     await waitFor(() => {
-      expect(screen.getByText('Rejected')).toBeInTheDocument();
+      expect(getBadgeText('rejected')).toBeInTheDocument();
     });
   });
 
@@ -73,7 +85,7 @@ describe('KycReview Component', () => {
       expect(screen.getByRole('alert')).toHaveTextContent('KYC failed validation');
     });
     
-    // Status should remain Pending
-    expect(screen.getByText('Pending')).toBeInTheDocument();
+    // Status badge should remain 'pending' after a failed mutation
+    expect(getBadgeText('pending')).toBeInTheDocument();
   });
 });
