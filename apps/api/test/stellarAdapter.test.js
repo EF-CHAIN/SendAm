@@ -277,3 +277,31 @@ test('establishTrustline gives a readable error for an unfunded account', async 
     },
   );
 });
+
+test('getFundingAccountHealth reports fee and reserve pressure with operator thresholds', async () => {
+  mock.method(server, 'fetchBaseFee', async () => '300');
+  mock.method(server, 'loadAccount', async () => ({
+    account_id: SOURCE_PUBLIC_KEY,
+    subentry_count: 10,
+    balances: [{ asset_type: 'native', balance: '6.0000000' }],
+  }));
+
+  const report = await stellarAdapter.getFundingAccountHealth({
+    publicKey: SOURCE_PUBLIC_KEY,
+    baseFeeWarningThreshold: 200,
+    baseFeeCriticalThreshold: 250,
+    fundingBalanceWarningThreshold: 10,
+    fundingBalanceCriticalThreshold: 6,
+    reserveWarningThreshold: 0.65,
+    reserveCriticalThreshold: 0.75,
+    reserveEntries: 5,
+  });
+
+  assert.equal(report.status, 'critical');
+  assert.equal(report.baseFeeStatus, 'critical');
+  assert.equal(report.fundingBalanceStatus, 'critical');
+  assert.equal(report.reserveStatus, 'critical');
+  assert.equal(report.fundingCapacityWallets, 1);
+  assert.ok(Array.isArray(report.runbook));
+  assert.ok(report.runbook.length > 0);
+});

@@ -6,12 +6,13 @@ const logger = require('../utils/logger');
 // propagation.
 const errorHandler = (err, _req, res, _next) => {
   logger.error(err.stack);
-  
-  const statusCode = res.statusCode === 200 ? 500 : res.statusCode;
-  
+
+  const statusCode = err.statusCode || (res.statusCode === 200 ? 500 : res.statusCode);
+
   res.status(statusCode).json({
     success: false,
     message: err.message || 'Server Error',
+    errors: err.errors || undefined,
     stack: process.env.NODE_ENV === 'production' ? null : err.stack,
   });
 };

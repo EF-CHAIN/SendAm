@@ -56,9 +56,18 @@ module.exports = {
   stellar: {
     network: process.env.STELLAR_NETWORK || 'testnet',
     horizonUrl: process.env.STELLAR_HORIZON_URL || 'https://horizon-testnet.stellar.org',
+    fundingAccountPublicKey: process.env.STELLAR_FUNDING_ACCOUNT_PUBLIC_KEY || '',
     // Circle's official Testnet USDC issuer, so multi-asset balance lookups
     // work out of the box in dev; override for mainnet or a custom issuer.
     usdcIssuer: process.env.STELLAR_USDC_ISSUER || 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5',
+    thresholds: {
+      baseFeeWarningThreshold: Number(process.env.STELLAR_BASE_FEE_WARNING_THRESHOLD || 200),
+      baseFeeCriticalThreshold: Number(process.env.STELLAR_BASE_FEE_CRITICAL_THRESHOLD || 250),
+      fundingBalanceWarningThreshold: Number(process.env.STELLAR_FUNDING_BALANCE_WARNING_THRESHOLD || 20),
+      fundingBalanceCriticalThreshold: Number(process.env.STELLAR_FUNDING_BALANCE_CRITICAL_THRESHOLD || 10),
+      reserveWarningThreshold: Number(process.env.STELLAR_RESERVE_WARNING_THRESHOLD || 0.7),
+      reserveCriticalThreshold: Number(process.env.STELLAR_RESERVE_CRITICAL_THRESHOLD || 0.85),
+    },
   },
   pricing: {
     coinGeckoBaseUrl: process.env.COINGECKO_BASE_URL || 'https://api.coingecko.com/api/v3',
@@ -75,7 +84,21 @@ module.exports = {
       appId: process.env.DOJAH_APP_ID,
       secretKey: process.env.DOJAH_SECRET_KEY,
     },
-    pinPepper: process.env.PIN_PEPPER,
+    pinPepper: process.env.PIN_PEPPER || process.env.PIN_PEPPER_V1 || 'development-only-pin-pepper',
+    pinPepperVersion: process.env.PIN_PEPPER_VERSION || 'v1',
+    pinPepperVersions: (process.env.PIN_PEPPER_VERSIONS || 'v1').split(',').map((v) => v.trim()).filter(Boolean),
+    pinPepperByVersion: {
+      v1: process.env.PIN_PEPPER_V1 || process.env.PIN_PEPPER || 'development-only-pin-pepper',
+      v2: process.env.PIN_PEPPER_V2 || process.env.PIN_PEPPER || 'development-only-pin-pepper',
+    },
+    pinHash: {
+      n: Number(process.env.PIN_SCRYPT_N || 16384),
+      r: Number(process.env.PIN_SCRYPT_R || 8),
+      p: Number(process.env.PIN_SCRYPT_P || 1),
+      keyLength: Number(process.env.PIN_SCRYPT_KEY_LENGTH || 32),
+      saltLength: Number(process.env.PIN_HASH_SALT_LENGTH || 16),
+      maxMem: Number(process.env.PIN_SCRYPT_MAXMEM || 128 * 1024 * 1024),
+    },
   },
   voice: {
     provider: process.env.VOICE_PROVIDER || 'deepgram',

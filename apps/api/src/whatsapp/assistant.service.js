@@ -3,7 +3,7 @@ const walletService = require('../wallet/wallet.service');
 const { validateAddress } = require('../wallet/stellar.adapter');
 const { executePayment } = require('../payment/payment.orchestrator');
 const { enforceTransactionPolicy } = require('../compliance/compliance.service');
-const { verifyPin } = require('../compliance/pin.service');
+const { verifyAndUpgradePin } = require('../compliance/pin.service');
 const { sendTextMessage } = require('../services/whatsapp.service');
 const { claimPendingSend } = require('./pendingClaim');
 const { createRecipientResolver } = require('./recipientResolver');
@@ -110,9 +110,17 @@ const handlePendingPin = async ({ phoneNumber, user, text, notify }) => {
   }
 
   const userWithPin = await prisma.user.findUnique({ where: { id: user.id } });
-  if (!verifyPin(text, userWithPin.pinHash)) {
+  const verification = verifyAndUpgradePin(text, userWithPin.pinHash);
+  if (!verification.valid) {
     await notify(phoneNumber, 'PIN verification failed. Please try again or reply "no" to cancel.');
     return true;
+  }
+
+  if (verification.upgraded && verification.hash && verification.hash !== userWithPin.pinHash) {
+    await prisma.user.update({
+      where: { id: user.id },
+      data: { pinHash: verification.hash, pinSetAt: new Date() },
+    });
   }
 
   // Atomically claim (clear) the pending send BEFORE executing. Two

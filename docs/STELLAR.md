@@ -76,6 +76,31 @@ Endpoints you'll meet in this codebase:
 Horizon error responses carry `extras.result_codes` — that's where
 `op_no_trust`, `op_underfunded`, `tx_bad_seq` live.
 
+## Funding-account health and operator runbook
+
+SendAm now measures the live funding account's base fee, native XLM balance, and projected reserve pressure before wallet creation or payouts block. The monitor is implemented in `stellar.adapter.js` via `getFundingAccountHealth()` and reads thresholds from `config.stellar.thresholds`.
+
+Recommended defaults:
+
+- Base fee warning: 200 stroops, critical: 250 stroops
+- Funding balance warning: 20 XLM, critical: 10 XLM
+- Reserve usage warning: 70%, critical: 85%
+
+A healthy funding account should have:
+
+- `status === 'ok'`
+- `reserveStatus` below warning threshold
+- enough free XLM to cover at least one future reserve cycle for new customer wallets
+
+If the monitor raises a warning or critical alert, use this runbook:
+
+1. Top up the configured funding account before funding more wallets.
+2. Check the current Horizon base fee; if it is near or above the critical threshold, slow batch payouts and fund the account immediately.
+3. Review reserve stress: if projected reserve consumption exceeds the warning threshold, pause wallet creation and trustline setup until the balance recovers.
+4. Confirm the operator alert is tied to a real account and not a temporary network spike before redeploying traffic.
+
+This gives operators a single signal to act on instead of discovering failed wallet creation after the fact.
+
 ## Testnet vs mainnet
 
 | | Testnet | Mainnet |

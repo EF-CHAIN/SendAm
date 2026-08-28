@@ -17,6 +17,10 @@ model User {
   pendingSend    Json?
   welcomeSentAt  DateTime?
   contactsJson   Json?
+  deletedAt      DateTime?
+  deletionStatus String?
+  anonymizedAt   DateTime?
+  legalHold      Boolean?  @default(false)
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
 
@@ -28,6 +32,7 @@ model User {
   voiceCommands VoiceCommand[]
   notifications Notification[]
   quotes        Quote[]
+  erasures      UserErasure[]
 }
 
 // One row per user per chain — direct custody. `encryptedSecretKey` holds
@@ -46,7 +51,7 @@ model Wallet {
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
 
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Restrict)
 
   @@unique([userId, chain])
   @@index([phoneNumber])
@@ -73,7 +78,7 @@ model Transaction {
   createdAt             DateTime @default(now())
   updatedAt             DateTime @updatedAt
 
-  user  User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user  User   @relation(fields: [userId], references: [id], onDelete: Restrict)
   quote Quote? @relation(fields: [quoteId], references: [id])
 
   @@index([userId, createdAt])
@@ -92,7 +97,7 @@ model Contact {
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
-  owner User @relation("ContactOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  owner User @relation("ContactOwner", fields: [ownerId], references: [id], onDelete: Restrict)
 
   @@unique([ownerId, phoneNumber])
 }
@@ -106,7 +111,7 @@ model Alias {
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Restrict)
 
   @@unique([userId, alias])
 }
@@ -125,7 +130,7 @@ model KycProfile {
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
 
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Restrict)
 
   @@index([status])
 }
@@ -144,7 +149,7 @@ model VoiceCommand {
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
 
-  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+  user User? @relation(fields: [userId], references: [id], onDelete: Restrict)
 
   @@index([phoneNumber])
   @@index([whatsappMessageId])
@@ -181,7 +186,7 @@ model Notification {
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
 
-  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+  user User? @relation(fields: [userId], references: [id], onDelete: Restrict)
 
   @@index([userId])
   @@index([status])
@@ -203,7 +208,7 @@ model Quote {
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
-  user         User?         @relation(fields: [userId], references: [id], onDelete: SetNull)
+  user         User?         @relation(fields: [userId], references: [id], onDelete: Restrict)
   transactions Transaction[]
 
   @@index([userId])
@@ -232,6 +237,24 @@ model RateLimitHit {
   resetAt   DateTime
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+model UserErasure {
+  id          String   @id @default(cuid())
+  userId      String
+  actorType   String   @default("system")
+  actorId     String?
+  reason      String
+  jurisdiction String? 
+  legalHold   Boolean  @default(false)
+  status      String   @default("completed")
+  executedAt  DateTime @default(now())
+  createdAt   DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@index([userId, executedAt])
+  @@index([status])
 }
 
 model SimMessage {
