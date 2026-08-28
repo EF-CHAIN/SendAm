@@ -17,14 +17,14 @@ const prismaWithAliases = (aliases) => ({
   },
 });
 
-const walletServiceMock = {
+const walletServiceMock = () => ({
   createOrGetWallet: async ({ phoneNumber }) => {
     if (phoneNumber === VALID_PHONE_2) {
       return { publicKey: WALLET_ACCOUNT_2 };
     }
     return { publicKey: WALLET_ACCOUNT };
   },
-};
+});
 
 test('saved contacts win for bare names', async () => {
   const resolve = createRecipientResolver({

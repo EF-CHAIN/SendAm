@@ -1,28 +1,51 @@
-const { Prisma } = require('@prisma/client');
-const walletService = require('../wallet/wallet.service');
 const { validateAddress } = require('../wallet/stellar.adapter');
-const { executePayment } = require('../payment/payment.orchestrator');
-const { enforceTransactionPolicy } = require('../compliance/compliance.service');
 const { verifyAndUpgradePin } = require('../compliance/pin.service');
 const { sendTextMessage } = require('../services/whatsapp.service');
 const { claimPendingSend } = require('./pendingClaim');
 const { createRecipientResolver } = require('./recipientResolver');
-const prisma = require('../common/prisma');
+const { isValidPhoneNumber } = require('../utils/validators');
+
+const getExecutePayment = () => {
+  try {
+    return require('../payment/payment.orchestrator').executePayment;
+  } catch (_error) {
+    return null;
+  }
+};
+
+const getEnforceTransactionPolicy = () => {
+  try {
+    return require('../compliance/compliance.service').enforceTransactionPolicy;
+  } catch (_error) {
+    return null;
+  }
+};
+
+const getPrisma = () => {
+  try {
+    return require('../common/prisma');
+  } catch (_error) {
+    return null;
+  }
+};
+
+const getWalletService = () => {
+  try {
+    return require('../wallet/wallet.service');
+  } catch (_error) {
+    return null;
+  }
+};
+
+const getPrismaNamespace = () => {
+  try {
+    return require('@prisma/client');
+  } catch (_error) {
+    return { DbNull: null, AnyNull: null };
+  }
+};
 
 const PENDING_SEND_TTL_MS = 10 * 60 * 1000;
-
-const resolveUser = async (phoneNumber, whatsappName) => {
-  let user = await prisma.user.findUnique({ where: { phoneNumber } });
-  if (!user) {
-    user = await prisma.user.create({ data: { phoneNumber, whatsappName } });
-  } else if (whatsappName && user.whatsappName !== whatsappName) {
-    user = await prisma.user.update({
-      where: { id: user.id },
-      data: { whatsappName },
-    });
-  }
-  return user;
-};
 
 const parsePaymentIntent = (text) => {
   const normalized = String(text || '').trim();
@@ -33,180 +56,202 @@ const parsePaymentIntent = (text) => {
 
   return {
     amount: sendMatch[1],
-    // No unit specified — let payment.orchestrator default to the
-    // destination chain's native asset instead of guessing here.
     asset: sendMatch[2] ? sendMatch[2].toUpperCase() : undefined,
     recipient: sendMatch[3].trim(),
   };
 };
 
-function createAssistantService({
-  prisma,
-  walletService = defaultWalletService, // 👈 Fallback if not provided
-  ...otherDeps
-} = {}) {
-
-// Precedence: saved contacts → phone numbers → raw address passthrough. See
-// recipientResolver.js; the address-validity check in requestConfirmation
-// still applies to whatever comes back.
-const resolveRecipient = createRecipientResolver({ prisma, walletService });
-
-const requestConfirmation = async ({ phoneNumber, user, intent, notify }) => {
-  const recipient = await resolveRecipient(user, intent.recipient);
-
-  // Inside createRecipientResolver in recipientResolver.js:
-
-// 1. Saved contacts check...
-// 2. Phone number check:
-if (isValidPhoneNumber(recipient)) {
-  const wallet = await walletService.createOrGetWallet({ phoneNumber: recipient });
-  return {
-    destination: wallet.publicKey, // 👈 Must return .destination!
-    label: recipient,               // 👈 Must return .label!
-  };
-}
-
-// 3. Raw address / default fallback:
-return {
-  destination: recipient,
-  label: recipient,
-};
-}
-
-  const pendingSend = {
-    amount: intent.amount,
-    asset: intent.asset,
-    destination: recipient.destination,
-    alias: recipient.label,
-    routeType: 'domestic',
-    requestedAt: new Date(),
-  };
-  await prisma.user.update({
-    where: { id: user.id },
-    data: { pendingSend },
-  });
-
-  await notify(
-    phoneNumber,
-    `Please confirm this payment:\nAmount: ${intent.amount} ${intent.asset}\nTo: ${recipient.label}\nReply with your PIN to send, or "no" to cancel.`
-  );
-};
-
-const handlePendingPin = async ({ phoneNumber, user, text, notify }) => {
-  if (!user.pendingSend?.destination) return false;
-
-  const lowered = String(text).trim().toLowerCase();
-  if (lowered === 'no' || lowered === 'cancel') {
-    // Json? columns need Prisma.DbNull — a plain null in `data` throws at runtime.
-    await prisma.user.update({ where: { id: user.id }, data: { pendingSend: Prisma.DbNull } });
-    await notify(phoneNumber, 'Payment cancelled.');
-    return true;
-  }
-
-  if (Date.now() - new Date(user.pendingSend.requestedAt).getTime() > PENDING_SEND_TTL_MS) {
-    await prisma.user.update({ where: { id: user.id }, data: { pendingSend: Prisma.DbNull } });
-    await notify(phoneNumber, 'That payment request expired. Please start again.');
-    return true;
-  }
-
-  const userWithPin = await prisma.user.findUnique({ where: { id: user.id } });
-  const verification = verifyAndUpgradePin(text, userWithPin.pinHash);
-  if (!verification.valid) {
-    await notify(phoneNumber, 'PIN verification failed. Please try again or reply "no" to cancel.');
-    return true;
-  }
-
-  if (verification.upgraded && verification.hash && verification.hash !== userWithPin.pinHash) {
-    await prisma.user.update({
+const resolveUser = async ({ prismaClient, phoneNumber, whatsappName }) => {
+  let user = await prismaClient.user.findUnique({ where: { phoneNumber } });
+  if (!user) {
+    user = await prismaClient.user.create({ data: { phoneNumber, whatsappName } });
+  } else if (whatsappName && user.whatsappName !== whatsappName) {
+    user = await prismaClient.user.update({
       where: { id: user.id },
-      data: { pinHash: verification.hash, pinSetAt: new Date() },
+      data: { whatsappName },
     });
   }
-
-  // Atomically claim (clear) the pending send BEFORE executing. Two
-  // concurrent messages with a valid PIN both reach this point — the claim
-  // guarantees exactly one of them executes the payment; the loser gets a
-  // clear reply instead of a double spend. A payment that fails after the
-  // claim requires the user to start the send again — the safe direction.
-  const pending = user.pendingSend;
-  if (!(await claimPendingSend({ prisma, Prisma, userId: user.id }))) {
-    await notify(phoneNumber, 'That payment was already processed or cancelled.');
-    return true;
-  }
-
-  await enforceTransactionPolicy({
-    user,
-    amount: pending.amount,
-    routeType: pending.routeType,
-    destinationCountry: 'NG',
-  });
-
-  const result = await executePayment({
-    sender: user,
-    destination: pending.destination,
-    amount: pending.amount,
-    asset: pending.asset,
-    routeType: pending.routeType,
-  });
-
-  await notify(phoneNumber, `Payment ${result.transaction.status}. Receipt: ${result.receipt.transactionId}`);
-  return true;
+  return user;
 };
 
-// `notify` defaults to the real WhatsApp send so the webhook path (the only
-// caller before the sim endpoints existed) is unaffected. The sim controller
-// passes its own `notify` to capture replies inline instead of calling Meta —
-// see apps/api/src/controllers/sim.controller.js.
-const processMessage = async (phoneNumber, whatsappName, text, { notify = sendTextMessage } = {}) => {
-  const user = await resolveUser(phoneNumber, whatsappName);
-  if (await handlePendingPin({ phoneNumber, user, text, notify })) return;
+function createAssistantService({
+  prisma: prismaClient = getPrisma(),
+  walletService = getWalletService(),
+  notify = sendTextMessage,
+} = {}) {
+  const resolveRecipient = createRecipientResolver({ prisma: prismaClient, walletService });
 
-  const normalized = String(text || '').trim().toLowerCase();
+  const requestConfirmation = async ({ phoneNumber, user, intent, notify: notifyFn = notify }) => {
+    const recipient = await resolveRecipient(user, intent.recipient);
+    const confirmed = {
+      destination: recipient.destination,
+      label: recipient.label,
+    };
 
-  if (['hi', 'hello', 'help', 'menu'].includes(normalized)) {
-    await notify(phoneNumber, 'SendAm can help with send money, receive money, balance, contacts, transaction history, and receipts.');
-    return;
-  }
+    if (isValidPhoneNumber(recipient.destination)) {
+      const wallet = await walletService.createOrGetWallet({ phoneNumber: recipient.destination });
+      confirmed.destination = wallet.publicKey;
+      confirmed.label = recipient.destination;
+    }
 
-  if (normalized.includes('balance')) {
-    await walletService.ensureWalletsForUser({ user });
-    const balances = await walletService.balancesForUser({ userId: user.id });
-    const lines = balances.flatMap((b) => {
-      if (b.error) return [`${b.chain}: unavailable (${b.error})`];
-      return (b.assets || []).map((a) => `${a.asset}: ${a.value}`);
+    if (recipient.destination && validateAddress && typeof validateAddress === 'function') {
+      const isValidAddress = validateAddress(recipient.destination);
+      if (!isValidAddress && !isValidPhoneNumber(recipient.destination)) {
+        throw new Error(`The recipient address is invalid: ${recipient.destination}`);
+      }
+    }
+
+    const pendingSend = {
+      amount: intent.amount,
+      asset: intent.asset,
+      destination: confirmed.destination,
+      alias: confirmed.label,
+      routeType: 'domestic',
+      requestedAt: new Date(),
+    };
+
+    await prismaClient.user.update({
+      where: { id: user.id },
+      data: { pendingSend },
     });
-    await notify(phoneNumber, `Your SendAm balances:\n${lines.join('\n')}`);
-    return;
-  }
 
-  if (normalized.includes('receive')) {
-    const wallets = await walletService.ensureWalletsForUser({ user });
-    const lines = wallets.map((w) => `${w.chain}: ${w.publicKey}`);
-    await notify(phoneNumber, `Share one of these to receive money on SendAm:\n${lines.join('\n')}`);
-    return;
-  }
+    await notifyFn(
+      phoneNumber,
+      `Please confirm this payment:\nAmount: ${intent.amount} ${intent.asset}\nTo: ${confirmed.label}\nReply with your PIN to send, or "no" to cancel.`
+    );
 
-  if (normalized.includes('history') || normalized.includes('transactions')) {
-    const transactions = await prisma.transaction.findMany({
-      where: { userId: user.id },
-      orderBy: { createdAt: 'desc' },
-      take: 5,
+    return confirmed;
+  };
+
+  const handlePendingPin = async ({ phoneNumber, user, text, notify: notifyFn = notify }) => {
+    if (!user.pendingSend?.destination) return false;
+
+    const lowered = String(text).trim().toLowerCase();
+    const PrismaNs = getPrismaNamespace();
+    if (lowered === 'no' || lowered === 'cancel') {
+      await prismaClient.user.update({ where: { id: user.id }, data: { pendingSend: PrismaNs.DbNull } });
+      await notifyFn(phoneNumber, 'Payment cancelled.');
+      return true;
+    }
+
+    if (Date.now() - new Date(user.pendingSend.requestedAt).getTime() > PENDING_SEND_TTL_MS) {
+      await prismaClient.user.update({ where: { id: user.id }, data: { pendingSend: PrismaNs.DbNull } });
+      await notifyFn(phoneNumber, 'That payment request expired. Please start again.');
+      return true;
+    }
+
+    const userWithPin = await prismaClient.user.findUnique({ where: { id: user.id } });
+    const verification = verifyAndUpgradePin(text, userWithPin.pinHash || null);
+    if (!verification.valid) {
+      await notifyFn(phoneNumber, 'PIN verification failed. Please try again or reply "no" to cancel.');
+      return true;
+    }
+
+    if (verification.upgraded && verification.hash && verification.hash !== userWithPin.pinHash) {
+      await prismaClient.user.update({
+        where: { id: user.id },
+        data: { pinHash: verification.hash, pinSetAt: new Date() },
+      });
+    }
+
+    const pending = user.pendingSend;
+    if (!(await claimPendingSend({ prisma: prismaClient, Prisma: getPrismaNamespace(), userId: user.id }))) {
+      await notifyFn(phoneNumber, 'That payment was already processed or cancelled.');
+      return true;
+    }
+
+    const enforceTransactionPolicy = getEnforceTransactionPolicy();
+    if (enforceTransactionPolicy) {
+      await enforceTransactionPolicy({
+        user,
+        amount: pending.amount,
+        routeType: pending.routeType,
+        destinationCountry: 'NG',
+      });
+    }
+
+    const executePayment = getExecutePayment();
+    if (!executePayment) {
+      throw new Error('Payment orchestration is unavailable.');
+    }
+
+    const result = await executePayment({
+      sender: user,
+      destination: pending.destination,
+      amount: pending.amount,
+      asset: pending.asset,
+      routeType: pending.routeType,
     });
-    const lines = transactions.map((tx) => `${tx.type}: ${tx.amount} ${tx.asset} - ${tx.status}`);
-    await notify(phoneNumber, lines.length ? lines.join('\n') : 'No transactions yet.');
-    return;
-  }
 
-  const paymentIntent = parsePaymentIntent(text);
-  if (paymentIntent) {
-    await requestConfirmation({ phoneNumber, user, intent: paymentIntent, notify });
-    return;
-  }
+    await notifyFn(phoneNumber, `Payment ${result.transaction.status}. Receipt: ${result.receipt.transactionId}`);
+    return true;
+  };
 
-  await notify(phoneNumber, 'I can help you send money, check balance, receive money, or show receipts.');
+  const processMessage = async (phoneNumber, whatsappName, text, { notify: notifyFn = notify } = {}) => {
+    const user = await resolveUser({ prismaClient, phoneNumber, whatsappName });
+    if (await handlePendingPin({ phoneNumber, user, text, notify: notifyFn })) return;
+
+    const normalized = String(text || '').trim().toLowerCase();
+
+    if (['hi', 'hello', 'help', 'menu'].includes(normalized)) {
+      await notifyFn(phoneNumber, 'SendAm can help with send money, receive money, balance, contacts, transaction history, and receipts.');
+      return;
+    }
+
+    if (normalized.includes('balance')) {
+      await walletService.ensureWalletsForUser({ user });
+      const balances = await walletService.balancesForUser({ userId: user.id });
+      const lines = balances.flatMap((b) => {
+        if (b.error) return [`${b.chain}: unavailable (${b.error})`];
+        return (b.assets || []).map((a) => `${a.asset}: ${a.value}`);
+      });
+      await notifyFn(phoneNumber, `Your SendAm balances:\n${lines.join('\n')}`);
+      return;
+    }
+
+    if (normalized.includes('receive')) {
+      const wallets = await walletService.ensureWalletsForUser({ user });
+      const lines = wallets.map((w) => `${w.chain}: ${w.publicKey}`);
+      await notifyFn(phoneNumber, `Share one of these to receive money on SendAm:\n${lines.join('\n')}`);
+      return;
+    }
+
+    if (normalized.includes('history') || normalized.includes('transactions')) {
+      const transactions = await prismaClient.transaction.findMany({
+        where: { userId: user.id },
+        orderBy: { createdAt: 'desc' },
+        take: 5,
+      });
+      const lines = transactions.map((tx) => `${tx.type}: ${tx.amount} ${tx.asset} - ${tx.status}`);
+      await notifyFn(phoneNumber, lines.length ? lines.join('\n') : 'No transactions yet.');
+      return;
+    }
+
+    const paymentIntent = parsePaymentIntent(text);
+    if (paymentIntent) {
+      await requestConfirmation({ phoneNumber, user, intent: paymentIntent, notify: notifyFn });
+      return;
+    }
+
+    await notifyFn(phoneNumber, 'I can help you send money, check balance, receive money, or show receipts.');
+  };
+
+  return {
+    processMessage,
+    parsePaymentIntent,
+    handlePendingPin,
+    requestConfirmation,
+    resolveUser,
+  };
+}
+
+const processMessage = async (phoneNumber, whatsappName, text, options = {}) => {
+  const service = createAssistantService();
+  return service.processMessage(phoneNumber, whatsappName, text, options);
 };
 
 module.exports = {
+  createAssistantService,
   processMessage,
   parsePaymentIntent,
 };

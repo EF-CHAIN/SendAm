@@ -8,6 +8,8 @@ const { isValidPhoneNumber } = require('../utils/validators');
  * 4. Raw G... Stellar addresses
  */
 const createRecipientResolver = ({ prisma, walletService }) => {
+  const service = typeof walletService === 'function' ? walletService() : walletService;
+
   return async (user, recipient) => {
     const raw = String(recipient || '').trim();
     const normalized = raw.toLowerCase();
@@ -19,8 +21,8 @@ const createRecipientResolver = ({ prisma, walletService }) => {
     if (savedAlias) return { destination: savedAlias.target, label: normalized };
 
     // 2. Phone number — create or fetch wallet for that phone number.
-    if (walletService && isValidPhoneNumber(raw)) {
-      const wallet = await walletService.createOrGetWallet({ phoneNumber: raw });
+    if (service && isValidPhoneNumber(raw)) {
+      const wallet = await service.createOrGetWallet({ phoneNumber: raw });
       return { destination: wallet.publicKey, label: raw };
     }
 

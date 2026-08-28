@@ -1,9 +1,10 @@
 const stellarAdapter = require('./stellar.adapter');
 const { encrypt, decrypt } = require('../services/crypto.service');
-const { writeAuditLog } = require('../common/audit.service');
-const prisma = require('../common/prisma');
 const { withIdAlias, withIdAliases } = require('../common/records');
 const logger = require('../utils/logger');
+
+const getPrisma = () => require('../common/prisma');
+const getWriteAuditLog = () => require('../common/audit.service').writeAuditLog;
 
 // SendAm is Stellar-only. The chain column stays on Wallet for legacy rows
 // (a removed Lisk rail once wrote chain='lisk'); those rows are ignored
@@ -32,6 +33,9 @@ const ensureUsdcTrustline = async ({ secretKey, publicKey }) => {
 // secret key is encrypted (crypto.service.js) before it ever touches the
 // database. Callers never see a plaintext secret key.
 const createOrGetWallet = async ({ user, phoneNumber }) => {
+  const prisma = getPrisma();
+  const writeAuditLog = getWriteAuditLog();
+
   let owner = user;
   if (!owner) {
     owner = await prisma.user.findUnique({ where: { phoneNumber } });
@@ -87,16 +91,19 @@ const ensureWalletsForUser = async ({ user }) => {
 };
 
 const getWalletsByPhoneNumber = async (phoneNumber) => {
+  const prisma = getPrisma();
   const wallets = await prisma.wallet.findMany({ where: { phoneNumber, chain: CHAIN } });
   return withIdAliases(wallets);
 };
 
 const getWalletByUserAndChain = async ({ userId, chain = CHAIN }) => {
+  const prisma = getPrisma();
   const wallet = await prisma.wallet.findUnique({ where: { userId_chain: { userId, chain } } });
   return withIdAlias(wallet);
 };
 
 const fundWallet = async ({ wallet }) => {
+  const prisma = getPrisma();
   const result = await stellarAdapter.fundTestnetAccount(wallet.publicKey);
   if (result.funded) {
     // Retry the (idempotent) trustline so a wallet that missed it at creation
@@ -121,6 +128,7 @@ const balance = async ({ wallet }) => {
 // one wallet sets error and leaves assets empty rather than blanking the whole
 // reply. Legacy non-Stellar rows are excluded by query.
 const balancesForUser = async ({ userId, phoneNumber }) => {
+  const prisma = getPrisma();
   const wallets = userId
     ? await prisma.wallet.findMany({ where: { userId, chain: CHAIN } })
     : await prisma.wallet.findMany({ where: { phoneNumber, chain: CHAIN } });
@@ -141,6 +149,7 @@ const submitPayment = async ({ wallet, destination, amount, asset }) => {
 };
 
 const transactionHistory = async ({ userId }) => {
+  const prisma = getPrisma();
   const history = await prisma.transaction.findMany({
     where: { userId },
     orderBy: { createdAt: 'desc' },
