@@ -175,15 +175,23 @@ test('testnet with testnet USDC issuer does not throw', () => {
 });
 
 test('worker requires Redis and valid concurrency settings', () => {
+  const worker = {
+    concurrency: 5,
+    lockDurationMs: 30000,
+    healthPort: 3003,
+    heartbeatIntervalMs: 30000,
+    heartbeatFreshnessMs: 90000,
+    metricsIntervalMs: 15000,
+  };
   assert.throws(
-    () => validateWorkerEnv({ redis: {}, worker: { concurrency: 5, lockDurationMs: 30000 } }),
+    () => validateWorkerEnv({ redis: {}, worker }),
     /REDIS_URL/,
   );
   assert.throws(
-    () => validateWorkerEnv({ redis: { url: 'redis://localhost' }, worker: { concurrency: 0, lockDurationMs: 30000 } }),
+    () => validateWorkerEnv({ redis: { url: 'redis://localhost' }, worker: { ...worker, concurrency: 0 } }),
     /WORKER_CONCURRENCY/,
   );
   assert.doesNotThrow(
-    () => validateWorkerEnv({ redis: { url: 'redis://localhost' }, worker: { concurrency: 5, lockDurationMs: 30000 } }),
+    () => validateWorkerEnv({ redis: { url: 'redis://localhost' }, worker }),
   );
 });

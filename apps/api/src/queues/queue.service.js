@@ -1,7 +1,7 @@
 const config = require('../config/env');
 const logger = require('../utils/logger');
 const { getContext, runWithContext, correlationIdFrom } = require('../observability/context');
-const { increment, observeDuration } = require('../observability/metrics');
+const { increment, observeDuration, setGauge } = require('../observability/metrics');
 const { captureException } = require('../observability/errors');
 const {
   getRedisConnection,
@@ -37,6 +37,7 @@ const getQueue = (name) => {
 const { moveToDeadLetterQueue } = require('./dlq.service');
 
 const registerProcessor = (name, processor) => {
+  setGauge('sendam_worker_last_successful_processing_timestamp_seconds', 0, { queue: name });
   const observedProcessor = async (job, token) => {
     const correlationId = correlationIdFrom(job.data?.correlationId || String(job.id || ''));
     return runWithContext({ correlationId, jobId: job.id, queue: name }, async () => {
@@ -49,6 +50,7 @@ const registerProcessor = (name, processor) => {
       try {
         const result = await processor(job, token);
         increment('sendam_queue_jobs_total', { queue: name, status: 'completed' });
+        setGauge('sendam_worker_last_successful_processing_timestamp_seconds', Date.now() / 1000, { queue: name });
         return result;
       } catch (error) {
         increment('sendam_queue_jobs_total', { queue: name, status: 'failed' });
@@ -98,6 +100,10 @@ const registerProcessor = (name, processor) => {
           logger.error('dlq_move_failed', { queue: name, jobId: job?.id, error: dlqErr.message });
         });
       }
+    });
+    worker.on('stalled', (jobId) => {
+      increment('sendam_queue_stalled_jobs_total', { queue: name });
+      logger.error('queue_job_stalled', { queue: name, jobId });
     });
     worker.on('error', (error) => {
       logger.error('queue_worker_error', { queue: name, error });
@@ -169,9 +175,38 @@ const pingRedis = async (timeoutMs = 1000) => {
   ]);
 };
 
+const getQueueReadiness = async () => {
+  try {
+    await pingRedis();
+    return { ok: true, status: getRedisStatus().status };
+  } catch (_error) {
+    return { ok: false, status: getRedisStatus().status || 'disconnected' };
+  }
+};
+
+const getRegisteredProcessors = () => [...inlineProcessors.keys()];
+
+const collectQueueMetrics = async () => {
+  for (const name of getRegisteredProcessors()) {
+    const queue = getQueue(name);
+    if (!queue) continue;
+    const counts = await queue.getJobCounts('waiting', 'active', 'failed', 'delayed');
+    setGauge('sendam_queue_jobs', counts.waiting || 0, { queue: name, status: 'waiting' });
+    setGauge('sendam_queue_jobs', counts.active || 0, { queue: name, status: 'active' });
+    setGauge('sendam_queue_jobs', counts.failed || 0, { queue: name, status: 'failed' });
+    setGauge('sendam_queue_jobs', counts.delayed || 0, { queue: name, status: 'delayed' });
+    const [oldest] = await queue.getJobs(['waiting', 'delayed'], 0, 0, true);
+    const lagSeconds = oldest?.timestamp ? Math.max(0, (Date.now() - oldest.timestamp) / 1000) : 0;
+    setGauge('sendam_queue_oldest_job_age_seconds', lagSeconds, { queue: name });
+  }
+};
+
 module.exports = {
   enqueue,
   registerProcessor,
   closeQueues,
   pingRedis,
+  getQueueReadiness,
+  getRegisteredProcessors,
+  collectQueueMetrics,
 };

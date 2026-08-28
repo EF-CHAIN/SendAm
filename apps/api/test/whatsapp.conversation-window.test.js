@@ -37,8 +37,9 @@ test('sendTextMessage permits free-form message inside 24h window', async () => 
     lastCustomerInteractionAt: new Date(),
   });
 
-  assert.equal(result.id, 'sim_1');
-  assert.equal(result.text, 'Hello inside window');
+  assert.equal(result.outcome, 'accepted');
+  assert.equal(result.data.id, 'sim_1');
+  assert.equal(result.data.text, 'Hello inside window');
 });
 
 test('sendTextMessage rejects free-form message outside 24h window when no template is supplied', async () => {
@@ -60,7 +61,8 @@ test('sendTextMessage rejects free-form message outside 24h window when no templ
     lastCustomerInteractionAt: new Date(Date.now() - 30 * 60 * 60 * 1000), // 30h ago
   });
 
-  assert.equal(result, null);
+  assert.equal(result.outcome, 'permanent_failure');
+  assert.equal(result.error.kind, 'conversation_window');
   assert.equal(notificationsCreated.length, 1);
   assert.equal(notificationsCreated[0].data.status, 'failed');
   assert.equal(notificationsCreated[0].data.error.includes('Meta customer service window expired'), true);
@@ -87,6 +89,7 @@ test('sendTextMessage falls back to approved template message when outside 24h w
     templateComponents: [{ type: 'body', parameters: [{ type: 'text', text: '10 USDC' }] }],
   });
 
-  assert.equal(result.id, 'sim_template_1');
-  assert.equal(result.text.includes('[Template: sendam_transaction_notice]'), true);
+  assert.equal(result.outcome, 'accepted');
+  assert.equal(result.data.id, 'sim_template_1');
+  assert.equal(result.data.text.includes('[Template: sendam_transaction_notice]'), true);
 });

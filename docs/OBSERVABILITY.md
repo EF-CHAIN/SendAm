@@ -20,7 +20,8 @@ Production startup rejects missing/short metrics credentials, a missing error
 monitor, or a non-HTTPS error-monitor URL. Configure the same release and alert
 routing on worker deployments, using `SERVICE_NAME=sendam-worker`.
 
-Prometheus must scrape `GET /metrics` with
+Prometheus must scrape API `GET :3002/metrics` and every worker replica's
+`GET :3003/metrics` with
 `Authorization: Bearer <METRICS_TOKEN>`. Never place the token in the URL.
 Import `observability/grafana-dashboard.json`, load
 `observability/prometheus-rules.yml`, and replace the example Alertmanager
@@ -76,6 +77,10 @@ The primary metrics are:
 - `sendam_exceptions_total`
 - `sendam_queue_jobs_total`
 - `sendam_queue_job_duration_seconds`
+- `sendam_queue_jobs` and `sendam_queue_oldest_job_age_seconds`
+- `sendam_worker_ready` and `sendam_worker_heartbeat_age_seconds`
+- `sendam_worker_last_successful_processing_timestamp_seconds`
+- `sendam_deposit_sweep_age_seconds`
 - `sendam_webhook_events_total`
 - `sendam_health_checks_total`
 - process uptime and resident memory gauges
@@ -172,6 +177,16 @@ jobs are being executed in-process rather than durably queued because Redis is
 down or unconfigured — treat it as a degradation and restore Redis rather than
 relying on the fallback. On `SendAmRedisRecovery`, confirm the buffered work
 drained and reconcile any pendings before clearing the incident.
+
+### Worker unhealthy
+
+Check the worker target independently of API health. A missing target means the
+process or probe server is down; `sendam_worker_ready=0` identifies dependency,
+processor-registration, heartbeat, or shutdown failures through `/ready`.
+Compare queue lag and the last successful processing timestamp to distinguish
+an idle worker from a wedged one. Check deposit-sweep age separately because it
+does not run through BullMQ. Restore Redis/database connectivity or roll back;
+reconcile financial side effects before replaying stalled or failed jobs.
 
 If metrics return 403, rotate and synchronize the scrape/API metrics token. If
 error-monitor delivery fails, use JSON logs and Prometheus alerts as the
