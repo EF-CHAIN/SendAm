@@ -6,8 +6,6 @@ process.env.ENCRYPTION_KEY = process.env.ENCRYPTION_KEY || 'a'.repeat(64);
 const {
   isWithinConversationWindow,
   sendTextMessage,
-  sendTemplateMessage,
-  CONVERSATION_WINDOW_MS,
 } = require('../src/services/whatsapp.service');
 
 test('isWithinConversationWindow correctly identifies timestamps within 24h', () => {

@@ -282,7 +282,6 @@ const sendTextMessage = async (to, body, options = {}) => {
     () => controller.abort({ type: 'timeout', message: 'connection deadline exceeded' }),
     config.whatsapp.connectTimeoutMs,
   );
-  connectDeadline.unref?.();
 
   let finalResult;
   const maxAttempts = Math.max(1, Number(config.whatsapp.maxSendRetries || 0) + 1);

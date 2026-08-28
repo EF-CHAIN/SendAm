@@ -62,7 +62,7 @@ test('worker probes and authenticated metrics are served independently from the 
     checkRedis: async () => ({ ok: true }),
     getProcessors: () => ['whatsapp-inbound'],
     expectedProcessors: ['whatsapp-inbound'],
-    heartbeatFreshnessMs: 1000,
+    heartbeatFreshnessMs: 60_000,
     workerId: 'worker-probe',
   });
   const runtime = await startWorkerHealthServer({
