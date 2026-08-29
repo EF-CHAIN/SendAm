@@ -544,6 +544,13 @@ const enforceTransactionPolicy = async ({ user, amount, asset = 'NGN', routeType
   const settlementAsset = String(asset || referenceCurrency).trim().toUpperCase();
   assertValidAmount(amount, settlementAsset);
 
+  if (user?.deactivatedAt) {
+    throw Object.assign(
+      new Error('This account is deactivated. Contact support to restore access.'),
+      { statusCode: 403, code: 'ACCOUNT_DEACTIVATED' },
+    );
+  }
+
   if (profile.status !== 'approved') {
     throw new Error('KYC approval is required before sending money.');
   }

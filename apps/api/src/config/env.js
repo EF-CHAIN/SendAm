@@ -36,6 +36,10 @@ module.exports = {
     callbackUrl: process.env.WHATSPPP_CALLBACK_URL,
     businessAccountId: process.env.WHATSPPP_BUSINESS_ACCOUNT_ID,
     graphApiVersion: process.env.META_GRAPH_API_VERSION,
+    connectTimeoutMs: Number(process.env.WHATSAPP_CONNECT_TIMEOUT_MS || 10000),
+    responseTimeoutMs: Number(process.env.WHATSAPP_RESPONSE_TIMEOUT_MS || 10000),
+    maxSendRetries: Number(process.env.WHATSAPP_SEND_MAX_RETRIES || 2),
+    retryBaseDelayMs: Number(process.env.WHATSAPP_SEND_RETRY_BASE_DELAY_MS || 250),
   },
   limits: {
     maxSendAmount: Number(process.env.MAX_SEND_AMOUNT || 1000),
@@ -84,9 +88,12 @@ module.exports = {
     sentinelMasterName: process.env.REDIS_SENTINEL_MASTER_NAME || '',
   },
   worker: {
+    healthPort: Number(process.env.WORKER_HEALTH_PORT || 3003),
     concurrency: Number(process.env.WORKER_CONCURRENCY || 5),
     lockDurationMs: Number(process.env.WORKER_LOCK_DURATION_MS || 30000),
     heartbeatIntervalMs: Number(process.env.WORKER_HEARTBEAT_INTERVAL_MS || 30000),
+    heartbeatFreshnessMs: Number(process.env.WORKER_HEARTBEAT_FRESHNESS_MS || 90000),
+    metricsIntervalMs: Number(process.env.WORKER_METRICS_INTERVAL_MS || 15000),
     shutdownTimeoutMs: Number(process.env.WORKER_SHUTDOWN_TIMEOUT_MS || 10000),
   },
   health: {
@@ -120,21 +127,17 @@ module.exports = {
   stellar: {
     network: process.env.STELLAR_NETWORK || 'testnet',
     horizonUrl: process.env.STELLAR_HORIZON_URL || 'https://horizon-testnet.stellar.org',
-    horizonUrls: (process.env.HORIZON_URLS || '')
-      .split(',')
-      .map((u) => u.trim())
-      .filter(Boolean),
-    horizonTimeoutMs: Number(process.env.HORIZON_TIMEOUT_MS || 10000),
-    horizonCircuitThreshold: Number(process.env.HORIZON_CIRCUIT_THRESHOLD || 3),
-    horizonCircuitCooldownMs: Number(process.env.HORIZON_CIRCUIT_COOLDOWN_MS || 30000),
-    usdcIssuer: process.env.STELLAR_USDC_ISSUER || 'GBBD47IF6LWK7P7MDEVNCWR7DPUWV3NY3DT1QEVFL4NAT4AQ3HZLLFLA5',
-    isMainnet: (process.env.STELLAR_NETWORK || 'testnet') !== 'testnet',
-    auth: {
-      signingKey: process.env.STELLAR_AUTH_SIGNING_KEY,
-      homeDomain: process.env.STELLAR_HOME_DOMAIN,
-      webAuthDomain: process.env.STELLAR_WEB_AUTH_DOMAIN,
-      challengeTtlSeconds: Number(process.env.STELLAR_AUTH_CHALLENGE_TTL_SECONDS || 300),
-      sessionTtlMinutes: Number(process.env.REST_SESSION_TTL_MINUTES || 15),
+    fundingAccountPublicKey: process.env.STELLAR_FUNDING_ACCOUNT_PUBLIC_KEY || '',
+    // Circle's official Testnet USDC issuer, so multi-asset balance lookups
+    // work out of the box in dev; override for mainnet or a custom issuer.
+    usdcIssuer: process.env.STELLAR_USDC_ISSUER || 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5',
+    thresholds: {
+      baseFeeWarningThreshold: Number(process.env.STELLAR_BASE_FEE_WARNING_THRESHOLD || 200),
+      baseFeeCriticalThreshold: Number(process.env.STELLAR_BASE_FEE_CRITICAL_THRESHOLD || 250),
+      fundingBalanceWarningThreshold: Number(process.env.STELLAR_FUNDING_BALANCE_WARNING_THRESHOLD || 20),
+      fundingBalanceCriticalThreshold: Number(process.env.STELLAR_FUNDING_BALANCE_CRITICAL_THRESHOLD || 10),
+      reserveWarningThreshold: Number(process.env.STELLAR_RESERVE_WARNING_THRESHOLD || 0.7),
+      reserveCriticalThreshold: Number(process.env.STELLAR_RESERVE_CRITICAL_THRESHOLD || 0.85),
     },
   },
   pricing: {
@@ -175,25 +178,20 @@ module.exports = {
       appId: process.env.DOJAH_APP_ID,
       secretKey: process.env.DOJAH_SECRET_KEY,
     },
-    pinPepper: process.env.PIN_PEPPER,
-    // Tier single/daily limits are denominated in policyCurrency (NGN).
-    policyCurrency: (process.env.POLICY_CURRENCY || 'NGN').trim().toUpperCase(),
-    policyVersion: process.env.POLICY_VERSION || '1',
-    policyFxMaxAgeMs: Number(process.env.POLICY_FX_MAX_AGE_MS || 300000),
-    tierLimits: {
-      0: { daily: '0.00', single: '0.00' },
-      1: {
-        daily: process.env.TIER_1_DAILY_LIMIT || '50000.00',
-        single: process.env.TIER_1_SINGLE_LIMIT || '20000.00',
-      },
-      2: {
-        daily: process.env.TIER_2_DAILY_LIMIT || '500000.00',
-        single: process.env.TIER_2_SINGLE_LIMIT || '200000.00',
-      },
-      3: {
-        daily: process.env.TIER_3_DAILY_LIMIT || '5000000.00',
-        single: process.env.TIER_3_SINGLE_LIMIT || '1000000.00',
-      },
+    pinPepper: process.env.PIN_PEPPER || process.env.PIN_PEPPER_V1 || 'development-only-pin-pepper',
+    pinPepperVersion: process.env.PIN_PEPPER_VERSION || 'v1',
+    pinPepperVersions: (process.env.PIN_PEPPER_VERSIONS || 'v1').split(',').map((v) => v.trim()).filter(Boolean),
+    pinPepperByVersion: {
+      v1: process.env.PIN_PEPPER_V1 || process.env.PIN_PEPPER || 'development-only-pin-pepper',
+      v2: process.env.PIN_PEPPER_V2 || process.env.PIN_PEPPER || 'development-only-pin-pepper',
+    },
+    pinHash: {
+      n: Number(process.env.PIN_SCRYPT_N || 16384),
+      r: Number(process.env.PIN_SCRYPT_R || 8),
+      p: Number(process.env.PIN_SCRYPT_P || 1),
+      keyLength: Number(process.env.PIN_SCRYPT_KEY_LENGTH || 32),
+      saltLength: Number(process.env.PIN_HASH_SALT_LENGTH || 16),
+      maxMem: Number(process.env.PIN_SCRYPT_MAXMEM || 128 * 1024 * 1024),
     },
   },
   voice: {

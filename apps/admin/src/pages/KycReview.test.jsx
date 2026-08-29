@@ -6,6 +6,15 @@ import { describe, it, expect } from 'vitest';
 import { server } from '../mocks/server';
 import { http, HttpResponse } from 'msw';
 
+// Helper: find the StatusBadge span for a given status value.
+// The FilterBar's status <select> also contains the same text as <option>
+// elements, so we scope to the table cell to avoid ambiguity.
+function getBadgeText(status) {
+  return screen.getAllByText(status).find(
+    (el) => el.tagName === 'SPAN' && el.className.includes('rounded-full')
+  );
+}
+
 describe('KycReview Component', () => {
   it('renders KYC profiles and handles approval mutation', async () => {
     render(
@@ -23,13 +32,13 @@ describe('KycReview Component', () => {
     const table = screen.getByRole('table');
     expect(within(table).getByText(/pending/i)).toBeInTheDocument();
     const approveButton = screen.getByRole('button', { name: /approve/i });
-    
     await userEvent.click(approveButton);
 
     await waitFor(() => {
       expect(within(table).getByText(/approved/i)).toBeInTheDocument();
     });
     
+    // Approve/Reject action buttons should no longer appear for this record
     expect(screen.queryByRole('button', { name: /approve/i })).not.toBeInTheDocument();
   });
 

@@ -68,7 +68,8 @@ const renderMetrics = () => {
       lines.push(`# TYPE ${metric.name} gauge`);
       names.add(metric.name);
     }
-    lines.push(`${metric.name}${labelsText(metric.labels)} ${metric.value}`);
+    const value = typeof metric.value === 'function' ? metric.value() : metric.value;
+    lines.push(`${metric.name}${labelsText(metric.labels)} ${Number(value)}`);
   }
   return `${lines.join('\n')}\n`;
 };
@@ -80,10 +81,13 @@ const secureEqual = (received, expected) => {
   return a.length === b.length && crypto.timingSafeEqual(a, b);
 };
 
+const isMetricsAuthorized = (authorization) => {
+  const received = (authorization || '').replace(/^Bearer\s+/i, '');
+  return secureEqual(received, process.env.METRICS_TOKEN);
+};
+
 const metricsHandler = (req, res) => {
-  const expected = process.env.METRICS_TOKEN;
-  const received = (req.get('authorization') || '').replace(/^Bearer\s+/i, '');
-  if (!secureEqual(received, expected)) return res.sendStatus(403);
+  if (!isMetricsAuthorized(req.get('authorization'))) return res.sendStatus(403);
   res.type('text/plain; version=0.0.4').send(renderMetrics());
 };
 
@@ -112,4 +116,5 @@ module.exports = {
   metricsHandler,
   requestMetrics,
   resetMetrics,
+  isMetricsAuthorized,
 };

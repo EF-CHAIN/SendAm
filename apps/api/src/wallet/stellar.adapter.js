@@ -112,6 +112,8 @@ const getTransactionUrl = (txHash) => {
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+const BASE_RESERVE_XLM = 1;
+const BASE_RESERVE_PER_ENTRY = 0.5;
 const FUNDING_MAX_ATTEMPTS = 3;
 const NATIVE_BASE_RESERVE = Number(process.env.STELLAR_BASE_RESERVE_XLM || 0.5);
 const NATIVE_RESERVE_BUFFER = Number(process.env.STELLAR_RESERVE_BUFFER_XLM || 0.1);
@@ -129,6 +131,48 @@ function assertNativeReserve(account, feeStroops, additionalSubentries = 0) {
   }
   return { available, required };
 }
+
+const getSeverityPriority = (status) => ({ ok: 0, warning: 1, critical: 2 }[status] || 0);
+
+const getHighWaterMarkStatus = (value, warningThreshold, criticalThreshold) => {
+  if (criticalThreshold != null && value >= criticalThreshold) return 'critical';
+  if (warningThreshold != null && value >= warningThreshold) return 'warning';
+  return 'ok';
+};
+
+const getLowWaterMarkStatus = (value, warningThreshold, criticalThreshold) => {
+  if (criticalThreshold != null && value <= criticalThreshold) return 'critical';
+  if (warningThreshold != null && value <= warningThreshold) return 'warning';
+  return 'ok';
+};
+
+const getReservePressureStatus = (ratio, warningThreshold, criticalThreshold) => {
+  if (criticalThreshold != null && ratio >= criticalThreshold) return 'critical';
+  if (warningThreshold != null && ratio >= warningThreshold) return 'warning';
+  return 'ok';
+};
+
+const getOperatorRunbook = ({ baseFeeStatus, fundingBalanceStatus, reserveStatus, baseFee, fundingBalance, projectedReserveRatio }) => {
+  const steps = [];
+
+  if (baseFeeStatus !== 'ok') {
+    steps.push(`Base fee is ${baseFee} stroops; raise the funding account or slow outbound payments until network demand settles.`);
+  }
+
+  if (fundingBalanceStatus !== 'ok') {
+    steps.push(`Funding account balance is ${fundingBalance} XLM; add XLM so customer wallet creation and sends keep a safe buffer.`);
+  }
+
+  if (reserveStatus !== 'ok') {
+    steps.push(`Projected reserve consumption is ${(projectedReserveRatio * 100).toFixed(1)}% of funding balance; reduce new trustlines or pause wallet creation until reserve headroom returns.`);
+  }
+
+  if (steps.length === 0) {
+    return ['Funding account is healthy; continue normal wallet creation and payment flow.'];
+  }
+
+  return steps;
+};
 
 // Friendbot is unreliable (frequent 5xx/timeouts), and a failed first-time
 // funding used to leave a user with an empty wallet and no way to recover.
@@ -183,6 +227,93 @@ const getBalance = async (publicKey) => {
     logger.error("Error getting balance", error.message);
     throw new Error("Could not fetch balance. Check if account is funded.");
   }
+};
+
+const getFundingAccountHealth = async ({
+  publicKey,
+  reserveEntries = 0,
+  baseFeeWarningThreshold,
+  baseFeeCriticalThreshold,
+  fundingBalanceWarningThreshold,
+  fundingBalanceCriticalThreshold,
+  reserveWarningThreshold,
+  reserveCriticalThreshold,
+} = {}) => {
+  const targetPublicKey = publicKey || config.stellar.fundingAccountPublicKey;
+  if (!targetPublicKey) {
+    throw new Error('Stellar funding account public key is not configured.');
+  }
+
+  const thresholds = {
+    baseFeeWarningThreshold: baseFeeWarningThreshold ?? config.stellar.thresholds.baseFeeWarningThreshold,
+    baseFeeCriticalThreshold: baseFeeCriticalThreshold ?? config.stellar.thresholds.baseFeeCriticalThreshold,
+    fundingBalanceWarningThreshold: fundingBalanceWarningThreshold ?? config.stellar.thresholds.fundingBalanceWarningThreshold,
+    fundingBalanceCriticalThreshold: fundingBalanceCriticalThreshold ?? config.stellar.thresholds.fundingBalanceCriticalThreshold,
+    reserveWarningThreshold: reserveWarningThreshold ?? config.stellar.thresholds.reserveWarningThreshold,
+    reserveCriticalThreshold: reserveCriticalThreshold ?? config.stellar.thresholds.reserveCriticalThreshold,
+  };
+
+  const account = await server.loadAccount(targetPublicKey);
+  const nativeBalance = account.balances.find((b) => b.asset_type === 'native');
+  const fundingBalance = Number(nativeBalance ? nativeBalance.balance : '0');
+  const subentryCount = Number(account.subentry_count || 0);
+  const currentReserveRequired = BASE_RESERVE_XLM + subentryCount * BASE_RESERVE_PER_ENTRY;
+  const projectedReserveRequired = BASE_RESERVE_XLM + (subentryCount + Number(reserveEntries)) * BASE_RESERVE_PER_ENTRY;
+  const currentReserveRatio = currentReserveRequired / Math.max(fundingBalance, Number.EPSILON);
+  const projectedReserveRatio = projectedReserveRequired / Math.max(fundingBalance, Number.EPSILON);
+  const baseFee = Number(await server.fetchBaseFee());
+
+  const baseFeeStatus = getHighWaterMarkStatus(
+    baseFee,
+    thresholds.baseFeeWarningThreshold,
+    thresholds.baseFeeCriticalThreshold,
+  );
+  const fundingBalanceStatus = getLowWaterMarkStatus(
+    fundingBalance,
+    thresholds.fundingBalanceWarningThreshold,
+    thresholds.fundingBalanceCriticalThreshold,
+  );
+  const reserveStatus = getReservePressureStatus(
+    Math.max(currentReserveRatio, projectedReserveRatio),
+    thresholds.reserveWarningThreshold,
+    thresholds.reserveCriticalThreshold,
+  );
+
+  const status = [baseFeeStatus, fundingBalanceStatus, reserveStatus]
+    .reduce((highest, entry) => (
+      getSeverityPriority(entry) > getSeverityPriority(highest) ? entry : highest
+    ), 'ok');
+
+  const report = {
+    status,
+    publicKey: targetPublicKey,
+    baseFee,
+    baseFeeStatus,
+    fundingBalance,
+    fundingBalanceStatus,
+    reserveRequired: Number(currentReserveRequired.toFixed(7)),
+    projectedReserveRequired: Number(projectedReserveRequired.toFixed(7)),
+    currentReserveRatio: Number(currentReserveRatio.toFixed(4)),
+    projectedReserveRatio: Number(projectedReserveRatio.toFixed(4)),
+    reserveStatus,
+    fundingCapacityWallets: Math.max(0, Math.floor(fundingBalance / Math.max(1 + Number(reserveEntries) * BASE_RESERVE_PER_ENTRY, Number.EPSILON))),
+    runbook: getOperatorRunbook({
+      baseFeeStatus,
+      fundingBalanceStatus,
+      reserveStatus,
+      baseFee,
+      fundingBalance,
+      projectedReserveRatio,
+    }),
+  };
+
+  if (status !== 'ok') {
+    logger.warn(
+      `Stellar funding-account health warning: ${status} for ${targetPublicKey}; baseFee=${baseFee} stroops, balance=${fundingBalance} XLM, projectedReserveUsage=${(projectedReserveRatio * 100).toFixed(1)}%.`,
+    );
+  }
+
+  return report;
 };
 
 // Every relevant balance for a wallet: XLM plus USDC when the account holds
@@ -482,6 +613,7 @@ module.exports = {
   createWallet,
   getBalance,
   getBalances,
+  getFundingAccountHealth,
   submitPayment,
   establishTrustline,
   assertNativeReserve,

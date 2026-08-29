@@ -38,6 +38,9 @@ test('config exposes the worker block the queue service and worker read', () => 
     WORKER_CONCURRENCY: undefined,
     WORKER_LOCK_DURATION_MS: undefined,
     WORKER_HEARTBEAT_INTERVAL_MS: undefined,
+    WORKER_HEARTBEAT_FRESHNESS_MS: undefined,
+    WORKER_HEALTH_PORT: undefined,
+    WORKER_METRICS_INTERVAL_MS: undefined,
     WORKER_SHUTDOWN_TIMEOUT_MS: undefined,
   });
 
@@ -46,6 +49,8 @@ test('config exposes the worker block the queue service and worker read', () => 
   assert.equal(typeof config.worker.lockDurationMs, 'number');
   assert.equal(typeof config.worker.heartbeatIntervalMs, 'number');
   assert.equal(typeof config.worker.shutdownTimeoutMs, 'number');
+  assert.equal(typeof config.worker.healthPort, 'number');
+  assert.equal(typeof config.worker.heartbeatFreshnessMs, 'number');
 });
 
 test('the defaults satisfy validateWorkerEnv, so the worker starts with only REDIS_URL set', () => {

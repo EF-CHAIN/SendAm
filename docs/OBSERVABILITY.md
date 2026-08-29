@@ -20,7 +20,8 @@ Production startup rejects missing/short metrics credentials, a missing error
 monitor, or a non-HTTPS error-monitor URL. Configure the same release and alert
 routing on worker deployments, using `SERVICE_NAME=sendam-worker`.
 
-Prometheus must scrape `GET /metrics` with
+Prometheus must scrape API `GET :3002/metrics` and every worker replica's
+`GET :3003/metrics` with
 `Authorization: Bearer <METRICS_TOKEN>`. Never place the token in the URL.
 Import `observability/grafana-dashboard.json`, load
 `observability/prometheus-rules.yml`, and replace the example Alertmanager
@@ -76,6 +77,10 @@ The primary metrics are:
 - `sendam_exceptions_total`
 - `sendam_queue_jobs_total`
 - `sendam_queue_job_duration_seconds`
+- `sendam_queue_jobs` and `sendam_queue_oldest_job_age_seconds`
+- `sendam_worker_ready` and `sendam_worker_heartbeat_age_seconds`
+- `sendam_worker_last_successful_processing_timestamp_seconds`
+- `sendam_deposit_sweep_age_seconds`
 - `sendam_webhook_events_total`
 - `sendam_health_checks_total`
 - process uptime and resident memory gauges
@@ -173,6 +178,16 @@ down or unconfigured — treat it as a degradation and restore Redis rather than
 relying on the fallback. On `SendAmRedisRecovery`, confirm the buffered work
 drained and reconcile any pendings before clearing the incident.
 
+### Worker unhealthy
+
+Check the worker target independently of API health. A missing target means the
+process or probe server is down; `sendam_worker_ready=0` identifies dependency,
+processor-registration, heartbeat, or shutdown failures through `/ready`.
+Compare queue lag and the last successful processing timestamp to distinguish
+an idle worker from a wedged one. Check deposit-sweep age separately because it
+does not run through BullMQ. Restore Redis/database connectivity or roll back;
+reconcile financial side effects before replaying stalled or failed jobs.
+
 If metrics return 403, rotate and synchronize the scrape/API metrics token. If
 error-monitor delivery fails, use JSON logs and Prometheus alerts as the
 fallback and restore the routing endpoint before closing the incident.
@@ -186,3 +201,57 @@ causes instability, disable scraping at Prometheus rather than exposing an
 unprotected endpoint, and point `ERROR_MONITOR_WEBHOOK_URL` to a healthy
 fallback receiver. Validate `/health`, financial reconciliation, and alert
 routing after rollback.
+
+## Dependency health
+
+`GET /health/dependencies` reports every critical dependency separately —
+Postgres, Redis, Stellar Horizon, and the WhatsApp Graph API — with a status,
+a latency, and the threshold that latency is judged against.
+
+It is deliberately not the same endpoint as `/health/ready`. Readiness answers
+one question for the load balancer ("should this instance take traffic") and
+must stay cheap and collapsed; it checks Postgres and Redis together and says
+only ok or degraded, which means it cannot tell an operator *which*
+dependency broke and never looks at Horizon or the messaging provider at all.
+Those can be down for hours while readiness stays green and customers receive
+nothing.
+
+### Reading the report
+
+| Field | Meaning |
+| --- | --- |
+| `status` | `healthy`, `degraded`, or `unhealthy` for the platform |
+| `dependencies[].status` | per-dependency verdict |
+| `dependencies[].latencyMs` | measured round trip |
+| `dependencies[].thresholdMs` | above this, the dependency is `degraded` rather than `healthy` |
+| `dependencies[].criticality` | `critical`, `important`, or `optional` |
+
+A dependency that answers slowly is reported as `degraded` rather than
+healthy. A check that only reports up/down hides the most common real failure
+— a provider that is technically reachable and too slow to be useful — until
+it crosses into a timeout.
+
+The aggregate is decided by criticality, not by counting: one dead critical
+dependency is an outage even when everything else is fine, and a dead optional
+one is not an outage however many there are.
+
+The endpoint returns 503 only when a critical dependency is unreachable.
+`degraded` stays 200 on purpose — returning 503 would make a load balancer
+pull a node that is merely slow, turning partial degradation into a full
+outage.
+
+### Alerting
+
+Each check sets `sendam_dependency_up{dependency,criticality}` and increments
+`sendam_dependency_checks_total`. Alert rules live in
+`observability/prometheus-rules.yml`:
+
+- `SendAmCriticalDependencyDown` — critical dependency unreachable for 2m
+- `SendAmImportantDependencyDown` — messaging provider unreachable for 5m
+- `SendAmDependencyHealthMissing` — no report at all for 10m, which is a
+  different failure from "reported unhealthy" and needs to page separately
+
+Alerts are raised as metrics and structured logs rather than by paging from
+the application, so thresholds can be tuned and a flapping dependency
+suppressed in the alert manager without a deploy or a change to the check that
+detects it.

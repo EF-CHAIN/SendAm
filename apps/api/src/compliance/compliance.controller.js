@@ -17,6 +17,7 @@ const {
   buildReviewAuditMetadata,
   TransitionError,
 } = require('./kyc.transitions');
+const { getOnboardingStatus: computeOnboardingStatus } = require('./onboarding.service');
 const logger = require('../utils/logger');
 
 const getProfile = async (req, res, next) => {
@@ -306,6 +307,22 @@ const setPin = async (req, res, next) => {
   }
 };
 
+/**
+ * GET /compliance/onboarding
+ * Customer self-service: returns their onboarding checkpoints, next step,
+ * and any blockers. Linked to KYC, wallet, and account state (#330).
+ */
+const getOnboardingStatus = async (req, res, next) => {
+  try {
+    const user = req.restUser;
+    const status = await computeOnboardingStatus(user.id);
+    return sendSuccess(res, status);
+  } catch (error) {
+    if (error.statusCode) return sendError(res, error.message, error.statusCode);
+    next(error);
+  }
+};
+
 module.exports = {
   getProfile,
   getOwnProfile,
@@ -314,4 +331,5 @@ module.exports = {
   approveOverride,
   setPin,
   smileIdCallback,
+  getOnboardingStatus,
 };

@@ -11,6 +11,61 @@ groups:
           summary: SendAm API metrics target is down
           runbook_url: https://github.com/EF-CHAIN/SendAm/blob/main/docs/OBSERVABILITY.md#api-down
 
+      - alert: SendAmWorkerDown
+        expr: absent(up{job="sendam-worker"}) or up{job="sendam-worker"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          service: sendam-worker
+        annotations:
+          summary: No SendAm worker metrics target is reachable
+          runbook_url: https://github.com/EF-CHAIN/SendAm/blob/main/docs/OBSERVABILITY.md#worker-unhealthy
+
+      - alert: SendAmWorkerNotReady
+        expr: sendam_worker_ready == 0
+        for: 2m
+        labels:
+          severity: critical
+          service: sendam-worker
+        annotations:
+          summary: A SendAm worker has lost Redis, database, processor, or heartbeat readiness
+
+      - alert: SendAmWorkerHeartbeatStale
+        expr: time() - sendam_worker_last_heartbeat_timestamp_seconds > 90
+        for: 1m
+        labels:
+          severity: critical
+          service: sendam-worker
+        annotations:
+          summary: A SendAm worker heartbeat is stale
+
+      - alert: SendAmQueueLagHigh
+        expr: max by (queue) (sendam_queue_oldest_job_age_seconds) > 120
+        for: 5m
+        labels:
+          severity: critical
+          service: sendam-worker
+        annotations:
+          summary: A SendAm queue has been waiting for more than two minutes
+
+      - alert: SendAmQueueStalled
+        expr: sum by (queue) (increase(sendam_queue_stalled_jobs_total[10m])) > 0
+        for: 1m
+        labels:
+          severity: warning
+          service: sendam-worker
+        annotations:
+          summary: BullMQ reported a stalled SendAm job
+
+      - alert: SendAmDepositSweepStale
+        expr: sendam_deposit_sweep_age_seconds < 0 or sendam_deposit_sweep_age_seconds > 120
+        for: 3m
+        labels:
+          severity: critical
+          service: sendam-worker
+        annotations:
+          summary: The deposit sweep has not completed successfully
+
       - alert: SendAmHighHttpErrorRate
         expr: |
           sum(rate(sendam_http_requests_total{status_code=~"5.."}[5m]))
@@ -113,3 +168,39 @@ groups:
           service: sendam-api
         annotations:
           summary: SendAm jobs are running inline instead of durably queued (Redis unavailable)
+
+      # ── Dependency health (#316) ──────────────────────────────────────────
+      # Fires on the dependency being down rather than on a log line, so a
+      # silent process (crashed, wedged, or never scraped) is still caught by
+      # the absent() rule below.
+      - alert: SendAmCriticalDependencyDown
+        expr: sendam_dependency_up{criticality="critical"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          service: sendam-api
+        annotations:
+          summary: SendAm critical dependency {{ $labels.dependency }} is unreachable
+          runbook_url: https://github.com/EF-CHAIN/SendAm/blob/main/docs/OBSERVABILITY.md#dependency-health
+
+      - alert: SendAmImportantDependencyDown
+        expr: sendam_dependency_up{criticality="important"} == 0
+        for: 5m
+        labels:
+          severity: warning
+          service: sendam-api
+        annotations:
+          summary: SendAm dependency {{ $labels.dependency }} is unreachable; customer messaging may be affected
+          runbook_url: https://github.com/EF-CHAIN/SendAm/blob/main/docs/OBSERVABILITY.md#dependency-health
+
+      # A dependency that stops being reported is not healthy — it is unknown,
+      # which for alerting purposes must be treated as down.
+      - alert: SendAmDependencyHealthMissing
+        expr: absent(sendam_dependency_up)
+        for: 10m
+        labels:
+          severity: warning
+          service: sendam-api
+        annotations:
+          summary: SendAm dependency health has not reported for 10m
+          runbook_url: https://github.com/EF-CHAIN/SendAm/blob/main/docs/OBSERVABILITY.md#dependency-health
