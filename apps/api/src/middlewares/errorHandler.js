@@ -12,10 +12,13 @@ const errorHandler = (err, req, res, _next) => {
   const normalized = normalizeError(err);
   const correlationId = getContext().correlationId || null;
 
+  const status = err.type === 'entity.too:large' ? 413 : err.code === 'ETIMEDOUT' ? 504 : normalized.statusCode;
+  normalized.statusCode = status;
+
   logger.error('http_request_exception', {
     error: err,
     code: normalized.code,
-    statusCode: normalized.statusCode,
+    statusCode: status,
     method: req.method,
     path: req.path,
   });
@@ -29,7 +32,7 @@ const errorHandler = (err, req, res, _next) => {
   if (correlationId && !res.get('x-correlation-id')) {
     res.set('x-correlation-id', correlationId);
   }
-  res.status(normalized.statusCode).json(errorEnvelope(err, { correlationId, normalized }));
+  res.status(status).json(errorEnvelope(err, { correlationId, normalized }));
 };
 
 module.exports = errorHandler;

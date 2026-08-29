@@ -26,9 +26,8 @@ describe('Transactions Component', () => {
 
     expect(screen.getByText('100 USDC')).toBeInTheDocument();
     expect(screen.getByText('Completed')).toBeInTheDocument();
-    // Total: 1 appears in both the header span and the Pagination component.
-    // Use getAllByText to handle both instances.
-    expect(screen.getAllByText('Total: 1').length).toBeGreaterThanOrEqual(1);
+    // The total appears both in the page header badge and in the pagination bar.
+    expect(screen.getAllByText('Total: 1').length).toBeGreaterThan(0);
   });
 
   it('renders empty state on a later cursor page', async () => {
@@ -46,19 +45,19 @@ describe('Transactions Component', () => {
     });
   });
 
-  it('preserves filter state — the status filter input updates to the selected value', async () => {
-    renderPage();
+  it('restores filter state from the URL', async () => {
+    // useListQuery bridges filter state to the URL search params, so a page
+    // loaded with ?status=success must render that filter preselected.
+    render(
+      <MemoryRouter initialEntries={['/transactions?status=success']}>
+        <Transactions />
+      </MemoryRouter>
+    );
 
     await waitFor(() => {
       expect(screen.getByRole('table')).toBeInTheDocument();
     });
 
-    const statusInput = screen.getByTestId('filter-status');
-    await userEvent.selectOptions(statusInput, 'success');
-
-    // Verify the select control reflects the chosen filter value.
-    // MemoryRouter manages its own history separately from window.location,
-    // so we assert on the visible control state rather than window.location.search.
-    expect(statusInput).toHaveValue('success');
+    expect(screen.getByLabelText('Status')).toHaveValue('success');
   });
 });

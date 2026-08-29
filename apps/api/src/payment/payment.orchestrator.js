@@ -4,11 +4,16 @@ const { createQuote, validateQuoteForExecution, QUOTE_STATUS } = require('../pri
 const { writeAuditLog } = require('../common/audit.service');
 const { enforceTransactionPolicy } = require('../compliance/compliance.service');
 const { markTransactionFailed } = require('./markFailed');
+const ledger = require('./ledger.service');
 const prisma = require('../common/prisma');
 const { withIdAlias } = require('../common/records');
 const { assertValidAmount, percentage } = require('../utils/money');
 
-const calculateFee = (amount, asset = 'XLM') => percentage(assertValidAmount(amount, asset), asset, 100);
+const RAIL = 'stellar';
+const NATIVE_ASSET = 'XLM';
+const ELIGIBLE_REASONS = ['failed_fulfillment', 'operator_mistake', 'customer_request', 'duplicate_payment'];
+
+const calculateFee = (amount, asset = NATIVE_ASSET) => percentage(assertValidAmount(amount, asset), asset, 100);
 
 const buildReceipt = ({ transaction }) => {
   const meta = transaction.metadata || {};
@@ -25,10 +30,7 @@ const buildReceipt = ({ transaction }) => {
   };
 };
 
-// Stellar-only: every payment settles on Stellar. routeType survives as a
-// compliance/reporting label computed from the countries involved.
-const RAIL = 'stellar';
-const NATIVE_ASSET = 'XLM';
+const runDbTransaction = (fn) => (prisma.$transaction ? prisma.$transaction(fn) : fn(prisma));
 
 const executePayment = async ({
   sender,
@@ -39,12 +41,7 @@ const executePayment = async ({
   sourceCountry = 'NG',
   destinationCountry = 'NG',
   routeType,
-  // Optional: settle against a previously created quote. When omitted a fresh
-  // quote is minted atomically with the payment transaction. `quoteId` is
-  // validated (ownership, asset pair, amount, rate, expiration) before settle.
   quoteId,
-  // Optional client idempotency key: retrying with the same key returns the
-  // existing active quote/transaction instead of creating duplicates.
   idempotencyKey,
   memo,
   memoType = 'text',
@@ -66,8 +63,7 @@ const executePayment = async ({
 
   const rail = RAIL;
   const effectiveAsset = asset || NATIVE_ASSET;
-  const effectiveRouteType = routeType
-    || (sourceCountry && destinationCountry && sourceCountry !== destinationCountry ? 'cross_border' : 'domestic');
+  const effectiveRouteType = routeType || (sourceCountry && destinationCountry && sourceCountry !== destinationCountry ? 'cross_border' : 'domestic');
   const normalizedAmount = assertValidAmount(amount, effectiveAsset);
 
   const memoMetadata = (memo !== undefined && memo !== null && memo !== '')
@@ -85,8 +81,13 @@ const executePayment = async ({
       asset: effectiveAsset,
       routeType: effectiveRouteType,
       destinationCountry,
+      recipientPhoneNumber,
+      destination,
       tx,
     });
+    if (!compliance.policySnapshot) {
+      throw new Error('Compliance policy snapshot is required.');
+    }
 
     // Idempotency short-circuit: an earlier attempt with this key already
     // reserved a transaction. Return it (and its quote) without creating
@@ -102,17 +103,9 @@ const executePayment = async ({
     let quote;
     if (quoteId) {
       const existing = await tx.quote.findUnique({ where: { id: quoteId } });
-      await validateQuoteForExecution({
-        quote: existing,
-        userId: senderUser.id,
-        asset: effectiveAsset,
-        amount: normalizedAmount,
-      });
+      await validateQuoteForExecution({ quote: existing, userId: senderUser.id, asset: effectiveAsset, amount: normalizedAmount });
       // Safe to settle: claim the quote so a retry with the same id is rejected.
-      quote = await tx.quote.update({
-        where: { id: quoteId },
-        data: { status: QUOTE_STATUS.CONSUMED },
-      });
+      quote = await tx.quote.update({ where: { id: quoteId }, data: { status: QUOTE_STATUS.CONSUMED } });
     } else {
       quote = await createQuote({
         userId: senderUser.id,
@@ -141,10 +134,20 @@ const executePayment = async ({
           quoteId: quote.id,
           idempotencyKey,
           status: 'processing',
+          fiatCurrency: compliance.policySnapshot.referenceCurrency,
+          fiatAmount: compliance.policySnapshot.convertedAmount,
           metadata: {
             fee: calculateFee(normalizedAmount, effectiveAsset),
             userHiddenRail: true,
             riskScore: compliance.riskScore,
+            policy: {
+              version: compliance.policySnapshot.policyVersion,
+              rate: compliance.policySnapshot.rate,
+              source: compliance.policySnapshot.source,
+              fetchedAt: compliance.policySnapshot.fetchedAt,
+              convertedAmount: compliance.policySnapshot.convertedAmount,
+              referenceCurrency: compliance.policySnapshot.referenceCurrency,
+            },
             ...memoMetadata,
           },
         },
@@ -205,6 +208,8 @@ const executePayment = async ({
       },
     });
 
+    await ledger.postPaymentSettled({ tx: prisma, transaction: activeTransaction });
+
     await writeAuditLog({
       actorType: 'user',
       actorId: String(senderUser.id),
@@ -218,19 +223,19 @@ const executePayment = async ({
     // reconciler confirms ledger-backed finality.
     return { transaction: withIdAlias(activeTransaction), quote, receipt: null };
   } catch (error) {
-    // Guarded: if this bookkeeping update itself rejects, the original
-    // payment error is still the one thrown to the caller.
     await markTransactionFailed({
       prisma,
       transactionId: activeTransaction.id,
       metadata: activeTransaction.metadata,
       error,
     });
+    await runDbTransaction(async (tx) => {
+      const failed = await tx.transaction.findUnique({ where: { id: activeTransaction.id } });
+      if (failed) await ledger.postPaymentFailed({ tx, transaction: failed });
+    }).catch(() => {});
     throw error;
   }
 };
-
-const ELIGIBLE_REASONS = ['failed_fulfillment', 'operator_mistake', 'customer_request', 'duplicate_payment'];
 
 const executeRefund = async ({ transactionId, reason, amount, adminId }) => {
   const { decrypt } = require('../services/crypto.service');
@@ -239,33 +244,17 @@ const executeRefund = async ({ transactionId, reason, amount, adminId }) => {
     throw new Error(`Invalid refund reason. Must be one of: ${ELIGIBLE_REASONS.join(', ')}`);
   }
 
-  const originalTx = await prisma.transaction.findUnique({
-    where: { id: transactionId },
-    include: { user: true },
-  });
+  const originalTx = await prisma.transaction.findUnique({ where: { id: transactionId }, include: { user: true } });
 
-  if (!originalTx) {
-    throw new Error('Original transaction not found.');
-  }
-
-  if (originalTx.status !== 'success') {
-    throw new Error('Only successful transactions can be refunded.');
-  }
-
-  if (originalTx.type !== 'send') {
-    throw new Error('Only payments of type "send" can be refunded.');
-  }
+  if (!originalTx) throw new Error('Original transaction not found.');
+  if (originalTx.status !== 'success') throw new Error('Only successful transactions can be refunded.');
+  if (originalTx.type !== 'send') throw new Error('Only payments of type "send" can be refunded.');
 
   const refundAmount = amount ? assertValidAmount(amount, originalTx.asset) : originalTx.amount;
 
-  const allRefunds = await prisma.transaction.findMany({
-    where: { type: 'refund', status: 'success' },
-  });
-
+  const allRefunds = await prisma.transaction.findMany({ where: { type: 'refund', status: 'success' } });
   const metaRefundsSum = (originalTx.metadata?.refunds || []).reduce((sum, r) => sum + Number(r.amount || 0), 0);
-  const dbRefundsSum = allRefunds
-    .filter((tx) => tx.metadata && tx.metadata.originalTransactionId === originalTx.id)
-    .reduce((sum, tx) => sum + Number(tx.amount || 0), 0);
+  const dbRefundsSum = allRefunds.filter((tx) => tx.metadata && tx.metadata.originalTransactionId === originalTx.id).reduce((sum, tx) => sum + Number(tx.amount || 0), 0);
   const alreadyRefunded = Math.max(metaRefundsSum, dbRefundsSum);
 
   const maxRefundable = Number(originalTx.amount) - alreadyRefunded;
@@ -273,41 +262,27 @@ const executeRefund = async ({ transactionId, reason, amount, adminId }) => {
     throw new Error(`Refund amount exceeds the maximum refundable amount of ${maxRefundable} ${originalTx.asset}. Already refunded: ${alreadyRefunded}`);
   }
 
-  const senderWallet = await prisma.wallet.findUnique({
-    where: { userId_chain: { userId: originalTx.userId, chain: RAIL } },
-  });
-  if (!senderWallet) {
-    throw new Error('Sender wallet not found. Cannot return funds.');
-  }
+  const senderWallet = await prisma.wallet.findUnique({ where: { userId_chain: { userId: originalTx.userId, chain: RAIL } } });
+  if (!senderWallet) throw new Error('Sender wallet not found. Cannot return funds.');
 
   let recipientWallet;
   if (originalTx.recipientPhoneNumber) {
-    const recipientUser = await prisma.user.findFirst({
-      where: { phoneNumber: originalTx.recipientPhoneNumber },
-    });
+    const recipientUser = await prisma.user.findFirst({ where: { phoneNumber: originalTx.recipientPhoneNumber } });
     if (recipientUser) {
-      recipientWallet = await prisma.wallet.findUnique({
-        where: { userId_chain: { userId: recipientUser.id, chain: RAIL } },
-      });
+      recipientWallet = await prisma.wallet.findUnique({ where: { userId_chain: { userId: recipientUser.id, chain: RAIL } } });
       if (!recipientWallet) {
-        recipientWallet = await prisma.wallet.findFirst({
-          where: { userId: recipientUser.id },
-        });
+        recipientWallet = await prisma.wallet.findFirst({ where: { userId: recipientUser.id } });
       }
     }
   }
   if (!recipientWallet && originalTx.destination) {
-    recipientWallet = await prisma.wallet.findFirst({
-      where: { publicKey: originalTx.destination },
-    });
+    recipientWallet = await prisma.wallet.findFirst({ where: { publicKey: originalTx.destination } });
   }
-
   if (!recipientWallet) {
     throw new Error('Recipient wallet is not managed on this platform. Reversals from external addresses are impossible.');
   }
 
   const secretKey = decrypt(recipientWallet.encryptedSecretKey);
-
   const refundTx = await prisma.transaction.create({
     data: {
       userId: originalTx.userId,
@@ -336,38 +311,34 @@ const executeRefund = async ({ transactionId, reason, amount, adminId }) => {
       memoType: 'text',
     });
 
-    const updatedRefund = await prisma.transaction.update({
-      where: { id: refundTx.id },
-      data: {
-        status: 'success',
-        txHash: submission.txHash,
-        explorerUrl: submission.explorerUrl,
-        metadata: {
-          ...refundTx.metadata,
-          settledAt: new Date().toISOString(),
+    const updatedRefund = await runDbTransaction(async (tx) => {
+      const updated = await tx.transaction.update({
+        where: { id: refundTx.id },
+        data: {
+          status: 'success',
+          txHash: submission.txHash,
+          explorerUrl: submission.explorerUrl,
+          metadata: { ...refundTx.metadata, settledAt: new Date().toISOString() },
         },
-      },
-    });
+      });
 
-    const originalMeta = typeof originalTx.metadata === 'object' && originalTx.metadata !== null ? originalTx.metadata : {};
-    const currentRefunds = originalMeta.refunds || [];
-    await prisma.transaction.update({
-      where: { id: originalTx.id },
-      data: {
-        metadata: {
-          ...originalMeta,
-          refunds: [
-            ...currentRefunds,
-            {
-              refundTransactionId: updatedRefund.id,
-              amount: String(refundAmount),
-              reason,
-              adminId,
-              timestamp: new Date().toISOString(),
-            },
-          ],
+      const originalMeta = typeof originalTx.metadata === 'object' && originalTx.metadata !== null ? originalTx.metadata : {};
+      const currentRefunds = originalMeta.refunds || [];
+      await tx.transaction.update({
+        where: { id: originalTx.id },
+        data: {
+          metadata: {
+            ...originalMeta,
+            refunds: [
+              ...currentRefunds,
+              { refundTransactionId: updated.id, amount: String(refundAmount), reason, adminId, timestamp: new Date().toISOString() },
+            ],
+          },
         },
-      },
+      });
+
+      await ledger.postRefundSettled({ tx, transaction: updated, originalTransactionId: originalTx.id });
+      return updated;
     });
 
     await writeAuditLog({
@@ -381,13 +352,12 @@ const executeRefund = async ({ transactionId, reason, amount, adminId }) => {
 
     return { amount: String(refundAmount), ...updatedRefund };
   } catch (error) {
-    const originalMeta = typeof originalTx.metadata === 'object' && originalTx.metadata !== null ? originalTx.metadata : {};
     await prisma.transaction.update({
       where: { id: refundTx.id },
       data: {
         status: 'failed',
         metadata: {
-          ...originalMeta,
+          ...refundTx.metadata,
           failedAt: new Date().toISOString(),
           error: error.message,
         },

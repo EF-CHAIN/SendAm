@@ -13,14 +13,16 @@ const getPrisma = () => {
   }
 };
 
-let IORedis;
 let redisClient;
 
 if (config.redis && config.redis.url) {
   try {
-    IORedis = require('ioredis');
-    redisClient = new IORedis(config.redis.url, { maxRetriesPerRequest: null });
-    redisClient.on('error', (err) => logger.error('dlq_redis_error', { message: err.message }));
+    // Share the process-wide connection configured in src/config/redis.js so
+    // the DLQ inherits the same TLS / backoff / timeout / topology policy and
+    // feeds the same disconnect/failover/recovery metrics. Commands issued
+    // while Redis is down are queued by ioredis and replayed on recovery — the
+    // in-memory fallback below guarantees nothing is silently dropped either.
+    redisClient = require('../config/redis').getRedisConnection(config);
   } catch (_e) {
     // Redis unavailable fallback
   }

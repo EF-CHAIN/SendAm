@@ -1,25 +1,27 @@
-// Deposit poller — #31
+// Deposit poller — #31 + #158
 //
 // Background loop that watches every Stellar wallet for inbound payments and
 // notifies the owner over WhatsApp/sim.  Runs as a plain in-process
 // setInterval (no Redis/BullMQ dependency at this scale).
 //
-// Design rules (from the issue spec):
+// Design rules (from the issue spec, updated for #158):
 //
 //  1. New inbound payment → exactly one notification, cursor advanced.
 //  2. Re-running with the same cursor → zero notifications.
 //  3. Outbound payments and old history never notify.
 //  4. One failing wallet never stalls the loop.
-//  5. cursor-before-notify: the cursor is written to the DB *before* the
-//     message is sent.  If the process dies between the two steps the user
-//     misses one notification — that is a better outcome than the user
-//     receiving a duplicate "you received money" alert.
+//  5. Atomic outbox: the cursor is advanced AND a durable outbox intent
+//     (DepositOutboxRecord) is written in a single DB transaction BEFORE
+//     attempting delivery.  A crash between persistence and delivery leaves a
+//     pending outbox row that the retry worker will deliver exactly once via
+//     the idempotent stellarPaymentId key — no lost or duplicate alerts.
 //  6. First poll of a null-cursor wallet: initialise cursor to the latest
 //     Horizon paging token without notifying.  This prevents replaying
 //     the entire payment history when a wallet is first seen by the poller.
+//  7. Multi-page Horizon results are drained within a single poll cycle so
+//     no records are skipped when more than one page (200) of payments is
+//     pending for a wallet.
 //
-// The notify function defaults to whatsapp.service.sendTextMessage so the
-// module is injected in tests without touching require.cache.
 
 'use strict';
 
@@ -109,12 +111,45 @@ const fetchPaymentsPage = async (horizon, publicKey, cursor) => {
   return { records, nextCursor };
 };
 
+/**
+ * Fetch the latest paging token for an account without replaying history.
+ * Uses order=desc limit=1 when available, falls back to asc paging.
+ */
+const fetchLatestCursor = async (horizon, publicKey) => {
+  try {
+    const builder = horizon.payments().forAccount(publicKey).order('desc').limit(1);
+    const page = await builder.call();
+    const rec = page.records && page.records[0];
+    if (rec && rec.paging_token) return rec.paging_token;
+  } catch (_) {
+    // fall through to asc fallback
+  }
+  // Fallback: fetch one asc page and use its last token (may be oldest if history >200
+  // but still prevents empty-cursor crash; caller will advance via polling)
+  try {
+    const { nextCursor } = await fetchPaymentsPage(horizon, publicKey, null);
+    return nextCursor;
+  } catch (_) {
+    return null;
+  }
+};
+
+// ---------------------------------------------------------------------------
+// Per-wallet poll helpers
+// ---------------------------------------------------------------------------
+
 // ---------------------------------------------------------------------------
 // Per-wallet poll
 // ---------------------------------------------------------------------------
 
 /**
  * Poll one wallet for new inbound payments.
+ *
+ * Drains all Horizon pages (multi-page) within this single poll cycle and
+ * persists each inbound payment atomically (wallet cursor + outbox upsert)
+ * before attempting delivery. Duplicate Horizon records (same
+ * stellarPaymentId) are idempotent across restarts and replicas via the
+ * unique outbox key.
  *
  * @param {object} wallet   - Prisma Wallet row (needs id, publicKey, phoneNumber, paymentCursor)
  * @param {object} deps     - { horizon, prismaClient, notify, fetchRate }
@@ -125,34 +160,13 @@ const pollWallet = async (wallet, deps) => {
 
   const isFirstPoll = paymentCursor == null;
 
-  const { records, nextCursor } = await fetchPaymentsPage(horizon, publicKey, paymentCursor);
-
-  // Rule 6: first poll — initialise cursor without notifying.
+  // Rule 6: first poll — initialise cursor to latest without notifying.
   if (isFirstPoll) {
-    if (nextCursor != null) {
+    const latest = await fetchLatestCursor(horizon, publicKey);
+    if (latest != null) {
       await prismaClient.wallet.update({
         where: { id },
-        data: { paymentCursor: nextCursor },
-      });
-    }
-    return;
-  }
-
-  // Filter to inbound payment_type records only (exclude create_account, etc.)
-  // and exclude outbound (where the source account is this wallet).
-  const inbound = records.filter(
-    (r) =>
-      r.type === 'payment' &&
-      r.to === publicKey,
-  );
-
-  if (inbound.length === 0) {
-    // No new inbound payments; advance cursor if records moved it anyway
-    // (e.g. only outbound records on the page).
-    if (nextCursor !== paymentCursor) {
-      await prismaClient.wallet.update({
-        where: { id },
-        data: { paymentCursor: nextCursor },
+        data: { paymentCursor: latest },
       });
     }
     return;
@@ -166,92 +180,151 @@ const pollWallet = async (wallet, deps) => {
     logger.warn(`Deposit poller: rate fetch failed for ${publicKey}: ${rateErr.message}`);
   }
 
-  for (const record of inbound) {
-    const amount = record.amount;
-    const asset =
-      record.asset_type === 'native' ? 'native' : (record.asset_code || record.asset_type);
+  let cursor = paymentCursor;
 
-    const newCursor = record.paging_token;
-    const stellarPaymentId = String(record.paging_token || record.id);
-    const message = formatDepositMessage(amount, asset, fiatRate);
+  // Drain pages until Horizon returns <200 records or empty.
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    const { records, nextCursor } = await fetchPaymentsPage(horizon, publicKey, cursor);
 
-    // Rule 5 + #158: atomically write cursor AND outbox intent BEFORE sending.
-    if (prismaClient.depositOutboxRecord) {
-      await prismaClient.$transaction(async (tx) => {
-        await tx.wallet.update({
+    if (!records || records.length === 0) {
+      if (nextCursor !== cursor && nextCursor != null) {
+        await prismaClient.wallet.update({
+          where: { id },
+          data: { paymentCursor: nextCursor },
+        });
+      }
+      break;
+    }
+
+    // Filter to inbound payment_type records only (exclude create_account, etc.)
+    // and exclude outbound (where the source account is this wallet).
+    const inbound = records.filter(
+      (r) => r.type === 'payment' && r.to === publicKey,
+    );
+
+    if (inbound.length === 0) {
+      // No new inbound payments on this page; advance cursor if records moved it.
+      if (nextCursor !== cursor) {
+        await prismaClient.wallet.update({
+          where: { id },
+          data: { paymentCursor: nextCursor },
+        });
+        cursor = nextCursor;
+        if (records.length < 200) break;
+        // Continue to drain next page
+        continue;
+      }
+      break;
+    }
+
+    for (const record of inbound) {
+      const amount = record.amount;
+      const asset =
+        record.asset_type === 'native' ? 'native' : (record.asset_code || record.asset_type);
+
+      const newCursor = record.paging_token;
+      // Key by stable Stellar identity for idempotency across restarts/replicas.
+      // Prefer paging_token (Horizon's canonical paging key) then id.
+      const stellarPaymentId = String(record.paging_token || record.id || record.transaction_hash);
+      const message = formatDepositMessage(amount, asset, fiatRate);
+
+      let shouldNotify = true;
+
+      // Atomically write cursor AND outbox intent BEFORE sending.
+      if (prismaClient.depositOutboxRecord) {
+        await prismaClient.$transaction(async (tx) => {
+          await tx.wallet.update({
+            where: { id },
+            data: { paymentCursor: newCursor },
+          });
+          await tx.depositOutboxRecord.upsert({
+            where: { stellarPaymentId },
+            create: {
+              stellarPaymentId,
+              walletId: id,
+              userId: userId || null,
+              phoneNumber,
+              amount: String(amount),
+              asset,
+              fiatRate: fiatRate != null ? Number(fiatRate) : null,
+              message,
+              status: 'pending',
+            },
+            update: {},
+          });
+        });
+
+        // Idempotency: if record already existed as delivered, skip duplicate notify.
+        try {
+          const existing = await prismaClient.depositOutboxRecord.findUnique({
+            where: { stellarPaymentId },
+          });
+          if (existing && existing.status === 'delivered') {
+            shouldNotify = false;
+          }
+        } catch (_) {
+          // if lookup fails, still try notify; worst case duplicate is constrained by status check in worker
+        }
+      } else {
+        await prismaClient.wallet.update({
           where: { id },
           data: { paymentCursor: newCursor },
         });
-        await tx.depositOutboxRecord.upsert({
-          where: { stellarPaymentId },
-          create: {
-            stellarPaymentId,
-            walletId: id,
-            userId: userId || null,
-            phoneNumber,
-            amount: String(amount),
-            asset,
-            fiatRate: fiatRate != null ? Number(fiatRate) : null,
-            message,
-            status: 'pending',
-          },
-          update: {},
-        });
-      });
-    } else {
-      await prismaClient.wallet.update({
-        where: { id },
-        data: { paymentCursor: newCursor },
-      });
-    }
+      }
 
-    if (notify) {
-      try {
-        const res = await notify(phoneNumber, message, {
-          notification: {
-            userId: userId || null,
-            type: 'deposit_received',
-            referenceType: 'wallet',
-            referenceId: id,
-          },
-        });
-
-        if (prismaClient.depositOutboxRecord) {
-          const providerMsgId = res && typeof res === 'object' ? (res.messageId || res.id || null) : null;
-          await prismaClient.depositOutboxRecord.updateMany({
-            where: { stellarPaymentId },
-            data: {
-              status: 'delivered',
-              deliveredAt: new Date(),
-              providerMessageId: providerMsgId,
+      if (notify && shouldNotify) {
+        try {
+          const res = await notify(phoneNumber, message, {
+            notification: {
+              userId: userId || null,
+              type: 'deposit_received',
+              referenceType: 'wallet',
+              referenceId: id,
             },
           });
-        }
-      } catch (err) {
-        logger.warn(`Outbox alert delivery deferred for payment ${stellarPaymentId}: ${err.message}`);
-        if (prismaClient.depositOutboxRecord) {
-          await prismaClient.depositOutboxRecord.updateMany({
-            where: { stellarPaymentId, status: 'pending' },
-            data: {
-              attempts: { increment: 1 },
-              lastError: err.message,
-            },
-          });
+
+          if (prismaClient.depositOutboxRecord) {
+            const providerMsgId = res && typeof res === 'object' ? (res.messageId || res.id || null) : null;
+            await prismaClient.depositOutboxRecord.updateMany({
+              where: { stellarPaymentId },
+              data: {
+                status: 'delivered',
+                deliveredAt: new Date(),
+                providerMessageId: providerMsgId,
+              },
+            });
+          }
+        } catch (err) {
+          logger.warn(`Outbox alert delivery deferred for payment ${stellarPaymentId}: ${err.message}`);
+          if (prismaClient.depositOutboxRecord) {
+            await prismaClient.depositOutboxRecord.updateMany({
+              where: { stellarPaymentId, status: 'pending' },
+              data: {
+                attempts: { increment: 1 },
+                lastError: err.message,
+              },
+            });
+          }
         }
       }
     }
-  }
 
-  // If the page advanced past the last inbound (e.g. outbound records
-  // after the last inbound), persist the final cursor too.
-  if (nextCursor !== paymentCursor) {
-    const currentCursor = (await prismaClient.wallet.findUnique({ where: { id }, select: { paymentCursor: true } }))?.paymentCursor;
-    if (currentCursor !== nextCursor) {
-      await prismaClient.wallet.update({
-        where: { id },
-        data: { paymentCursor: nextCursor },
-      });
+    // Advance cursor to nextCursor if it is beyond last inbound's paging_token
+    // (e.g. trailing outbound records after last inbound on this page).
+    if (nextCursor !== cursor) {
+      const currentCursor = (await prismaClient.wallet.findUnique({ where: { id }, select: { paymentCursor: true } }))?.paymentCursor;
+      if (currentCursor !== nextCursor) {
+        await prismaClient.wallet.update({
+          where: { id },
+          data: { paymentCursor: nextCursor },
+        });
+      }
+      cursor = nextCursor;
     }
+
+    if (records.length < 200) break;
+    // otherwise continue draining next page
   }
 };
 
@@ -329,6 +402,59 @@ const replayAllDeadLetters = async ({ prismaClient = prisma }) => {
   return prismaClient.depositOutboxRecord.updateMany({
     where: { status: 'dead_letter' },
     data: { status: 'pending', attempts: 0, lastError: null },
+  });
+};
+
+/**
+ * List deposit outbox records for operator inspection / replay UI.
+ * Supports filtering by status and wallet. Returns newest first.
+ */
+const listDepositOutboxRecords = async ({ prismaClient = prisma, status = null, walletId = null, take = 50, skip = 0 } = {}) => {
+  if (!prismaClient?.depositOutboxRecord) return [];
+  const where = {};
+  if (status) where.status = status;
+  if (walletId) where.walletId = walletId;
+  return prismaClient.depositOutboxRecord.findMany({
+    where,
+    orderBy: { createdAt: 'desc' },
+    take,
+    skip,
+  });
+};
+
+/**
+ * List undelivered (pending + failed + dead_letter) outbox records.
+ * Convenience for operator dashboards and reconciliation scripts.
+ */
+const listUndeliveredDepositOutboxRecords = async ({ prismaClient = prisma, walletId = null, take = 50, skip = 0 } = {}) => {
+  if (!prismaClient?.depositOutboxRecord) return [];
+  const where = {
+    status: { in: ['pending', 'failed', 'dead_letter'] },
+  };
+  if (walletId) where.walletId = walletId;
+  return prismaClient.depositOutboxRecord.findMany({
+    where,
+    orderBy: { createdAt: 'desc' },
+    take,
+    skip,
+  });
+};
+
+/**
+ * Reconcile stuck pending records (older than threshold) for operators.
+ * Returns the list of stuck records without mutating; callers can then call
+ * replay helpers. This is intentionally read-only to avoid accidental bulk sends.
+ */
+const findStuckDepositOutboxRecords = async ({ prismaClient = prisma, olderThanMs = 30 * 60 * 1000, take = 50 } = {}) => {
+  if (!prismaClient?.depositOutboxRecord) return [];
+  const cutoff = new Date(Date.now() - olderThanMs);
+  return prismaClient.depositOutboxRecord.findMany({
+    where: {
+      status: 'pending',
+      updatedAt: { lt: cutoff },
+    },
+    orderBy: { updatedAt: 'asc' },
+    take,
   });
 };
 
@@ -452,4 +578,8 @@ module.exports = {
   replayFailedDepositOutboxRecord,
   replayAllDeadLetters,
   cleanupDeliveredOutboxRecords,
+  listDepositOutboxRecords,
+  listUndeliveredDepositOutboxRecords,
+  findStuckDepositOutboxRecords,
 };
+

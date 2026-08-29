@@ -11,6 +11,10 @@ The API receives one secret:
 
 ```text
 DATABASE_URL=postgresql://USER:PASSWORD@HOST/sendam?sslmode=require
+DATABASE_CA="-----BEGIN CERTIFICATE-----...-----END CERTIFICATE-----"
+DATABASE_POOL_MAX=10
+DATABASE_CONNECTION_TIMEOUT_MS=5000
+DATABASE_POOL_TIMEOUT_MS=10000
 ```
 
 Production connections to non-local hosts must set `sslmode=require`,
@@ -18,6 +22,16 @@ Production connections to non-local hosts must set `sslmode=require`,
 roles when the provider supports them: the migration role owns the schema, while
 the runtime role receives only the CRUD permissions required by the API. Never
 commit either URL.
+
+`DATABASE_CA` is an optional trusted CA bundle supplied by the secret manager;
+certificate rotation updates that secret before restarting the process. Set
+`REDIS_CA` the same way for a private Redis CA bundle. Do not set
+`NODE_TLS_REJECT_UNAUTHORIZED=0` or equivalent global TLS bypasses.
+The API defaults to a pool maximum of 10 and workers to 5. Set
+`PROCESS_TYPE=worker` for worker processes. Reserve at least 10 connections for
+migrations and emergency access, and ensure `API_INSTANCES * 10 + WORKER_INSTANCES * 5`
+plus that reserve stays below PostgreSQL `max_connections`. Pool saturation,
+waiting clients, and pool errors are exposed through `/metrics`.
 
 For self-hosting, copy `deploy/postgres.env.example` to a root-level `.env`,
 replace the password with a long random secret, restrict the file to the
@@ -59,6 +73,23 @@ the sentinel survives the forward migration and verifies that an unreachable
 database is rejected.
 
 ## Monitoring
+
+## Orchestrator probes
+
+Configure the API process with `HEALTH_CHECK_TIMEOUT_MS=1000` and use these
+HTTP probes:
+
+| Probe | Endpoint | Initial delay | Period | Timeout | Failure threshold |
+| --- | --- | ---: | ---: | ---: | ---: |
+| Startup | `/health/startup` | 10s | 5s | 2s | 12 |
+| Liveness | `/health/live` | 30s | 10s | 2s | 3 |
+| Readiness | `/health/ready` | 5s | 5s | 2s | 3 |
+
+Startup remains unsuccessful until the API has connected to its required
+startup resources. Liveness does not contact PostgreSQL or Redis. Readiness
+requires both dependencies and returns `503` on a bounded timeout. Keep the
+termination grace period longer than the worker shutdown timeout so active jobs
+can retain their locks while draining.
 
 Alert on:
 

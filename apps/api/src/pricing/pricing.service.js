@@ -1,13 +1,21 @@
 const axios = require('axios');
 const config = require('../config/env');
-const prisma = require('../common/prisma');
 const { withIdAlias } = require('../common/records');
-const { writeAuditLog } = require('../common/audit.service');
 const { increment: incrementMetric } = require('../observability/metrics');
 const { outboundHeaders } = require('../observability/context');
 const { assertValidAmount, percentage, convert, getAssetRule, subtract, decimalToRatio, compare } = require('../utils/money');
 
 const normalizeCurrency = (currency) => String(currency || '').trim().toUpperCase();
+const providerState = new Map();
+const rateCache = new Map();
+const defaultPrisma = () => require('../common/prisma');
+const writeAuditLog = async (args) => {
+  try {
+    return await require('../common/audit.service').writeAuditLog(args);
+  } catch {
+    return null;
+  }
+};
 
 const assertConfiguredCurrency = (currency) => {
   const code = normalizeCurrency(currency);
@@ -22,24 +30,137 @@ const assertConfiguredCurrency = (currency) => {
   return code;
 };
 
-const getExchangeRate = async ({ sourceCurrency = 'NGN', targetCurrency = 'USDC' }) => {
+class PricingProviderError extends Error {
+  constructor(code, message) {
+    super(message);
+    this.name = 'PricingProviderError';
+    this.code = code;
+  }
+}
+
+const cacheKey = (sourceCurrency, targetCurrency) => `${sourceCurrency}:${targetCurrency}`;
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const jitterDelay = (attempt) => Math.min(1000, 75 * (2 ** attempt)) + Math.floor(Math.random() * 75);
+
+const applySpread = (rate) => {
+  const basisPoints = Number(config.pricing?.spreadBasisPoints ?? 0);
+  if (!basisPoints) return decimalToRatio(rate).decimal;
+  const { numerator, denominator } = decimalToRatio(rate);
+  return decimalToRatio(((Number(numerator) / Number(denominator)) * (1 + basisPoints / 10000)).toString()).decimal;
+};
+
+const validateProviderPayload = ({ payload, sourceCurrency, targetCurrency, now = new Date() }) => {
+  const rawText = typeof payload === 'string' ? payload : JSON.stringify(payload);
+  const match = rawText.match(/"conversion_rate"\s*:\s*([0-9.eE+-]+)/);
+  if (!match || !match[1]) {
+    incrementMetric('sendam_pricing_provider_failures_total', { provider: 'exchangerate-api', reason: 'invalid_data' });
+    throw new PricingProviderError('PRICING_INVALID_DATA', 'Pricing provider response did not include a conversion rate.');
+  }
+
+  const rateRatio = decimalToRatio(match[1]);
+  const rate = rateRatio.decimal;
+  const maxRate = decimalToRatio(config.pricing?.maxRate ?? '1000000000');
+  if (rateRatio.numerator * maxRate.denominator > maxRate.numerator * rateRatio.denominator) {
+    incrementMetric('sendam_pricing_provider_failures_total', { provider: 'exchangerate-api', reason: 'invalid_data' });
+    throw new PricingProviderError('PRICING_IMPLAUSIBLE_RATE', 'Pricing provider returned an implausible conversion rate.');
+  }
+
+  const sourceTimestampMatch = rawText.match(/"time_last_update_unix"\s*:\s*(\d+)/);
+  const sourceTimestamp = sourceTimestampMatch ? new Date(Number(sourceTimestampMatch[1]) * 1000) : now;
+  if (now.getTime() - sourceTimestamp.getTime() > Number(config.pricing?.maxSourceAgeMs ?? 86400000)) {
+    incrementMetric('sendam_pricing_provider_failures_total', { provider: 'exchangerate-api', reason: 'stale_data' });
+    throw new PricingProviderError('PRICING_STALE_DATA', 'Pricing provider returned stale rate data.');
+  }
+
+  return {
+    provider: 'exchangerate-api',
+    sourceCurrency,
+    targetCurrency,
+    sourceTimestamp,
+    rate,
+    spread: String(config.pricing?.spreadBasisPoints ?? 0),
+    effectiveRate: applySpread(rate),
+    raw: typeof payload === 'string' ? JSON.parse(rawText) : payload,
+  };
+};
+
+const getCircuit = (provider) => providerState.get(provider) || { failures: 0, openedUntil: 0 };
+const recordProviderSuccess = (provider) => providerState.set(provider, { failures: 0, openedUntil: 0 });
+const recordProviderFailure = (provider, reason) => {
+  const current = getCircuit(provider);
+  const failures = current.failures + 1;
+  const threshold = Number(config.pricing?.circuitThreshold ?? 3);
+  const openedUntil = failures >= threshold ? Date.now() + Number(config.pricing?.circuitCooldownMs ?? 30000) : current.openedUntil;
+  providerState.set(provider, { failures, openedUntil });
+  incrementMetric('sendam_pricing_provider_failures_total', { provider, reason });
+};
+
+const cachedRate = (key, maxAgeMs) => {
+  const cached = rateCache.get(key);
+  if (!cached || Date.now() - cached.cachedAt.getTime() > maxAgeMs) return null;
+  incrementMetric('sendam_pricing_cache_used_total', { provider: cached.provider, freshness: Date.now() - cached.sourceTimestamp.getTime() <= Number(config.pricing?.cacheMaxAgeMs ?? 60000) ? 'fresh' : 'stale' });
+  return cached;
+};
+
+const fetchExchangeRateQuote = async ({ sourceCurrency = 'NGN', targetCurrency = 'USDC' }) => {
   sourceCurrency = assertConfiguredCurrency(sourceCurrency);
   targetCurrency = assertConfiguredCurrency(targetCurrency);
-  if (sourceCurrency === targetCurrency) return '1';
+  if (sourceCurrency === targetCurrency) {
+    const now = new Date();
+    return { provider: 'identity', sourceCurrency, targetCurrency, sourceTimestamp: now, rate: '1', spread: '0', effectiveRate: '1', raw: { conversion_rate: 1 } };
+  }
 
   if (!config.pricing?.exchangeRateApiKey) {
     return null;
   }
 
-  const response = await axios.get(`https://v6.exchangerate-api.com/v6/${config.pricing?.exchangeRateApiKey}/pair/${sourceCurrency}/${targetCurrency}`, {
-    timeout: 15000,
-    responseType: 'text',
-    headers: outboundHeaders(),
-  });
-  const rawText = typeof response.data === 'string' ? response.data : JSON.stringify(response.data);
-  const match = rawText.match(/"conversion_rate"\s*:\s*([0-9.eE+-]+)/);
-  if (!match || !match[1]) return null;
-  return decimalToRatio(match[1]).decimal;
+  const provider = 'exchangerate-api';
+  const key = cacheKey(sourceCurrency, targetCurrency);
+  const fresh = cachedRate(key, Number(config.pricing?.cacheMaxAgeMs ?? 60000));
+  if (fresh) return fresh;
+
+  const circuit = getCircuit(provider);
+  if (circuit.openedUntil > Date.now()) {
+    const stale = cachedRate(key, Number(config.pricing?.staleCacheMaxAgeMs ?? 300000));
+    if (stale) return { ...stale, stale: true };
+    incrementMetric('sendam_pricing_provider_failures_total', { provider, reason: 'open_circuit' });
+    throw new PricingProviderError('PRICING_OPEN_CIRCUIT', 'Pricing provider circuit is open.');
+  }
+
+  const attempts = Number(config.pricing?.maxRetries ?? 2) + 1;
+  let lastError;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try {
+      const response = await axios.get(`https://v6.exchangerate-api.com/v6/${config.pricing?.exchangeRateApiKey}/pair/${sourceCurrency}/${targetCurrency}`, {
+        timeout: Number(config.pricing?.timeoutMs ?? 3000),
+        responseType: 'text',
+        headers: outboundHeaders(),
+      });
+      const quote = validateProviderPayload({ payload: response.data, sourceCurrency, targetCurrency });
+      rateCache.set(key, { ...quote, cachedAt: new Date() });
+      recordProviderSuccess(provider);
+      return quote;
+    } catch (error) {
+      lastError = error;
+      const reason = error?.code === 'ECONNABORTED' || /timeout/i.test(error?.message || '') ? 'timeout' : (error?.code === 'PRICING_INVALID_DATA' || error?.code === 'PRICING_IMPLAUSIBLE_RATE' || error?.code === 'PRICING_STALE_DATA' ? 'invalid_data' : 'unavailable');
+      if (attempt < attempts - 1) await sleep(jitterDelay(attempt));
+      if (attempt === attempts - 1) recordProviderFailure(provider, reason);
+    }
+  }
+
+  const stale = cachedRate(key, Number(config.pricing?.staleCacheMaxAgeMs ?? 300000));
+  if (stale) return { ...stale, stale: true };
+  throw lastError || new PricingProviderError('PRICING_UNAVAILABLE', 'Pricing provider unavailable.');
+};
+
+const getExchangeRate = async (args) => {
+  const quote = await fetchExchangeRateQuote(args);
+  return quote?.effectiveRate || null;
+};
+
+const resetPricingPolicyState = () => {
+  providerState.clear();
+  rateCache.clear();
 };
 
 // Quote lifecycle states. All persisted quotes start as `active`. A quote moves
@@ -92,15 +213,18 @@ const createQuote = async ({
   idempotencyKey,
   status = QUOTE_STATUS.ACTIVE,
   expiresAt,
-  tx = prisma,
+  tx,
 }) => {
+  const client = tx || defaultPrisma();
   sourceCurrency = assertConfiguredCurrency(sourceCurrency);
   targetCurrency = assertConfiguredCurrency(targetCurrency);
   const normalizedSourceAmount = assertValidAmount(sourceAmount, sourceCurrency);
-  const rate = await getExchangeRate({ sourceCurrency, targetCurrency });
+  const providerQuote = await fetchExchangeRateQuote({ sourceCurrency, targetCurrency });
+  const rate = providerQuote?.effectiveRate || null;
   const fee = percentage(normalizedSourceAmount, sourceCurrency, 100);
   const netSourceAmount = subtract(normalizedSourceAmount, fee, sourceCurrency);
   const targetAmount = rate ? convert({ amount: netSourceAmount, sourceAsset: sourceCurrency, targetAsset: targetCurrency, rate }) : undefined;
+  const expires = expiresAt || new Date(Date.now() + 5 * 60 * 1000);
 
   const data = {
     userId,
@@ -109,16 +233,39 @@ const createQuote = async ({
     sourceAmount: normalizedSourceAmount,
     targetAmount,
     rate,
+    sourceTimestamp: providerQuote?.sourceTimestamp,
+    spread: providerQuote?.spread || String(config.pricing?.spreadBasisPoints ?? 0),
+    feePolicyVersion: config.pricing?.feePolicyVersion || 'standard-v1',
     fee,
-    provider,
+    provider: provider || providerQuote?.provider,
+    providerResponse: providerQuote ? {
+      provider: providerQuote.provider,
+      sourceCurrency,
+      targetCurrency,
+      rate: providerQuote.rate,
+      effectiveRate: providerQuote.effectiveRate,
+      sourceTimestamp: providerQuote.sourceTimestamp?.toISOString?.() || providerQuote.sourceTimestamp,
+      stale: Boolean(providerQuote.stale),
+      raw: providerQuote.raw,
+    } : undefined,
     route,
     status,
-    expiresAt: expiresAt || new Date(Date.now() + 5 * 60 * 1000),
+    expiresAt: expires,
+    metadata: {
+      provenance: {
+        provider: provider || providerQuote?.provider || null,
+        sourceTimestamp: providerQuote?.sourceTimestamp?.toISOString?.() || null,
+        rate,
+        spread: providerQuote?.spread || String(config.pricing?.spreadBasisPoints ?? 0),
+        feePolicyVersion: config.pricing?.feePolicyVersion || 'standard-v1',
+        expiresAt: expires.toISOString(),
+      },
+    },
   };
 
   if (idempotencyKey) {
     try {
-      const quote = await tx.quote.create({ data: { ...data, idempotencyKey } });
+      const quote = await client.quote.create({ data: { ...data, idempotencyKey } });
       return withIdAlias(quote);
     } catch (error) {
       if (error?.code === 'P2002' && Array.isArray(error?.meta?.target) && error.meta.target.includes('idempotencyKey')) {
@@ -126,14 +273,14 @@ const createQuote = async ({
         // status) so the caller dedups against the same record instead of
         // erroring — the transaction idempotency check upstream handles the
         // rest.
-        const existing = await tx.quote.findFirst({ where: { idempotencyKey } });
+        const existing = await client.quote.findFirst({ where: { idempotencyKey } });
         if (existing) return withIdAlias(existing);
       }
       throw error;
     }
   }
 
-  const quote = await tx.quote.create({ data });
+  const quote = await client.quote.create({ data });
   return withIdAlias(quote);
 };
 
@@ -189,8 +336,8 @@ const validateQuoteForExecution = async ({ quote, userId, asset, amount }) => {
 // and if it was already `consumed` we refuse (it settled a payment). The new
 // quote is written through the same client (so it can join a caller's
 // transaction atomically) and the old quote is marked `replaced`.
-const requote = async ({ userId, quoteId, tx = prisma, emit = true } = {}) => {
-  const client = tx || prisma;
+const requote = async ({ userId, quoteId, tx, emit = true } = {}) => {
+  const client = tx || defaultPrisma();
   const stale = await client.quote.findUnique({ where: { id: quoteId } });
   if (!stale) {
     throw new QuoteError(QUOTE_ERROR_CODES.NOT_FOUND, 'Quote not found.');
@@ -243,8 +390,8 @@ const requote = async ({ userId, quoteId, tx = prisma, emit = true } = {}) => {
 // close `active` quotes that were never attached to a transaction (orphans from
 // prior bugs where the quote committed outside the payment transaction). Emits
 // audit + metrics so expiration/cleanup is observable.
-const reconcileQuotes = async ({ prismaClient = prisma, now = new Date(), orphanGraceMs = 60 * 60 * 1000, emit = true } = {}) => {
-  const client = prismaClient;
+const reconcileQuotes = async ({ prismaClient, now = new Date(), orphanGraceMs = 60 * 60 * 1000, emit = true } = {}) => {
+  const client = prismaClient || defaultPrisma();
 
   const expired = await client.quote.updateMany({
     where: { status: QUOTE_STATUS.ACTIVE, expiresAt: { lt: now } },
@@ -274,14 +421,19 @@ const reconcileQuotes = async ({ prismaClient = prisma, now = new Date(), orphan
   return { expired: expired.count, orphaned: orphaned.count };
 };
 
+const { getPolicyConversionSnapshot, PolicyError, POLICY_ERROR_CODES } = require('./policyRate');
+
 module.exports = {
   createQuote,
   getExchangeRate,
+  getPolicyConversionSnapshot,
   assertConfiguredCurrency,
   validateQuoteForExecution,
   requote,
   reconcileQuotes,
   QuoteError,
+  PolicyError,
   QUOTE_STATUS,
   QUOTE_ERROR_CODES,
+  POLICY_ERROR_CODES,
 };

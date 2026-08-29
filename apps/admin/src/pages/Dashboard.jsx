@@ -35,25 +35,7 @@ export default function Dashboard() {
   const handleRetry = useCallback(() => setRetryCount((c) => c + 1), []);
 
   if (loading) return <div className="flex justify-center py-20"><Loader size={32} /></div>;
-
-  // Safe error state — renders only the sanitized userMessage, never raw error details
-  if (error) {
-    return (
-      <div
-        role="alert"
-        className="rounded-lg border border-red-100 bg-red-50 p-6 text-center"
-      >
-        <p className="mb-4 font-medium text-red-700">{error.userMessage}</p>
-        <button
-          type="button"
-          onClick={handleRetry}
-          className="rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-accent focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
-        >
-          Try again
-        </button>
-      </div>
-    );
-  }
+  if (error) return <div className="text-red-500 p-4 bg-red-50 rounded-lg" role="alert">{error}</div>;
 
   return (
     <div className="min-w-0">
@@ -70,7 +52,7 @@ export default function Dashboard() {
       </div>
 
       <div className="mt-8 sm:mt-12 bg-white p-5 sm:p-8 rounded-2xl border border-gray-100 shadow-sm">
-        <h3 className="text-lg font-bold mb-4">Welcome to SendAm Admin</h3>
+        <h2 className="text-lg font-bold mb-4">Welcome to SendAm Admin</h2>
         <p className="text-gray-600 leading-relaxed max-w-3xl">
           This dashboard monitors the SendAm architecture: direct-custody wallets, payment orchestration, KYC, audit logs, and system health. All payments settle on Stellar.
         </p>

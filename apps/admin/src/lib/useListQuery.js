@@ -13,6 +13,7 @@ export function useListQuery(filterKeys = []) {
 
   // Stable across renders so the fetch effect doesn't loop: identity only
   // changes when the serialised query string changes.
+  const queryString = searchParams.toString();
   const params = useMemo(() => {
     const entries = Object.fromEntries(new URLSearchParams(searchString).entries());
     const result = {};
@@ -21,7 +22,7 @@ export function useListQuery(filterKeys = []) {
     }
     return result;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchString]);
+  }, [queryString]);
 
   const entries = Object.fromEntries(searchParams.entries());
 

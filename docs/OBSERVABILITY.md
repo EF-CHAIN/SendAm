@@ -80,6 +80,21 @@ The primary metrics are:
 - `sendam_health_checks_total`
 - process uptime and resident memory gauges
 
+Redis availability and recovery signals (see
+`apps/api/src/config/redis.js` and `test/redis.safeguards.test.js`):
+
+- `sendam_redis_status` (gauge, 1 = serving/ready) — quick health at a glance.
+- `sendam_redis_disconnects_total` — unexpected Redis disconnects.
+- `sendam_redis_reconnects_total` — reconnect attempts with backoff.
+- `sendam_redis_disconnect_recovered_total` — returns to serving after a drop.
+- `sendam_redis_recovery_seconds` (histogram) — measured outage duration.
+- `sendam_redis_failovers_total` — Sentinel failover to a new master.
+- `sendam_redis_retries_exhausted_total` — reconnect budget exhausted.
+- `sendam_redis_errors_total` — client-level Redis errors.
+- `sendam_queue_inline_fallback_total` — accepted jobs running inline instead
+  of durably queued (Redis unavailable). This constitutes an operator alert,
+  never a silent drop.
+
 Labels are deliberately bounded to method, route, status, queue, and outcome.
 Do not add phone numbers, wallet addresses, transaction IDs, job IDs, or
 correlation IDs as metric labels.
@@ -141,6 +156,22 @@ impact.
 Inspect failures by queue and job ID in structured logs. Check Redis and
 downstream providers. Reconcile payments before replaying; never bulk-retry a
 financial queue solely to clear an alert.
+
+### Redis disconnected
+
+On `SendAmRedisDisconnected`, the client enters exponential bounded reconnect
+backoff; BullMQ and the DLQ keep buffering and replay accepted work once Redis
+returns, so nothing durable is silently dropped. Confirm the endpoint, TLS
+(`rediss://` / `REDIS_CA` / `REDIS_TLS`), timeouts, and Sentinel topology. If
+`sendam_redis_retries_exhausted_total` fires, reconnects have stopped by policy —
+verify Redis is reachable, then restart the affected process so it reconnects.
+
+`SendAmRedisFailover` means Sentinel promoted a new master; confirm replicas are
+up to date before resuming financial traffic. `SendAmQueueInlineFallback` means
+jobs are being executed in-process rather than durably queued because Redis is
+down or unconfigured — treat it as a degradation and restore Redis rather than
+relying on the fallback. On `SendAmRedisRecovery`, confirm the buffered work
+drained and reconcile any pendings before clearing the incident.
 
 If metrics return 403, rotate and synchronize the scrape/API metrics token. If
 error-monitor delivery fails, use JSON logs and Prometheus alerts as the

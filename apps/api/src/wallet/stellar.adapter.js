@@ -310,6 +310,12 @@ const submitPayment = async ({
 
     const stellarMemo = buildStellarMemo({ memo, memoType });
 
+    // The transaction is built once and (for a timeout/ambiguous write failure)
+    // the SAME signed envelope is reused for a bounded number of retries. This
+    // makes submission idempotent: a timed-out payment is verified against
+    // Horizon rather than resubmitted as a fresh transaction that could double.
+    // On tx_bad_seq (sequence number already advanced by a concurrent write) we
+    // reload the source account for a fresh sequence and rebuild instead.
     let transaction;
     let hash;
     let lastError;
@@ -332,14 +338,9 @@ const submitPayment = async ({
         builder.addMemo(stellarMemo);
       }
 
-        if (stellarMemo) {
-          builder.addMemo(stellarMemo);
-        }
-
-        transaction = builder.setTimeout(30).build();
-        transaction.sign(sourceKeypair);
-        hash = safeHash(transaction);
-      }
+      transaction = builder.setTimeout(30).build();
+      transaction.sign(sourceKeypair);
+      hash = safeHash(transaction);
 
       try {
         const txResponse = await server.submitTransaction(transaction);

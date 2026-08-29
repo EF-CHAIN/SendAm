@@ -7,6 +7,7 @@ import AdminLayout from './components/AdminLayout.jsx';
 // This enables per-route performance budget tracking and keeps
 // the initial bundle lean — only the shell loads on first paint.
 const Login = lazy(() => import('./pages/Login.jsx'));
+const SetPassword = lazy(() => import('./pages/SetPassword.jsx'));
 const Dashboard = lazy(() => import('./pages/Dashboard.jsx'));
 const Users = lazy(() => import('./pages/Users.jsx'));
 const Wallets = lazy(() => import('./pages/Wallets.jsx'));
@@ -20,6 +21,7 @@ export default function App() {
     <Suspense fallback={null}>
       <Routes>
         <Route path="/login" element={<Login />} />
+        <Route path="/set-password" element={<SetPassword />} />
         <Route element={<AdminLayout />}>
           <Route path="/" element={<Dashboard />} />
           <Route path="/users" element={<Users />} />

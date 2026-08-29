@@ -17,23 +17,23 @@ export default function AuditLogs() {
   const [error, setError] = useState('');
 
   useEffect(() => {
-    let active = true;
+to    // Same fetch pattern as the other list pages (Users, Wallets,
+    // Transactions): loading is toggled inside the async fetch so the spinner
+    // shows on every refetch without calling setState synchronously in the
+    // effect body (react-hooks/set-state-in-effect).
     const fetchLogs = async () => {
       setLoading(true);
       try {
         const res = await getAdminAuditLogs(params);
-        if (active) {
-          setRows(res.data || []);
-          setPagination(res.pagination);
-        }
+        setRows(res.data || []);
+        setPagination(res.pagination);
       } catch (err) {
-        if (active) setError(err.message || 'Failed to fetch audit logs');
+        setError(err.message || 'Failed to fetch audit logs');
       } finally {
-        if (active) setLoading(false);
+        setLoading(false);
       }
     };
     fetchLogs();
-    return () => { active = false; };
   }, [params]);
 
   const handleExport = async () => {

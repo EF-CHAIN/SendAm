@@ -136,7 +136,8 @@ model Transaction {
   updatedAt             DateTime @updatedAt
 
   user  User   @relation(fields: [userId], references: [id], onDelete: Cascade)
-  quote Quote? @relation(fields: [quoteId], references: [id])
+  quote         Quote?         @relation(fields: [quoteId], references: [id])
+  ledgerEntries JournalEntry[]
 
   @@index([userId, createdAt])
   @@index([status])
@@ -146,6 +147,53 @@ model Transaction {
   @@index([createdAt, id])
   @@index([txHash])
   @@index([providerTransactionId])
+}
+
+model LedgerAccount {
+  id        String   @id @default(cuid())
+  key       String   @unique
+  type      String
+  asset     String
+  userId    String?
+  createdAt DateTime @default(now())
+
+  postings LedgerPosting[]
+
+  @@index([type, asset])
+  @@index([userId])
+}
+
+model JournalEntry {
+  id            String   @id @default(cuid())
+  eventType     String
+  transactionId String?
+  externalRef   String?
+  metadata      Json     @default("{}")
+  createdAt     DateTime @default(now())
+
+  transaction Transaction?    @relation(fields: [transactionId], references: [id], onDelete: SetNull)
+  postings    LedgerPosting[]
+
+  @@index([eventType, createdAt])
+  @@index([transactionId])
+  @@index([externalRef])
+}
+
+model LedgerPosting {
+  id             String   @id @default(cuid())
+  journalEntryId String
+  accountId      String
+  asset           String
+  /// Signed canonical decimal string. The sum of postings per journal entry and asset must be zero.
+  amount          String
+  createdAt       DateTime @default(now())
+
+  journalEntry JournalEntry  @relation(fields: [journalEntryId], references: [id], onDelete: Restrict)
+  account      LedgerAccount @relation(fields: [accountId], references: [id], onDelete: Restrict)
+
+  @@index([journalEntryId])
+  @@index([accountId])
+  @@index([asset, createdAt])
 }
 
 model Contact {
@@ -198,12 +246,39 @@ model KycProfile {
   updatedAt         DateTime  @updatedAt
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  screeningResults SanctionsScreeningResult[]
 
   @@index([status])
   @@index([sanctionsStatus])
   @@index([custodyStatus])
   @@index([status, updatedAt])
   @@index([updatedAt, id])
+}
+
+// Auditable sanctions/PEP screening results per subject (customer, beneficial owner, recipient)
+// Links to KycProfile for traceability and periodic re-screening workflows.
+model SanctionsScreeningResult {
+  id            String   @id @default(cuid())
+  profileId     String
+  subjectId     String   // e.g., "customer:userId", "recipient:phoneNumber"
+  subjectType   String   // "customer" | "beneficial_owner" | "recipient"
+  provider      String   // screening provider name (e.g., "static", "complyadvantage")
+  listVersion   String   // provider list version/date
+  status        String   // "cleared" | "review" | "blocked" | "error"
+  reason        String   // human-readable reason for the status
+  matches       Json     @default("[]") // structured match evidence from provider
+  screenedAt    DateTime @default(now())
+  decisionOwner String?  // who resolved a "review" case (null = pending)
+  resolvedAt    DateTime?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  profile KycProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  @@index([profileId, screenedAt])
+  @@index([subjectId, screenedAt])
+  @@index([status, screenedAt])
+  @@index([provider, listVersion])
 }
 
 // Durable inbox for idempotent KYC callback processing. The unique provider
@@ -219,6 +294,22 @@ model KycWebhookEvent {
   @@unique([provider, providerEventId])
   @@index([profileId])
   @@index([receivedAt])
+}
+
+// Maker-checker approval record for high-impact KYC overrides.
+model KycApproval {
+  id              String   @id @default(cuid())
+  profileId       String
+  proposedChanges Json
+  requestedBy     String
+  status          String   @default("pending") // pending | approved | rejected | superseded
+  approvedBy      String?
+  decidedAt       DateTime?
+  createdAt       DateTime @default(now())
+
+  @@index([profileId])
+  @@index([status])
+  @@index([requestedBy])
 }
 
 model VoiceCommand {
@@ -273,6 +364,12 @@ model AdminUser {
   passwordHash      String
   roleId            String
   disabledAt        DateTime?
+  // Set when an administrator was provisioned from the legacy shared
+  // ADMIN_PASSWORD bootstrap (or any other temporary credential). The account
+  // is blocked from admin work until the operator rotates to a private password
+  // via POST /api/admin/password. This is what makes "shared credentials
+  // cannot authenticate after migration" hold for the bootstrap admin too.
+  mustChangePassword Boolean   @default(false)
   passwordChangedAt DateTime   @default(now())
   lastLoginAt       DateTime?
   createdAt         DateTime   @default(now())
@@ -392,9 +489,13 @@ model Quote {
   targetAmount   String?
   /// Decimal string exchange rate; do not use Float for quote math.
   rate           String?
+  sourceTimestamp DateTime?
+  spread         String   @default("0")
+  feePolicyVersion String @default("standard-v1")
   /// Canonical decimal string in sourceCurrency precision.
   fee            String?
   provider       String?
+  providerResponse Json?
   route          String?
   /// Lifecycle state of the quote. `active` quotes can be submitted; `consumed`
   /// quotes have already settled a payment; `expired`/`replaced`/`orphaned`

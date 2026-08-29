@@ -1,7 +1,7 @@
 process.env.DATABASE_URL = process.env.DATABASE_URL || 'postgresql://sendam:secret@localhost:5432/sendam';
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { assertConfiguredCurrency } = require('../src/pricing/pricing.service');
+const { assertConfiguredCurrency, createQuote } = require('../src/pricing/pricing.service');
 const { reconcileMonetaryValues } = require('../src/payment/payment.reconciler');
 
 test('assertConfiguredCurrency supports default and custom configured fiat currencies', () => {
@@ -53,4 +53,35 @@ test('reconcileMonetaryValues audits and fixes non-canonical database monetary v
   assert.equal(updatedQuotes.length, 1);
   assert.equal(updatedQuotes[0].data.sourceAmount, '10.50');
   assert.equal(updatedTransactions[0].data.amount, '5.1000000');
+});
+
+test('createQuote persists provider provenance and customer-visible expiry inputs', async () => {
+  let persisted;
+  const expiresAt = new Date(Date.now() + 5 * 60 * 1000);
+  const mockPrisma = {
+    quote: {
+      create: async ({ data }) => {
+        persisted = data;
+        return { id: 'quote_prov_1', ...data };
+      },
+    },
+  };
+
+  const quote = await createQuote({
+    userId: 'user_1',
+    sourceCurrency: 'XLM',
+    targetCurrency: 'XLM',
+    sourceAmount: '5.0000000',
+    route: 'stellar',
+    provider: 'stellar',
+    expiresAt,
+    tx: mockPrisma,
+  });
+
+  assert.equal(quote.rate, '1');
+  assert.equal(persisted.sourceTimestamp instanceof Date, true);
+  assert.equal(persisted.spread, '0');
+  assert.equal(persisted.feePolicyVersion, 'standard-v1');
+  assert.equal(persisted.providerResponse.effectiveRate, '1');
+  assert.equal(persisted.expiresAt, expiresAt);
 });

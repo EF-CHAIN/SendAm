@@ -66,3 +66,50 @@ groups:
           service: sendam-api
         annotations:
           summary: SendAm database health checks are failing
+
+      - alert: SendAmRedisDisconnected
+        expr: sendam_redis_status == 0
+        for: 2m
+        labels:
+          severity: critical
+          service: sendam-redis
+        annotations:
+          summary: SendAm Redis is disconnected and work is being queued/buffered
+          runbook_url: https://github.com/EF-CHAIN/SendAm/blob/main/docs/OBSERVABILITY.md#redis-disconnected
+
+      - alert: SendAmRedisRecovery
+        expr: increase(sendam_redis_disconnect_recovered_total[5m]) > 0
+        for: 0m
+        labels:
+          severity: info
+          service: sendam-redis
+        annotations:
+          summary: SendAm Redis has recovered after an outage
+
+      - alert: SendAmRedisFailover
+        expr: increase(sendam_redis_failovers_total[5m]) > 0
+        for: 0m
+        labels:
+          severity: warning
+          service: sendam-redis
+        annotations:
+          summary: SendAm Redis failed over to a new master node
+
+      - alert: SendAmRedisRetriesExhausted
+        expr: increase(sendam_redis_retries_exhausted_total[10m]) > 0
+        for: 1m
+        labels:
+          severity: critical
+          service: sendam-redis
+        annotations:
+          summary: SendAm Redis reconnect budget exhausted; ensure Redis is reachable
+          runbook_url: https://github.com/EF-CHAIN/SendAm/blob/main/docs/OBSERVABILITY.md#redis-disconnected
+
+      - alert: SendAmQueueInlineFallback
+        expr: increase(sendam_queue_inline_fallback_total[10m]) > 0
+        for: 5m
+        labels:
+          severity: critical
+          service: sendam-api
+        annotations:
+          summary: SendAm jobs are running inline instead of durably queued (Redis unavailable)

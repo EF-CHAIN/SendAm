@@ -9,7 +9,15 @@ const authenticateAdmin = async (req, res, next) => {
     req.admin = admin; return next();
   } catch (error) { return next(error); }
 };
-const requirePermission = (permission) => async (req, res, next) => {
+const requirePermission = (permission, options = {}) => async (req, res, next) => {
+  // Accounts that were provisioned from the shared legacy credential (or any
+  // temporary credential) are locked out of admin work until they rotate the
+  // password via POST /api/admin/password. This is what guarantees the shared
+  // ADMIN_PASSWORD cannot authenticate real admin operations after migration.
+  if (req.admin?.mustChangePassword && !options.allowPasswordChangePending) {
+    await writeAuditLog({ actorType: 'administrator', actorId: req.admin.id, action: 'admin.passwordChange.required', metadata: { method: req.method, path: req.originalUrl }, req });
+    return sendError(res, 'Password change required before admin access', 403, { code: 'PASSWORD_CHANGE_REQUIRED' });
+  }
   if (hasPermission(req.admin, permission)) {
     await writeAuditLog({ actorType: 'administrator', actorId: req.admin.id, action: 'admin.route.accessed', metadata: { permission, method: req.method, path: req.originalUrl }, req });
     return next();

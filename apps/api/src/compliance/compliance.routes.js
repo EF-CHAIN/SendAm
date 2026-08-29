@@ -11,6 +11,7 @@ router.get('/kyc', requireRestApiEnabled, requireRestSession, controller.getOwnP
 router.post('/kyc/start', requireRestApiEnabled, requireRestSession, controller.startKyc);
 router.post('/kyc/callback/smileid', controller.smileIdCallback);
 router.post('/kyc/:id/review', requireAdmin('compliance.write'), controller.reviewKyc);
+router.post('/kyc/:id/approve', requireAdmin('compliance.write'), controller.approveOverride);
 router.post('/pin', requireRestApiEnabled, requireRestSession, controller.setPin);
 
 // Customer privacy lifecycle (self-service): export own data, request erasure.

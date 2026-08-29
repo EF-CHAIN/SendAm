@@ -3,17 +3,23 @@ const logger = require('../utils/logger');
 const { getContext, runWithContext, correlationIdFrom } = require('../observability/context');
 const { increment, observeDuration } = require('../observability/metrics');
 const { captureException } = require('../observability/errors');
+const {
+  getRedisConnection,
+  getRedisStatus,
+  redisIsAvailable,
+  resetRedisConnection,
+} = require('../config/redis');
 
 let Queue;
 let Worker;
-let IORedis;
 let connection;
 
 try {
   ({ Queue, Worker } = require('bullmq'));
-  IORedis = require('ioredis');
-  connection = config.redis.url ? new IORedis(config.redis.url, { maxRetriesPerRequest: null }) : undefined;
-  connection?.on('error', (error) => logger.error('queue_redis_error', { message: error.message }));
+  // The connection is shared process-wide with a single configured policy
+  // (TLS, reconnect backoff, command timeouts, Sentinel topology) and drives
+  // disconnect/failover/recovery metrics. See src/config/redis.js.
+  connection = getRedisConnection(config);
 } catch (_error) {
   logger.warn('BullMQ is not installed; webhook jobs will run inline in development.');
 }
@@ -121,6 +127,18 @@ const enqueue = async (name, jobName, data, options = {}) => {
 
   const processor = inlineProcessors.get(name);
   if (processor) {
+    // Safeguard: reaching here means Redis is not configured (or is down) and
+    // the job is being executed in-process rather than durably queued. That is
+    // fine for local development, but an operator must not mistake it for a
+    // durable enqueue — so we raise an explicit metric + alert instead of
+    // silently degrading. Production is protected by validateEnv (rediss://
+    // required) and enqueue() throwing when nothing can process the job.
+    increment('sendam_queue_inline_fallback_total', { queue: name });
+    logger.warn('queue_inline_fallback', {
+      queue: name,
+      reason: connection ? 'redis-not-ready' : 'redis-unconfigured',
+      status: getRedisStatus().status,
+    });
     setImmediate(() => processor({ name: jobName, data: correlatedData, id: options.jobId }).catch((error) => {
       logger.error('inline_queue_job_failed', { queue: name, jobName, error });
     }));
@@ -131,16 +149,29 @@ const enqueue = async (name, jobName, data, options = {}) => {
 };
 
 const closeQueues = async () => {
+  await Promise.all([...workers.values()].map((worker) => worker.pause()));
   await Promise.all([...workers.values()].map((worker) => worker.close()));
   await Promise.all([...queues.values()].map((queue) => queue.close()));
   workers.clear();
   queues.clear();
   inlineProcessors.clear();
-  if (connection) await connection.quit();
+  await resetRedisConnection();
+};
+
+const pingRedis = async (timeoutMs = 1000) => {
+  if (!connection) throw new Error('Redis connection is unavailable');
+  if (!redisIsAvailable()) {
+    throw new Error(`Redis is not ready (status=${getRedisStatus().status})`);
+  }
+  await Promise.race([
+    connection.ping(),
+    new Promise((_, reject) => setTimeout(() => reject(new Error('Redis health check timed out')), timeoutMs)),
+  ]);
 };
 
 module.exports = {
   enqueue,
   registerProcessor,
   closeQueues,
+  pingRedis,
 };

@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Automated accessibility coverage for the admin dashboard: jest-axe scans
+  plus keyboard/focus/landmark/label assertions over the real admin workflows
+  (navigation, tables, pagination, forms, status indicators) in
+  `apps/admin/src/accessibility.test.jsx`; runs in CI via
+  `npm run test --workspace=apps/admin`.
 - Secret scanning with gitleaks: CI workflow (`.github/workflows/secret-scan.yml`),
   custom ruleset (`.gitleaks.toml`) covering Stellar keys, provider tokens,
   database URLs, and generic high-entropy secrets. Self-test validates the
@@ -42,9 +47,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   pollers separately from the HTTP API process (see `docs/BACKGROUND-WORKERS.md`).
 - `ISSUE_CLOSURE_CHECKLIST.md` — reusable closure/release checklist requiring
   acceptance-criteria evidence for PRs and releases.
+- Redis availability and recovery safeguards: a single shared connection policy
+  in `apps/api/src/config/redis.js` (TLS from `rediss://` / `REDIS_CA` /
+  `REDIS_TLS`, exponential bounded reconnect backoff, connect/command timeouts,
+  keep-alive, and Sentinel topology for automatic failover). All Redis consumers
+  (BullMQ queues, the WhatsApp DLQ, and per-sender ordering) now share one
+  connection so an outage surfaces as consistent metrics/alerts instead of
+  silently dropping accepted work. Disconnect, reconnect, failover, and recovery
+  transitions emit Prometheus metrics and operator logs, and an inline fallback
+  path is explicitly alarmed rather than silent. Tests:
+  `apps/api/test/redis.safeguards.test.js`.
 
 ### Changed
 
+- Admin dashboard accessibility fixes: `main` landmarks on the layout and
+  login page, label/control associations on the login form, heading structure
+  (stat values and welcome heading no longer skip levels), and live-region
+  semantics for loading (`role="status"`) and error (`role="alert"`) states.
 - HTTP request logging now uses the `combined` Morgan format in production
   (`dev` elsewhere) for production-grade access logs.
 - The REST `POST /api/wallet/create` endpoint now marks the wallet as funded on

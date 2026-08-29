@@ -13,28 +13,14 @@ export const handlers = [
   // Dashboard stats
   http.get('*/api/admin/stats', () => {
     return HttpResponse.json({
-      success: true,
       data: {
         totalUsers: 42,
-        totalWallets: 38,
-        totalTransactions: 120,
+        totalWallets: 7,
+        totalTransactions: 128,
         successfulTransactions: 100,
-        failedTransactions: 5,
-        pendingTransactions: 15,
+        failedTransactions: 8,
+        pendingTransactions: 20,
         pendingKyc: 3,
-      },
-    });
-  }),
-
-  // System health
-  http.get('*/api/admin/system-health', () => {
-    return HttpResponse.json({
-      success: true,
-      data: {
-        status: 'ok',
-        database: 'connected',
-        redis: 'connected',
-        uptime: '99.9%',
       },
     });
   }),

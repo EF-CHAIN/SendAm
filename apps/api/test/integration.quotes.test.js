@@ -37,7 +37,22 @@ if (!testDbUrl) {
     createOrGetWallet: async () => ({ id: 'w_test', publicKey: DEST, encryptedSecretKey: 'enc' }),
     submitPayment: async () => ({ txHash: 'test_hash', explorerUrl: 'https://stellar.expert/test_hash' }),
   };
-  const complianceMock = { enforceTransactionPolicy: async () => ({ riskScore: 5 }) };
+  const complianceMock = {
+    enforceTransactionPolicy: async () => ({
+      riskScore: 5,
+      policySnapshot: {
+        referenceCurrency: 'NGN',
+        sourceAsset: 'XLM',
+        sourceAmount: '1.0000000',
+        rate: '1',
+        convertedAmount: '1.00',
+        source: 'identity',
+        fetchedAt: new Date().toISOString(),
+        maxAgeMs: 300000,
+        policyVersion: '1',
+      },
+    }),
+  };
 
   require.cache[path.resolve(apiRoot, 'src/wallet/wallet.service.js')] = {
     id: path.resolve(apiRoot, 'src/wallet/wallet.service.js'),

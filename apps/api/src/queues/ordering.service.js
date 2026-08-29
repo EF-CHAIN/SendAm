@@ -1,6 +1,8 @@
 const crypto = require('crypto');
 const logger = require('../utils/logger');
 const { increment } = require('../observability/metrics');
+const config = require('../config/env');
+const { getRedisConnection } = require('../config/redis');
 
 const DEFAULT_REQUEUE_DELAY_MS = 250;
 const DEFAULT_MAX_REQUEUES = 40;
@@ -157,16 +159,12 @@ const createRedisOrderingStore = (options = {}) => {
  */
 const createDistributedOrderingStore = (options = {}) => {
   let { redis } = options;
-  if (!redis && process.env.REDIS_URL) {
-    try {
-      const Redis = require('ioredis');
-      redis = new Redis(process.env.REDIS_URL, {
-        maxRetriesPerRequest: null,
-        enableReadyCheck: false,
-      });
-    } catch {
-      // Fallback if ioredis unavailable
-    }
+  if (!redis) {
+    // Share the process-wide connection configured in config/redis.js so
+    // ordering inherits the same TLS / backoff / timeout / Sentinel policy and
+    // contributes to the same disconnect/failover/recovery metrics. Falls back
+    // to a purely in-memory store below when Redis is unconfigured (dev/test).
+    redis = getRedisConnection(config);
   }
 
   if (redis) {

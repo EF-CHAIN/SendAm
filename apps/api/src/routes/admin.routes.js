@@ -17,11 +17,22 @@ router.post('/login', loginLimiter, adminController.login);
 router.post('/invitations/accept', loginLimiter, adminController.acceptInvite);
 
 router.post('/logout', requireAdmin('admin.read'), adminController.logout);
+// Identity of the authenticated operator. Needs an authenticated session but
+// must be reachable even when a password change is pending.
+router.get('/me', requireAdmin.authenticate, adminController.me);
+// Self-serve password rotation. Explicitly exempt from the PASSWORD_CHANGE_REQUIRED
+// gate so a bootstrap/temporary credential can be replaced with a private one.
+router.post('/password', requireAdmin.permission('*', { allowPasswordChangePending: true }), adminController.changePassword);
 router.get('/stats', requireAdmin('admin.read'), adminController.getStats);
 router.get('/users', requireAdmin('admin.read'), adminController.getUsers);
 router.get('/wallets', requireAdmin('admin.read'), adminController.getWallets);
 router.get('/transactions', requireAdmin('admin.read'), adminController.getTransactions);
 router.post('/transactions/:id/refund', requireAdmin('operations.write'), adminController.refundTransaction);
+router.get('/payments/stuck', requireAdmin('operations.write'), adminController.getStuckPayments);
+router.post('/payments/stuck/:id/retry', requireAdmin('operations.write'), adminController.retryStuckPayment);
+router.post('/payments/stuck/:id/resolve', requireAdmin('operations.write'), adminController.markStuckPaymentResolved);
+router.post('/payments/stuck/:id/escalate', requireAdmin('operations.write'), adminController.escalateStuckPayment);
+router.get('/ledger/discrepancies', requireAdmin('operations.write'), adminController.getLedgerDiscrepancies);
 router.get('/kyc', requireAdmin('compliance.read'), adminController.getKycProfiles);
 router.get('/kyc/export', requireAdmin('compliance.read'), adminController.exportKyc);
 router.get('/audit-logs', requireAdmin('admin.read'), adminController.getAuditLogs);

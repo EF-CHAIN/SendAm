@@ -34,7 +34,21 @@ export const adminLogin = async (email, password) => {
   if (token) {
     setToken(token);
   }
-  return token;
+  return data?.data || { token: null, mustChangePassword: false };
+};
+
+// The authenticated operator's identity + effective permissions, used by the
+// UI to enforce role-based access and to detect a pending password change.
+export const getAdminMe = async () => {
+  const { data } = await api.get('/admin/me');
+  return data?.data || null;
+};
+
+// Self-serve password rotation. Required first step after a bootstrap/temporary
+// credential; also revokes all other active sessions for the operator.
+export const changeAdminPassword = async ({ currentPassword, newPassword }) => {
+  const { data } = await api.post('/admin/password', { currentPassword, newPassword });
+  return data;
 };
 
 export const getAdminStats = async () => {

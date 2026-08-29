@@ -7,6 +7,17 @@
 // Circle's Testnet USDC issuer — must never be used on mainnet.
 const TESTNET_USDC_ISSUER = 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5';
 
+const hasTls = (url, protocol) => {
+  try {
+    const parsed = new URL(url);
+    return protocol === 'postgres'
+      ? ['require', 'verify-ca', 'verify-full'].includes(parsed.searchParams.get('sslmode'))
+      : parsed.protocol === 'rediss:';
+  } catch (_error) {
+    return false;
+  }
+};
+
 const validateEnv = (config) => {
   const problems = [];
 
@@ -24,6 +35,24 @@ const validateEnv = (config) => {
 
   if (config.isProduction && !config.whatsapp.appSecret) {
     problems.push('WHATSAPP_APP_SECRET must be set in production — without it, inbound webhook signatures cannot be verified.');
+  }
+
+  if (config.isProduction) {
+    if (!config.databaseUrl || !hasTls(config.databaseUrl, 'postgres')) {
+      problems.push('DATABASE_URL must use PostgreSQL TLS (sslmode=require, verify-ca, or verify-full) in production.');
+    }
+    if (!config.redis?.url || !hasTls(config.redis.url, 'redis')) {
+      problems.push('REDIS_URL or UPSTASH_REDIS_URL must use rediss:// TLS in production.');
+    }
+    if (!Number.isInteger(config.databasePool?.max) || config.databasePool.max < 1) {
+      problems.push('DATABASE_POOL_MAX must be a positive integer in production.');
+    }
+    if (!Number.isFinite(config.databasePool?.connectionTimeoutMs) || config.databasePool.connectionTimeoutMs < 1) {
+      problems.push('DATABASE_CONNECTION_TIMEOUT_MS must be positive in production.');
+    }
+    if (!Number.isFinite(config.databasePool?.poolTimeoutMs) || config.databasePool.poolTimeoutMs < 1) {
+      problems.push('DATABASE_POOL_TIMEOUT_MS must be positive in production.');
+    }
   }
 
   if (config.isProduction && config.messageTransport === 'meta') {

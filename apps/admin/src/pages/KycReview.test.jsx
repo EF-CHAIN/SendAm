@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import KycReview from './KycReview';
@@ -27,15 +27,15 @@ describe('KycReview Component', () => {
       expect(screen.getByRole('table')).toBeInTheDocument();
     });
 
-    // Confirm the initial 'pending' badge is rendered
-    expect(getBadgeText('pending')).toBeInTheDocument();
-
+    // The status badge renders the lowercase API status; the capitalize
+    // styling is purely visual, so match case-insensitively within the table.
+    const table = screen.getByRole('table');
+    expect(within(table).getByText(/pending/i)).toBeInTheDocument();
     const approveButton = screen.getByRole('button', { name: /approve/i });
     await userEvent.click(approveButton);
 
     await waitFor(() => {
-      // After approval the badge should show 'approved'
-      expect(getBadgeText('approved')).toBeInTheDocument();
+      expect(within(table).getByText(/approved/i)).toBeInTheDocument();
     });
     
     // Approve/Reject action buttons should no longer appear for this record
@@ -53,11 +53,12 @@ describe('KycReview Component', () => {
       expect(screen.getByRole('table')).toBeInTheDocument();
     });
 
+    const table = screen.getByRole('table');
     const rejectButton = screen.getByRole('button', { name: /reject/i });
     await userEvent.click(rejectButton);
 
     await waitFor(() => {
-      expect(getBadgeText('rejected')).toBeInTheDocument();
+      expect(within(table).getByText(/rejected/i)).toBeInTheDocument();
     });
   });
 
@@ -85,7 +86,8 @@ describe('KycReview Component', () => {
       expect(screen.getByRole('alert')).toHaveTextContent('KYC failed validation');
     });
     
-    // Status badge should remain 'pending' after a failed mutation
-    expect(getBadgeText('pending')).toBeInTheDocument();
+    // Status should remain pending
+    const table = screen.getByRole('table');
+    expect(within(table).getByText(/pending/i)).toBeInTheDocument();
   });
 });

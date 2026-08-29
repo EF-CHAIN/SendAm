@@ -1,6 +1,19 @@
 const logger = require('../utils/logger');
-const { server } = require('../config/stellar');
-const { getTransactionUrl } = require('../wallet/stellar.adapter');
+const defaultHorizonServer = () => require('../config/stellar').server;
+const writeAuditLog = async (args) => {
+  try {
+    return await require('../common/audit.service').writeAuditLog(args);
+  } catch {
+    return null;
+  }
+};
+const transactionUrl = (hash) => {
+  try {
+    return require('../wallet/stellar.adapter').getTransactionUrl(hash);
+  } catch {
+    return `https://stellar.expert/explorer/testnet/tx/${hash}`;
+  }
+};
 
 // Stellar transactions are built with setTimeout(30), meaning the network
 // will reject the envelope if it isn't included within ~30 ledger-closes
@@ -25,10 +38,11 @@ const reconcileStaleTransactions = async ({
   prisma,
   staleAgeMs = 5 * 60 * 1000, // 5 minutes
   maxTransactions = 50,
-  horizonServer = server,
+  horizonServer,
   loggerInstance = logger,
   onReceipt = null, // optional callback(tx) called when a tx transitions to success
 } = {}) => {
+  const horizon = horizonServer || defaultHorizonServer();
   const cutoff = new Date(Date.now() - staleAgeMs);
 
   const staleTransactions = await prisma.transaction.findMany({
@@ -62,7 +76,7 @@ const reconcileStaleTransactions = async ({
         let notFound = false;
 
         try {
-          horizonTx = await horizonServer.transactions().transactionHash(tx.txHash).call();
+          horizonTx = await horizon.transactions().transactionHash(tx.txHash).call();
         } catch (err) {
           if (err.response?.status === 404) {
             notFound = true;
@@ -70,14 +84,13 @@ const reconcileStaleTransactions = async ({
             loggerInstance.warn(`Horizon error checking txHash ${tx.txHash} for tx ${tx.id}: ${err.message}`);
           }
         }
-
         if (horizonTx && horizonTx.successful) {
           // ✅ Confirmed — ledger-backed finality achieved.
           const updated = await prisma.transaction.update({
             where: { id: tx.id },
             data: {
               status: 'success',
-              explorerUrl: getTransactionUrl(tx.txHash),
+              explorerUrl: transactionUrl(tx.txHash),
               metadata: {
                 ...tx.metadata,
                 confirmedAt: new Date().toISOString(),
@@ -143,7 +156,7 @@ const reconcileStaleTransactions = async ({
       const senderPublicKey = tx.user?.wallets?.[0]?.publicKey;
       if (senderPublicKey) {
         try {
-          const paymentsResponse = await horizonServer.payments().forAccount(senderPublicKey).order('desc').limit(20).call();
+          const paymentsResponse = await horizon.payments().forAccount(senderPublicKey).order('desc').limit(20).call();
           const matchingPayment = paymentsResponse.records.find((p) => {
             const isPayment = p.type === 'payment';
             const amountMatches = String(p.amount) === String(tx.amount);
@@ -158,7 +171,7 @@ const reconcileStaleTransactions = async ({
               data: {
                 status: 'success',
                 txHash: hash,
-                explorerUrl: getTransactionUrl(hash),
+                explorerUrl: transactionUrl(hash),
                 metadata: {
                   ...tx.metadata,
                   confirmedAt: new Date().toISOString(),
@@ -205,7 +218,7 @@ const reconcileStaleTransactions = async ({
   return { processedCount: staleTransactions.length, updatedCount };
 };
 
-const { decimalToRatio, getAssetRule } = require('../utils/money');
+const { decimalToRatio, getAssetRule, parseUnits } = require('../utils/money');
 
 const canonicalizeMonetaryAmount = (amountStr, assetCode) => {
   if (amountStr == null || String(amountStr).trim() === '') return null;
@@ -328,4 +341,129 @@ const reconcileMonetaryValues = async ({
   return { checkedCount, invalidCount, fixedCount, errors };
 };
 
-module.exports = { reconcileStaleTransactions, reconcileMonetaryValues };
+const signedUnits = (amount, asset) => {
+  const raw = String(amount || '0').trim();
+  const sign = raw.startsWith('-') ? -1n : 1n;
+  const rule = getAssetRule(asset);
+  return sign * parseUnits(raw.replace(/^-/, '') || '0', rule.precision);
+};
+
+const sumPostingsByAsset = (postings = []) => {
+  const totals = new Map();
+  for (const posting of postings) {
+    totals.set(posting.asset, (totals.get(posting.asset) || 0n) + signedUnits(posting.amount, posting.asset));
+  }
+  return totals;
+};
+
+const listLedgerDiscrepancies = async ({ prisma, maxEntries = 500 } = {}) => {
+  const entries = await prisma.journalEntry.findMany({
+    take: maxEntries,
+    orderBy: { createdAt: 'desc' },
+    include: { postings: true, transaction: true },
+  });
+  const discrepancies = [];
+  for (const entry of entries) {
+    const totals = sumPostingsByAsset(entry.postings);
+    for (const [asset, total] of totals.entries()) {
+      if (total !== 0n) {
+        discrepancies.push({ type: 'unbalanced_entry', journalEntryId: entry.id, transactionId: entry.transactionId, asset });
+      }
+    }
+    if (entry.eventType === 'payment.settled' && entry.transaction && entry.transaction.status !== 'success') {
+      discrepancies.push({ type: 'ledger_stellar_state_mismatch', journalEntryId: entry.id, transactionId: entry.transactionId, status: entry.transaction.status });
+    }
+  }
+  return { checkedCount: entries.length, discrepancyCount: discrepancies.length, discrepancies };
+};
+
+const listStuckPayments = async ({
+  prisma,
+  staleAgeMs = 15 * 60 * 1000,
+  maxTransactions = 50,
+} = {}) => {
+  const cutoff = new Date(Date.now() - staleAgeMs);
+  const payments = await prisma.transaction.findMany({
+    where: {
+      status: { in: ['processing', 'pending', 'escalated'] },
+      createdAt: { lte: cutoff },
+    },
+    take: maxTransactions,
+    orderBy: { createdAt: 'asc' },
+    include: {
+      ledgerEntries: { include: { postings: { include: { account: true } } }, orderBy: { createdAt: 'asc' } },
+      user: { select: { phoneNumber: true } },
+    },
+  });
+
+  return payments.map((payment) => ({
+    ...payment,
+    retryHistory: Array.isArray(payment.metadata?.retryHistory) ? payment.metadata.retryHistory : [],
+    ledgerEvidence: payment.ledgerEntries,
+  }));
+};
+
+const requireReason = (reason) => {
+  const text = String(reason || '').trim();
+  if (text.length < 5) throw new Error('A reason of at least 5 characters is required.');
+  return text;
+};
+
+const operatorResolveStuckPayment = async ({
+  prisma,
+  transactionId,
+  action,
+  reason,
+  adminId,
+  now = new Date(),
+} = {}) => {
+  const cleanReason = requireReason(reason);
+  const allowed = new Set(['retry', 'mark_resolved', 'escalate']);
+  if (!allowed.has(action)) throw new Error('Invalid stuck payment action.');
+
+  return prisma.$transaction(async (tx) => {
+    const transaction = await tx.transaction.findUnique({ where: { id: transactionId } });
+    if (!transaction) throw new Error('Transaction not found.');
+    if (['success', 'resolved'].includes(transaction.status)) {
+      throw new Error('Settled or resolved payments cannot be retried.');
+    }
+
+    const metadata = typeof transaction.metadata === 'object' && transaction.metadata !== null ? transaction.metadata : {};
+    const retryHistory = Array.isArray(metadata.retryHistory) ? metadata.retryHistory : [];
+    const actionEvent = { action, reason: cleanReason, adminId, at: now.toISOString() };
+    const nextStatus = action === 'retry' ? 'processing' : action === 'mark_resolved' ? 'resolved' : 'escalated';
+    const nextMetadata = {
+      ...metadata,
+      retryHistory: action === 'retry' ? [...retryHistory, actionEvent] : retryHistory,
+      operatorActions: [...(Array.isArray(metadata.operatorActions) ? metadata.operatorActions : []), actionEvent],
+      resolvedAt: action === 'mark_resolved' ? now.toISOString() : metadata.resolvedAt,
+      escalatedAt: action === 'escalate' ? now.toISOString() : metadata.escalatedAt,
+    };
+
+    const updated = await tx.transaction.update({
+      where: { id: transaction.id },
+      data: { status: nextStatus, metadata: nextMetadata },
+    });
+
+    const audit = {
+      actorType: 'administrator',
+      actorId: adminId,
+      action: `admin.payment.${action}`,
+      entityType: 'Transaction',
+      entityId: transaction.id,
+      metadata: { reason: cleanReason, previousStatus: transaction.status, nextStatus },
+    };
+    if (tx.auditLog?.create) await tx.auditLog.create({ data: audit });
+    else await writeAuditLog(audit);
+
+    return updated;
+  });
+};
+
+module.exports = {
+  reconcileStaleTransactions,
+  reconcileMonetaryValues,
+  listLedgerDiscrepancies,
+  listStuckPayments,
+  operatorResolveStuckPayment,
+};

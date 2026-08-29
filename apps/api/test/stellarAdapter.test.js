@@ -19,7 +19,10 @@ const DESTINATION_PUBLIC_KEY = DESTINATION_WALLET.publicKey;
 
 const mockSuccessfulPaymentSetup = () => {
   mock.method(server, 'loadAccount', async () => {
-    return new StellarSdk.Account(SOURCE_PUBLIC_KEY, '1');
+    const account = new StellarSdk.Account(SOURCE_PUBLIC_KEY, '1');
+    account.balances = [{ asset_type: 'native', balance: '10' }];
+    account.subentry_count = 0;
+    return account;
   });
 
   mock.method(server, 'fetchBaseFee', async () => '100');

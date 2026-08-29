@@ -2,6 +2,7 @@ const crypto = require('node:crypto');
 
 const counters = new Map();
 const durations = new Map();
+const gauges = new Map();
 const BUCKETS = [0.01, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10];
 
 const labelsKey = (labels) => JSON.stringify(Object.entries(labels).sort(([a], [b]) => a.localeCompare(b)));
@@ -27,6 +28,10 @@ const observeDuration = (name, labels, seconds) => {
     if (seconds <= bucket) current.buckets.set(bucket, (current.buckets.get(bucket) || 0) + 1);
   }
   durations.set(key, current);
+};
+
+const setGauge = (name, value, labels = {}) => {
+  gauges.set(`${name}:${labelsKey(labels)}`, { name, labels, value });
 };
 
 const renderMetrics = () => {
@@ -57,6 +62,13 @@ const renderMetrics = () => {
     lines.push(`${metric.name}_bucket${labelsText({ ...metric.labels, le: '+Inf' })} ${metric.count}`);
     lines.push(`${metric.name}_sum${labelsText(metric.labels)} ${metric.sum}`);
     lines.push(`${metric.name}_count${labelsText(metric.labels)} ${metric.count}`);
+  }
+  for (const metric of gauges.values()) {
+    if (!names.has(metric.name)) {
+      lines.push(`# TYPE ${metric.name} gauge`);
+      names.add(metric.name);
+    }
+    lines.push(`${metric.name}${labelsText(metric.labels)} ${metric.value}`);
   }
   return `${lines.join('\n')}\n`;
 };
@@ -89,11 +101,13 @@ const requestMetrics = (req, res, next) => {
 const resetMetrics = () => {
   counters.clear();
   durations.clear();
+  gauges.clear();
 };
 
 module.exports = {
   increment,
   observeDuration,
+  setGauge,
   renderMetrics,
   metricsHandler,
   requestMetrics,

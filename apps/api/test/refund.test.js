@@ -39,6 +39,7 @@ const mockRecipientWallet = {
 const createdTransactions = new Map();
 
 // Database queries/mocks
+let mockCreatedRefund;
 const prismaMock = {
   transaction: {
     findUnique: async ({ where }) => {
@@ -53,19 +54,28 @@ const prismaMock = {
       return list;
     },
     create: async ({ data }) => {
+<<<<<<< HEAD
+      mockCreatedRefund = { id: 'refund_tx_new', status: 'processing', ...data };
+      return mockCreatedRefund;
+=======
       const tx = { id: 'refund_tx_new', status: 'processing', ...data };
       createdTransactions.set(tx.id, tx);
       return { ...tx };
+>>>>>>> upstream/main
     },
     update: async ({ where, data }) => {
       if (where.id === 'tx_original_123') {
         mockOriginalTx.metadata = data.metadata;
         return mockOriginalTx;
       }
+<<<<<<< HEAD
+      return { ...(where.id === 'refund_tx_new' ? mockCreatedRefund : {}), id: where.id, ...data };
+=======
       const existing = createdTransactions.get(where.id) || { id: where.id };
       const updated = { ...existing, ...data, metadata: { ...(existing.metadata || {}), ...(data.metadata || {}) } };
       createdTransactions.set(where.id, updated);
       return { ...updated };
+>>>>>>> upstream/main
     },
   },
   wallet: {
@@ -91,12 +101,12 @@ const prismaMock = {
 };
 
 const cryptoServiceMock = {
-  decrypt: (key) => 'SA_RECIPIENT_SECRET',
-  encrypt: (key) => 'encrypted',
+  decrypt: () => 'SA_RECIPIENT_SECRET',
+  encrypt: () => 'encrypted',
 };
 
 const stellarAdapterMock = {
-  submitPayment: async ({ secretKey, destination, amount, asset, memo, memoType }) => {
+  submitPayment: async ({ secretKey, destination, asset }) => {
     assert.equal(secretKey, 'SA_RECIPIENT_SECRET');
     assert.equal(destination, 'GABCsender');
     assert.equal(asset, 'XLM');
@@ -110,6 +120,7 @@ const stellarAdapterMock = {
 injectMock('common/prisma', prismaMock);
 injectMock('services/crypto.service', cryptoServiceMock);
 injectMock('wallet/stellar.adapter', stellarAdapterMock);
+injectMock('wallet/wallet.service', {});
 
 const { executeRefund } = require('../src/payment/payment.orchestrator');
 
@@ -146,12 +157,12 @@ test('executeRefund: rejects invalid refund reason', async () => {
 });
 
 test('executeRefund: prevents refund amount exceeding original transaction amount', async () => {
-  // Try to refund 150 XLM on top of the already refunded 50 XLM (limit is 100)
+  // Try to refund more than the original settled amount.
   await assert.rejects(
     () => executeRefund({
       transactionId: 'tx_original_123',
       reason: 'operator_mistake',
-      amount: '60.0000000',
+      amount: '150.0000000',
       adminId: 'admin_test',
     }),
     /Refund amount exceeds the maximum refundable amount/

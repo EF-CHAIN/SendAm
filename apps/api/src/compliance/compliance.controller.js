@@ -9,6 +9,15 @@ const prisma = require('../common/prisma');
 const { withIdAlias } = require('../common/records');
 const { canonicalizePhoneNumber, isValidPhoneNumber } = require('../utils/validators');
 const { writeAuditLog } = require('../common/audit.service');
+const {
+  validateTransition,
+  requiresReason,
+  assertConcurrency,
+  makerCheckerRequired,
+  buildReviewAuditMetadata,
+  TransitionError,
+} = require('./kyc.transitions');
+const logger = require('../utils/logger');
 
 const getProfile = async (req, res, next) => {
   try {
@@ -59,42 +68,223 @@ const smileIdCallback = async (req, res, next) => {
   }
 };
 
+/**
+ * POST /kyc/:id/review
+ *
+ * Enforces:
+ *   1. Transition matrix — only valid forward (or review-loop) transitions.
+ *   2. Optimistic concurrency — updatedAt must match the client's snapshot.
+ *   3. Structured reason — required when any field changes.
+ *   4. Maker-checker — high-impact overrides create a pending approval
+ *      record; a second operator must POST /kyc/:id/approve to finalise.
+ *   5. Full audit — old/new state, reason, policy version, operator IDs.
+ */
 const reviewKyc = async (req, res, next) => {
   try {
     const profile = await prisma.kycProfile.findUnique({ where: { id: req.params.id } });
     if (!profile) return sendError(res, 'KYC profile not found', 404);
 
-    const allowedStatuses = ['not_started', 'pending', 'approved', 'rejected', 'review'];
-    const allowedSanctions = ['not_screened', 'cleared', 'review', 'blocked'];
-    const allowedCustody = ['not_reviewed', 'approved', 'review', 'denied'];
+    // ── 1. Optimistic concurrency ───────────────────────────────────────
+    try {
+      assertConcurrency(req.body.updatedAt, profile.updatedAt);
+    } catch (err) {
+      if (err instanceof TransitionError) {
+        return sendError(res, err.message, err.statusCode);
+      }
+      throw err;
+    }
 
-    const status = req.body.status ?? profile.status;
-    const sanctionsStatus = req.body.sanctionsStatus ?? profile.sanctionsStatus;
-    const custodyStatus = req.body.custodyStatus ?? profile.custodyStatus;
+    // ── 2. Transition matrix + numeric bounds ────────────────────────────
+    const { target, errors } = validateTransition(profile, req.body);
+    if (errors.length > 0) {
+      return sendError(res, errors.join('; '), 400);
+    }
 
-    if (!allowedStatuses.includes(status)) return sendError(res, 'Invalid KYC status', 400);
-    if (!allowedSanctions.includes(sanctionsStatus)) return sendError(res, 'Invalid sanctions status', 400);
-    if (!allowedCustody.includes(custodyStatus)) return sendError(res, 'Invalid custody status', 400);
+    // ── 3. Structured reason ────────────────────────────────────────────
+    const changesRequested = requiresReason(profile, req.body);
+    if (changesRequested && !req.body.reason) {
+      return sendError(
+        res,
+        'A structured reason is required when changing KYC status, sanctions status, custody status, tier, or risk score.',
+        400,
+      );
+    }
 
+    // ── 4. Maker-checker ────────────────────────────────────────────────
+    const mc = makerCheckerRequired(profile, req.body);
+    if (mc.required) {
+      // Create a pending approval record so a second operator can finalise.
+      const pendingApproval = await prisma.kycApproval.create({
+        data: {
+          profileId: profile.id,
+          proposedChanges: {
+            ...target,
+            reason: req.body.reason || null,
+          },
+          requestedBy: req.admin.id,
+          status: 'pending',
+        },
+      });
+
+      await writeAuditLog({
+        actorType: 'administrator',
+        actorId: req.admin.id,
+        action: 'admin.compliance.override_submitted',
+        entityType: 'KycProfile',
+        entityId: profile.id,
+        metadata: buildReviewAuditMetadata({
+          profileBefore: profile,
+          target,
+          reason: req.body.reason,
+          operator: req.admin,
+          secondApprover: null,
+        }),
+        req,
+      });
+
+      return sendSuccess(
+        res,
+        {
+          approvalId: pendingApproval.id,
+          status: 'pending_approval',
+          reason: mc.reason,
+          proposedChanges: target,
+        },
+        'High-impact override requires second-operator approval',
+        202,
+      );
+    }
+
+    // ── 5. Apply the update ─────────────────────────────────────────────
     const reviewed = await prisma.kycProfile.update({
       where: { id: profile.id },
       data: {
-        status,
-        tier: Number(req.body.tier ?? profile.tier),
-        riskScore: Number(req.body.riskScore ?? profile.riskScore),
-        sanctionsStatus,
-        custodyStatus,
+        status: target.status,
+        tier: target.tier,
+        riskScore: target.riskScore,
+        sanctionsStatus: target.sanctionsStatus,
+        custodyStatus: target.custodyStatus,
         deniedReason: req.body.deniedReason ?? profile.deniedReason,
-        sanctionsScreenedAt: sanctionsStatus === 'cleared' || sanctionsStatus === 'blocked' || sanctionsStatus === 'review' ? new Date() : profile.sanctionsScreenedAt,
-        custodyReviewedAt: custodyStatus === 'approved' || custodyStatus === 'denied' || custodyStatus === 'review' ? new Date() : profile.custodyReviewedAt,
+        sanctionsScreenedAt: target.sanctionsStatus !== 'not_screened' ? new Date() : profile.sanctionsScreenedAt,
+        custodyReviewedAt: target.custodyStatus !== 'not_reviewed' ? new Date() : profile.custodyReviewedAt,
       },
     });
+
     await prisma.user.update({
       where: { id: reviewed.userId },
       data: { kycTier: reviewed.tier, riskScore: reviewed.riskScore },
     });
-    await writeAuditLog({ actorType: 'administrator', actorId: req.admin.id, action: 'admin.compliance.reviewed', entityType: 'KycProfile', entityId: reviewed.id, metadata: { status, sanctionsStatus, custodyStatus }, req });
+
+    await writeAuditLog({
+      actorType: 'administrator',
+      actorId: req.admin.id,
+      action: 'admin.compliance.reviewed',
+      entityType: 'KycProfile',
+      entityId: reviewed.id,
+      metadata: buildReviewAuditMetadata({
+        profileBefore: profile,
+        target,
+        reason: req.body.reason,
+        operator: req.admin,
+        secondApprover: null,
+      }),
+      req,
+    });
+
     return sendSuccess(res, withIdAlias(reviewed), 'KYC profile reviewed');
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * POST /kyc/:id/approve
+ *
+ * Second-operator approval for high-impact overrides.
+ * The approving operator must be different from the requester.
+ */
+const approveOverride = async (req, res, next) => {
+  try {
+    const approval = await prisma.kycApproval.findUnique({ where: { id: req.params.id } });
+    if (!approval) return sendError(res, 'Approval record not found', 404);
+    if (approval.status !== 'pending') {
+      return sendError(res, `Approval already ${approval.status}`, 409);
+    }
+
+    // ── Same-operator guard ─────────────────────────────────────────────
+    if (approval.requestedBy === req.admin.id) {
+      return sendError(
+        res,
+        'Maker-checker requires a different operator to approve. You submitted this override and cannot approve it yourself.',
+        403,
+      );
+    }
+
+    const profile = await prisma.kycProfile.findUnique({ where: { id: approval.profileId } });
+    if (!profile) return sendError(res, 'KYC profile not found', 404);
+
+    const proposed = approval.proposedChanges;
+
+    // Re-validate transition against current profile state (it may have
+    // changed since the override was submitted).
+    const { errors } = validateTransition(profile, proposed);
+    if (errors.length > 0) {
+      // Mark approval as superseded so stale requests don't linger.
+      await prisma.kycApproval.update({
+        where: { id: approval.id },
+        data: { status: 'superseded' },
+      });
+      return sendError(res, `Profile state has changed since this override was submitted. ${errors.join('; ')}`, 409);
+    }
+
+    // ── Apply the approved changes ──────────────────────────────────────
+    const reviewed = await prisma.kycProfile.update({
+      where: { id: profile.id },
+      data: {
+        status: proposed.status,
+        tier: proposed.tier,
+        riskScore: proposed.riskScore,
+        sanctionsStatus: proposed.sanctionsStatus,
+        custodyStatus: proposed.custodyStatus,
+        deniedReason: proposed.deniedReason ?? profile.deniedReason,
+        sanctionsScreenedAt: proposed.sanctionsStatus !== 'not_screened' ? new Date() : profile.sanctionsScreenedAt,
+        custodyReviewedAt: proposed.custodyStatus !== 'not_reviewed' ? new Date() : profile.custodyReviewedAt,
+      },
+    });
+
+    await prisma.user.update({
+      where: { id: reviewed.userId },
+      data: { kycTier: reviewed.tier, riskScore: reviewed.riskScore },
+    });
+
+    // Mark approval as completed.
+    await prisma.kycApproval.update({
+      where: { id: approval.id },
+      data: { status: 'approved', approvedBy: req.admin.id, decidedAt: new Date() },
+    });
+
+    // Fetch the original requester for the audit record.
+    const originalOperator = await prisma.administrator.findUnique({
+      where: { id: approval.requestedBy },
+    }).catch(() => null);
+
+    await writeAuditLog({
+      actorType: 'administrator',
+      actorId: req.admin.id,
+      action: 'admin.compliance.override_approved',
+      entityType: 'KycProfile',
+      entityId: reviewed.id,
+      metadata: buildReviewAuditMetadata({
+        profileBefore: profile,
+        target: proposed,
+        reason: proposed.reason,
+        operator: originalOperator || { id: approval.requestedBy, role: 'administrator' },
+        secondApprover: req.admin,
+      }),
+      req,
+    });
+
+    return sendSuccess(res, withIdAlias(reviewed), 'Override approved and applied');
   } catch (error) {
     next(error);
   }
@@ -121,6 +311,7 @@ module.exports = {
   getOwnProfile,
   startKyc,
   reviewKyc,
+  approveOverride,
   setPin,
   smileIdCallback,
 };

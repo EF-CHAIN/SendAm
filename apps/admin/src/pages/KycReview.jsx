@@ -17,6 +17,9 @@ export default function KycReview() {
 
   useEffect(() => {
     let active = true;
+    // Loading is toggled inside the async fetch (same pattern as the other
+    // list pages) so the spinner shows on every refetch without calling
+    // setState synchronously in the effect body (react-hooks/set-state-in-effect).
     const fetchKyc = async () => {
       setLoading(true);
       try {
@@ -30,6 +33,10 @@ export default function KycReview() {
       } finally {
         if (active) setLoading(false);
       }
+    };
+    fetchKyc();
+    return () => {
+      active = false;
     };
     fetchKyc();
     return () => { active = false; };
