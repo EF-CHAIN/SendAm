@@ -43,6 +43,7 @@ model User {
   deactivationReason String? // last deactivation reason code
 
   accountStatusRecords AccountStatusRecord[]
+  messagingConsentRecords MessagingConsentRecord[]
 
   @@index([anonymizedAt])
   @@index([createdAt, id])
@@ -839,4 +840,23 @@ model WebhookEvent {
   @@index([source, subjectId, eventAt])
   @@index([state, updatedAt])
   @@index([createdAt])
+}
+
+/// Per-category messaging consent (#310). One row per (user, category); the
+/// absence of a row means "never asked", which resolves to the category
+/// default rather than to a denial.
+model MessagingConsentRecord {
+  id        String   @id @default(cuid())
+  userId    String
+  category  String
+  status    String
+  source    String   @default("customer_request")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, category])
+  @@index([userId])
+  @@index([category, status])
 }

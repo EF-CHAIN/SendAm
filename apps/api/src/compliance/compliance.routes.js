@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const controller = require('./compliance.controller');
 const privacyController = require('./privacy.controller');
+const consentController = require('./consent.controller');
 const requireAdmin = require('../middlewares/requireAdmin');
 const requireRestApiEnabled = require('../middlewares/requireRestApiEnabled');
 const requireRestSession = require('../middlewares/requireRestSession');
@@ -18,6 +19,13 @@ router.post('/pin', requireRestApiEnabled, requireRestSession, controller.setPin
 // ── Onboarding status (#330) ────────────────────────────────────────────
 // Customer self-service: retrieve their own onboarding checkpoints and next step.
 router.get('/onboarding', requireRestApiEnabled, requireRestSession, controller.getOnboardingStatus);
+
+// ── Messaging preferences (#310) ────────────────────────────────────────
+// Customers manage their own consent; support may read it but not write it,
+// so a preference is never recorded against a customer who did not ask.
+router.get('/preferences', requireRestApiEnabled, requireRestSession, consentController.getOwnPreferences);
+router.put('/preferences', requireRestApiEnabled, requireRestSession, consentController.updateOwnPreferences);
+router.get('/preferences/:userId', requireAdmin('compliance.read'), consentController.getCustomerPreferences);
 
 // Customer privacy lifecycle (self-service): export own data, request erasure.
 const privacyRouter = express.Router();

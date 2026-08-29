@@ -9,7 +9,7 @@ const { claimPendingSend } = require('./pendingClaim');
 const { createRecipientResolver } = require('./recipientResolver');
 const defaultPrisma = require('../common/prisma');
 const { canonicalizePhoneNumber } = require('../utils/validators');
-const { parseConsentCommand, updateUserConsent, isMessageAllowed } = require('../compliance/consent.service');
+const { parseConsentCommand, applyConsentKeyword, isMessageAllowed } = require('../compliance/consent.service');
 const { t, SUPPORTED_LOCALES } = require('../i18n/messages');
 const { formatDateByLocale, formatAmountByLocale } = require('../i18n/formatters');
 
@@ -281,11 +281,14 @@ const processMessage = async (phoneNumber, whatsappName, text, options = {}) => 
   // Opt-out / Opt-in consent handling (#191)
   const consentCmd = parseConsentCommand(text);
   if (consentCmd.isConsentCommand) {
-    const updatedUser = await updateUserConsent({
+    // Applies the keyword across every optional category, not just the
+    // global flag: a customer who says STOP means stop, and leaving service
+    // messages running because they are "useful" is what erodes trust in the
+    // keyword (#310).
+    const { user: updatedUser } = await applyConsentKeyword({
       userId: user.id,
       phoneNumber,
       consent: consentCmd.consent,
-      source: 'whatsapp_keyword',
       prisma: db,
     });
     user.messagingConsent = updatedUser.messagingConsent;
