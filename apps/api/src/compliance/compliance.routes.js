@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const controller = require('./compliance.controller');
 const privacyController = require('./privacy.controller');
+const consentController = require('./consent.controller');
 const requireAdmin = require('../middlewares/requireAdmin');
 const requireRestApiEnabled = require('../middlewares/requireRestApiEnabled');
 const { validateRequest } = require('../middlewares/validateRequest');
@@ -47,58 +48,17 @@ router.post(
   controller.startKyc,
 );
 
-router.post(
-  '/kyc/:id/review',
-  requireAdmin,
-  validateRequest({
-    params: {
-      allowedKeys: ['id'],
-      required: ['id'],
-      fields: {
-        id: {
-          type: 'string',
-          trim: true,
-          custom: (value) => value.length > 0,
-          message: 'KYC profile id is required',
-        },
-      },
-    },
-    body: {
-      allowedKeys: ['status', 'tier', 'riskScore'],
-      fields: {
-        status: { type: 'string', optional: true },
-        tier: { type: 'number', optional: true },
-        riskScore: { type: 'number', optional: true },
-      },
-    },
-  }),
-  controller.reviewKyc,
-);
+// ── Messaging preferences (#310) ────────────────────────────────────────
+// Customers manage their own consent; support may read it but not write it,
+// so a preference is never recorded against a customer who did not ask.
+router.get('/preferences', requireRestApiEnabled, requireRestSession, consentController.getOwnPreferences);
+router.put('/preferences', requireRestApiEnabled, requireRestSession, consentController.updateOwnPreferences);
+router.get('/preferences/:userId', requireAdmin('compliance.read'), consentController.getCustomerPreferences);
 
-router.post(
-  '/pin',
-  requireRestApiEnabled,
-  validateRequest({
-    body: {
-      allowedKeys: ['phoneNumber', 'pin'],
-      required: ['phoneNumber', 'pin'],
-      fields: {
-        phoneNumber: {
-          type: 'string',
-          trim: true,
-          custom: (value) => value.length > 5,
-          message: 'A valid phone number is required',
-        },
-        pin: {
-          type: 'string',
-          trim: true,
-          custom: (value) => value.length >= 4,
-          message: 'PIN must be at least 4 characters',
-        },
-      },
-    },
-  }),
-  controller.setPin,
-);
+// Customer privacy lifecycle (self-service): export own data, request erasure.
+const privacyRouter = express.Router();
+privacyRouter.post('/export', requireRestApiEnabled, requireRestSession, privacyController.exportOwnData);
+privacyRouter.post('/erasure', requireRestApiEnabled, requireRestSession, privacyController.requestOwnErasure);
+router.use('/privacy', privacyRouter);
 
 module.exports = router;

@@ -33,8 +33,49 @@ model User {
   voiceCommands VoiceCommand[]
   notifications Notification[]
   quotes        Quote[]
-  paymentIdempotencies PaymentIdempotency[]
-  paymentConfirmations PaymentConfirmation[]
+  restSessions  RestSession[]
+  supportCases  SupportCase[]
+
+  privacyRequests PrivacyRequest[]
+  legalHolds     LegalHold[]
+  anonymizedAt   DateTime?
+  deactivatedAt  DateTime?   // set when account is deactivated (#332)
+  deactivationReason String? // last deactivation reason code
+
+  accountStatusRecords AccountStatusRecord[]
+  messagingConsentRecords MessagingConsentRecord[]
+
+  @@index([anonymizedAt])
+  @@index([createdAt, id])
+  @@index([deactivatedAt])
+}
+
+model Sep10Challenge {
+  id            String    @id @default(cuid())
+  account       String
+  challengeHash String    @unique
+  expiresAt     DateTime
+  consumedAt    DateTime?
+  createdAt     DateTime  @default(now())
+
+  @@index([account, createdAt])
+  @@index([expiresAt])
+}
+
+model RestSession {
+  id         String    @id @default(cuid())
+  userId     String
+  account    String
+  tokenHash  String    @unique
+  expiresAt  DateTime
+  revokedAt  DateTime?
+  createdAt  DateTime  @default(now())
+  lastUsedAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, expiresAt])
+  @@index([expiresAt])
 }
 
 // One row per user per chain — direct custody. `encryptedSecretKey` holds
@@ -845,4 +886,47 @@ model Partner {
   adminUsers AdminUser[]
 
   @@index([status])
+}
+
+/// Replay protection and ordering state for every external callback (#311).
+/// One row per (source, eventKey); `eventAt` is the provider's own timestamp
+/// and is what the ordering guard compares, never our receipt time.
+model WebhookEvent {
+  id            String    @id @default(cuid())
+  source        String
+  eventKey      String
+  subjectId     String?
+  payloadHash   String
+  eventAt       DateTime?
+  state         String    @default("processing")
+  attempts      Int       @default(1)
+  skippedReason String?
+  error         String?
+  processedAt   DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@unique([source, eventKey])
+  @@index([source, subjectId, eventAt])
+  @@index([state, updatedAt])
+  @@index([createdAt])
+}
+
+/// Per-category messaging consent (#310). One row per (user, category); the
+/// absence of a row means "never asked", which resolves to the category
+/// default rather than to a denial.
+model MessagingConsentRecord {
+  id        String   @id @default(cuid())
+  userId    String
+  category  String
+  status    String
+  source    String   @default("customer_request")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, category])
+  @@index([userId])
+  @@index([category, status])
 }

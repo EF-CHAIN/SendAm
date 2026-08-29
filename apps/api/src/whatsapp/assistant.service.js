@@ -4,7 +4,11 @@ const { verifyAndUpgradePin } = require('../compliance/pin.service');
 const { sendTextMessage } = require('../services/whatsapp.service');
 const { confirmationService } = require('./paymentConfirmation.service');
 const { createRecipientResolver } = require('./recipientResolver');
-const { isValidPhoneNumber } = require('../utils/validators');
+const defaultPrisma = require('../common/prisma');
+const { canonicalizePhoneNumber } = require('../utils/validators');
+const { parseConsentCommand, applyConsentKeyword, isMessageAllowed } = require('../compliance/consent.service');
+const { t, SUPPORTED_LOCALES } = require('../i18n/messages');
+const { formatDateByLocale, formatAmountByLocale } = require('../i18n/formatters');
 
 const NATIVE_ASSET = 'XLM';
 
@@ -210,15 +214,45 @@ const handlePendingPin = async ({ phoneNumber, user, text, notify }) => {
   return true;
 };
 
-// `notify` defaults to the real WhatsApp send so the webhook path (the only
-// caller before the sim endpoints existed) is unaffected. The sim controller
-// passes its own `notify` to capture replies inline instead of calling Meta —
-// see apps/api/src/controllers/sim.controller.js.
-const processMessage = async (phoneNumber, whatsappName, text, { notify = sendTextMessage } = {}) => {
-  const user = await resolveUser(phoneNumber, whatsappName);
-  const paymentIntent = parsePaymentIntent(text);
-  if (paymentIntent) {
-    await requestConfirmation({ phoneNumber, user, intent: paymentIntent, notify });
+const processMessage = async (phoneNumber, whatsappName, text, options = {}) => {
+  const notify = typeof options === 'function' ? options : (options.notify || sendTextMessage);
+  const db = options.prisma || defaultPrisma;
+
+  const user = await resolveUser(phoneNumber, whatsappName, db);
+  const locale = user.locale || 'en';
+
+  const normalized = String(text || '').trim().toLowerCase();
+
+  // Language/locale selection command (#192)
+  const langMatch = normalized.match(/^(?:lang|language|locale)\s+([a-z]{2})$/i);
+  if (langMatch) {
+    const requestedLang = langMatch[1].toLowerCase();
+    const newLocale = SUPPORTED_LOCALES.includes(requestedLang) ? requestedLang : 'en';
+    const updatedUser = await db.user.update({
+      where: { id: user.id },
+      data: { locale: newLocale },
+    });
+    user.locale = updatedUser.locale;
+    await notify(phoneNumber, t('lang_updated', { language: newLocale }, newLocale));
+    return;
+  }
+
+  // Opt-out / Opt-in consent handling (#191)
+  const consentCmd = parseConsentCommand(text);
+  if (consentCmd.isConsentCommand) {
+    // Applies the keyword across every optional category, not just the
+    // global flag: a customer who says STOP means stop, and leaving service
+    // messages running because they are "useful" is what erodes trust in the
+    // keyword (#310).
+    const { user: updatedUser } = await applyConsentKeyword({
+      userId: user.id,
+      phoneNumber,
+      consent: consentCmd.consent,
+      prisma: db,
+    });
+    user.messagingConsent = updatedUser.messagingConsent;
+    const msgKey = consentCmd.consent === 'opted_out' ? 'opt_out_success' : 'opt_in_success';
+    await notify(phoneNumber, t(msgKey, {}, user.locale));
     return;
   }
   if (await handlePendingPin({ phoneNumber, user, text, notify })) return;

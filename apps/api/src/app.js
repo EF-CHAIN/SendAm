@@ -12,6 +12,7 @@ const pricingRoutes = require('./pricing/pricing.routes');
 const simRoutes = require('./routes/sim.routes');
 const authRoutes = require('./routes/auth.routes');
 const receiptRoutes = require('./routes/receipt.routes');
+const retentionRoutes = require('./routes/retention.routes');
 
 const errorHandler = require('./middlewares/errorHandler');
 const notFound = require('./middlewares/notFound');
@@ -24,6 +25,7 @@ const { requestMetrics, metricsHandler, increment } = require('./observability/m
 const { AppError } = require('./errors');
 const { getContext } = require('./observability/context');
 const { pingRedis } = require('./queues/queue.service');
+const { checkAll, httpStatusFor } = require('./observability/dependencies');
 
 const app = express();
 let startupComplete = false;
@@ -176,6 +178,16 @@ app.get('/health/startup', (_req, res) => {
   res.status(startupComplete ? 200 : 503).json({ status: startupComplete ? 'ok' : 'starting' });
 });
 
+// Per-dependency status for operators (#316). Separate from /health/ready on
+// purpose: readiness answers "should this instance take traffic" and must stay
+// cheap and collapsed for the load balancer, while this one names every
+// dependency, reports latency, and is allowed to be slower because a human is
+// reading it.
+app.get('/health/dependencies', async (_req, res) => {
+  const report = await checkAll();
+  res.status(httpStatusFor(report.status)).json(report);
+});
+
 app.get(['/health', '/health/ready'], async (req, res) => {
   const correlationId = getContext().correlationId || null;
   try {
@@ -216,6 +228,7 @@ if (config.features.walletRestApi) {
 }
 
 app.use('/api/admin', adminRoutes);
+app.use('/api/admin/retention', retentionRoutes);
 app.use('/api/compliance', complianceRoutes);
 app.use('/api/pricing', pricingRoutes);
 

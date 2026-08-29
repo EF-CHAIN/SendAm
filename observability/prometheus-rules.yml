@@ -168,3 +168,39 @@ groups:
           service: sendam-api
         annotations:
           summary: SendAm jobs are running inline instead of durably queued (Redis unavailable)
+
+      # ── Dependency health (#316) ──────────────────────────────────────────
+      # Fires on the dependency being down rather than on a log line, so a
+      # silent process (crashed, wedged, or never scraped) is still caught by
+      # the absent() rule below.
+      - alert: SendAmCriticalDependencyDown
+        expr: sendam_dependency_up{criticality="critical"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          service: sendam-api
+        annotations:
+          summary: SendAm critical dependency {{ $labels.dependency }} is unreachable
+          runbook_url: https://github.com/EF-CHAIN/SendAm/blob/main/docs/OBSERVABILITY.md#dependency-health
+
+      - alert: SendAmImportantDependencyDown
+        expr: sendam_dependency_up{criticality="important"} == 0
+        for: 5m
+        labels:
+          severity: warning
+          service: sendam-api
+        annotations:
+          summary: SendAm dependency {{ $labels.dependency }} is unreachable; customer messaging may be affected
+          runbook_url: https://github.com/EF-CHAIN/SendAm/blob/main/docs/OBSERVABILITY.md#dependency-health
+
+      # A dependency that stops being reported is not healthy — it is unknown,
+      # which for alerting purposes must be treated as down.
+      - alert: SendAmDependencyHealthMissing
+        expr: absent(sendam_dependency_up)
+        for: 10m
+        labels:
+          severity: warning
+          service: sendam-api
+        annotations:
+          summary: SendAm dependency health has not reported for 10m
+          runbook_url: https://github.com/EF-CHAIN/SendAm/blob/main/docs/OBSERVABILITY.md#dependency-health

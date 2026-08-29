@@ -10,6 +10,7 @@ const { captureException } = require('../observability/errors');
 const { canonicalizePhoneNumber } = require('../utils/validators');
 
 const { validateWebhookEnvelope, validateInboundMessage, validateStatusEntry } = require('../whatsapp/webhook.validator');
+const { withIdempotency } = require('../webhooks/idempotency.service');
 
 /** Outcome labels for a single inbound message item within a batch. */
 const OUTCOMES = {
@@ -222,7 +223,20 @@ const handleIncomingMessage = async (req, res) => {
               continue;
             }
             try {
-              await recordDeliveryStatus(statusEntry);
+              // Routed through the shared idempotency guard (#311) so a
+              // redelivered receipt is a no-op and a late `sent` cannot
+              // overwrite a `read` that already landed. The subject is the
+              // provider message id: ordering only makes sense per message.
+              await withIdempotency(
+                {
+                  source: 'whatsapp_status',
+                  eventId: `${statusEntry.id}:${statusEntry.status}:${statusEntry.timestamp}`,
+                  subjectId: statusEntry.id,
+                  eventTimestamp: statusEntry.timestamp,
+                  payload: statusEntry,
+                },
+                () => recordDeliveryStatus(statusEntry),
+              );
             } catch (statusError) {
               logger.error('whatsapp_status_processing_error', { message: statusError.message });
               captureException(statusError, { source: 'webhook_status' });
