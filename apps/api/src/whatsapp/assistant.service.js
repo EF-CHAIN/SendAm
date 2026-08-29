@@ -1,17 +1,12 @@
+const walletService = require('../wallet/wallet.service');
 const { validateAddress } = require('../wallet/stellar.adapter');
 const { verifyAndUpgradePin } = require('../compliance/pin.service');
 const { sendTextMessage } = require('../services/whatsapp.service');
-const { claimPendingSend } = require('./pendingClaim');
+const { confirmationService } = require('./paymentConfirmation.service');
 const { createRecipientResolver } = require('./recipientResolver');
 const { isValidPhoneNumber } = require('../utils/validators');
 
-const getExecutePayment = () => {
-  try {
-    return require('../payment/payment.orchestrator').executePayment;
-  } catch (_error) {
-    return null;
-  }
-};
+const NATIVE_ASSET = 'XLM';
 
 const getEnforceTransactionPolicy = () => {
   try {
@@ -130,78 +125,103 @@ function createAssistantService({
       `Please confirm this payment:\nAmount: ${intent.amount} ${intent.asset}\nTo: ${confirmed.label}\nReply with your PIN to send, or "no" to cancel.`
     );
 
-    return confirmed;
-  };
+  const confirmation = await confirmationService.create({
+    userId: user.id,
+    amount: intent.amount,
+    asset: intent.asset,
+    destination: recipient.destination,
+    recipientLabel: recipient.label,
+    routeType: 'domestic',
+  });
 
-  const handlePendingPin = async ({ phoneNumber, user, text, notify: notifyFn = notify }) => {
-    if (!user.pendingSend?.destination) return false;
+  await notify(
+    phoneNumber,
+    `Please confirm payment ${confirmation.reference}:\nAmount: ${intent.amount} ${intent.asset}\nTo: ${recipient.label}\nReply with "<PIN> ${confirmation.reference}" to send, or "cancel ${confirmation.reference}".`
+  );
+};
 
-    const lowered = String(text).trim().toLowerCase();
-    const PrismaNs = getPrismaNamespace();
-    if (lowered === 'no' || lowered === 'cancel') {
-      await prismaClient.user.update({ where: { id: user.id }, data: { pendingSend: PrismaNs.DbNull } });
-      await notifyFn(phoneNumber, 'Payment cancelled.');
-      return true;
-    }
+const handlePendingPin = async ({ phoneNumber, user, text, notify }) => {
+  const lowered = String(text).trim().toLowerCase();
+  const reference = String(text).toUpperCase().match(/\b[A-F0-9]{6}\b/)?.[0];
+  const hasPending = await confirmationService.hasPending(user.id);
+  if (!reference) {
+    if (!hasPending) return false;
+    await notify(phoneNumber, 'Include the 6-character payment reference from the prompt so I confirm the right payment.');
+    return true;
+  }
 
-    if (Date.now() - new Date(user.pendingSend.requestedAt).getTime() > PENDING_SEND_TTL_MS) {
-      await prismaClient.user.update({ where: { id: user.id }, data: { pendingSend: PrismaNs.DbNull } });
-      await notifyFn(phoneNumber, 'That payment request expired. Please start again.');
-      return true;
-    }
+  const pending = await confirmationService.find(user.id, reference);
+  if (!pending) {
+    await notify(phoneNumber, `Payment reference ${reference} was not found.`);
+    return true;
+  }
+  if (pending.state !== 'pending') {
+    await notify(phoneNumber, `Payment ${reference} is ${pending.state} and cannot be authorized.`);
+    return true;
+  }
+  if (lowered.startsWith('cancel ') || lowered.startsWith('no ')) {
+    // Json? columns need Prisma.DbNull — a plain null in `data` throws at runtime.
+    const cancelled = await confirmationService.cancel(pending);
+    await notify(phoneNumber, cancelled ? `Payment ${reference} cancelled.` : `Payment ${reference} was already handled.`);
+    return true;
+  }
 
-    const userWithPin = await prismaClient.user.findUnique({ where: { id: user.id } });
-    const verification = verifyAndUpgradePin(text, userWithPin.pinHash || null);
-    if (!verification.valid) {
-      await notifyFn(phoneNumber, 'PIN verification failed. Please try again or reply "no" to cancel.');
-      return true;
-    }
+  if (pending.expiresAt <= new Date()) {
+    await confirmationService.expire(pending);
+    await notify(phoneNumber, `Payment ${reference} expired. Please start again.`);
+    return true;
+  }
 
-    if (verification.upgraded && verification.hash && verification.hash !== userWithPin.pinHash) {
-      await prismaClient.user.update({
-        where: { id: user.id },
-        data: { pinHash: verification.hash, pinSetAt: new Date() },
-      });
-    }
+  const userWithPin = await prisma.user.findUnique({ where: { id: user.id } });
+  const pin = String(text).trim().split(/\s+/)[0];
+  if (!verifyPin(pin, userWithPin.pinHash)) {
+    await notify(phoneNumber, `PIN verification failed. Try again with "<PIN> ${reference}" or cancel ${reference}.`);
+    return true;
+  }
 
-    const pending = user.pendingSend;
-    if (!(await claimPendingSend({ prisma: prismaClient, Prisma: getPrismaNamespace(), userId: user.id }))) {
-      await notifyFn(phoneNumber, 'That payment was already processed or cancelled.');
-      return true;
-    }
-
-    const enforceTransactionPolicy = getEnforceTransactionPolicy();
-    if (enforceTransactionPolicy) {
-      await enforceTransactionPolicy({
-        user,
-        amount: pending.amount,
-        routeType: pending.routeType,
-        destinationCountry: 'NG',
-      });
-    }
-
-    const executePayment = getExecutePayment();
-    if (!executePayment) {
-      throw new Error('Payment orchestration is unavailable.');
-    }
-
-    const result = await executePayment({
-      sender: user,
-      destination: pending.destination,
-      amount: pending.amount,
-      asset: pending.asset,
-      routeType: pending.routeType,
-    });
-
-    await notifyFn(phoneNumber, `Payment ${result.transaction.status}. Receipt: ${result.receipt.transactionId}`);
+  // Atomically claim (clear) the pending send BEFORE executing. Two
+  // concurrent messages with a valid PIN both reach this point — the claim
+  // guarantees exactly one of them executes the payment; the loser gets a
+  // clear reply instead of a double spend. A payment that fails after the
+  // claim requires the user to start the send again — the safe direction.
+  if (!(await confirmationService.authorize(pending))) {
+    await notify(phoneNumber, `Payment ${reference} was already processed, cancelled, superseded, or expired.`);
     return true;
   };
 
-  const processMessage = async (phoneNumber, whatsappName, text, { notify: notifyFn = notify } = {}) => {
-    const user = await resolveUser({ prismaClient, phoneNumber, whatsappName });
-    if (await handlePendingPin({ phoneNumber, user, text, notify: notifyFn })) return;
+  await enforceTransactionPolicy({
+    user,
+    amount: pending.amount,
+    routeType: pending.routeType,
+    destinationCountry: 'NG',
+  });
 
-    const normalized = String(text || '').trim().toLowerCase();
+  const result = await executePayment({
+    sender: user,
+    destination: pending.destination,
+    amount: pending.amount,
+    asset: pending.asset,
+    routeType: pending.routeType,
+  });
+
+  await confirmationService.complete(pending.id, result.transaction.id);
+
+  await notify(phoneNumber, `Payment ${reference} ${result.transaction.status}. Receipt: ${result.receipt.transactionId}`);
+  return true;
+};
+
+// `notify` defaults to the real WhatsApp send so the webhook path (the only
+// caller before the sim endpoints existed) is unaffected. The sim controller
+// passes its own `notify` to capture replies inline instead of calling Meta —
+// see apps/api/src/controllers/sim.controller.js.
+const processMessage = async (phoneNumber, whatsappName, text, { notify = sendTextMessage } = {}) => {
+  const user = await resolveUser(phoneNumber, whatsappName);
+  const paymentIntent = parsePaymentIntent(text);
+  if (paymentIntent) {
+    await requestConfirmation({ phoneNumber, user, intent: paymentIntent, notify });
+    return;
+  }
+  if (await handlePendingPin({ phoneNumber, user, text, notify })) return;
 
     if (['hi', 'hello', 'help', 'menu'].includes(normalized)) {
       await notifyFn(phoneNumber, 'SendAm can help with send money, receive money, balance, contacts, transaction history, and receipts.');
@@ -243,21 +263,7 @@ function createAssistantService({
       return;
     }
 
-    await notifyFn(phoneNumber, 'I can help you send money, check balance, receive money, or show receipts.');
-  };
-
-  return {
-    processMessage,
-    parsePaymentIntent,
-    handlePendingPin,
-    requestConfirmation,
-    resolveUser,
-  };
-}
-
-const processMessage = async (phoneNumber, whatsappName, text, options = {}) => {
-  const service = createAssistantService();
-  return service.processMessage(phoneNumber, whatsappName, text, options);
+  await notify(phoneNumber, 'I can help you send money, check balance, receive money, or show receipts.');
 };
 
 module.exports = {

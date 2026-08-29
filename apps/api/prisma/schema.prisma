@@ -15,6 +15,7 @@ model User {
   pinHash      String?
   pinSetAt     DateTime?
   pendingSend    Json?
+  confirmationVersion Int       @default(0)
   welcomeSentAt  DateTime?
   contactsJson   Json?
   deletedAt      DateTime?
@@ -32,7 +33,8 @@ model User {
   voiceCommands VoiceCommand[]
   notifications Notification[]
   quotes        Quote[]
-  erasures      UserErasure[]
+  paymentIdempotencies PaymentIdempotency[]
+  paymentConfirmations PaymentConfirmation[]
 }
 
 // One row per user per chain — direct custody. `encryptedSecretKey` holds
@@ -101,6 +103,8 @@ model Transaction {
 
   user  User   @relation(fields: [userId], references: [id], onDelete: Restrict)
   quote Quote? @relation(fields: [quoteId], references: [id])
+  idempotencyRequest PaymentIdempotency?
+  confirmation PaymentConfirmation?
 
   @@index([userId, createdAt])
   @@index([status])
@@ -157,6 +161,58 @@ model LedgerPosting {
   @@index([journalEntryId])
   @@index([accountId])
   @@index([asset, createdAt])
+}
+
+model PaymentIdempotency {
+  id             String   @id @default(cuid())
+  userId         String
+  operation      String
+  key            String
+  fingerprint    String
+  state          String   @default("processing")
+  response       Json?
+  reservedTransactionId String   @unique
+  transactionId  String?  @unique
+  leaseExpiresAt DateTime
+  expiresAt      DateTime
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  transaction Transaction? @relation(fields: [transactionId], references: [id], onDelete: SetNull)
+
+  @@unique([userId, operation, key])
+  @@index([expiresAt])
+  @@index([state, leaseExpiresAt])
+}
+
+model PaymentConfirmation {
+  id             String   @id @default(cuid())
+  userId         String
+  nonce          String   @unique
+  reference      String
+  version        Int
+  summaryHash    String
+  amount         String
+  asset          String
+  destination    String
+  recipientLabel String?
+  routeType      String
+  state          String   @default("pending")
+  expiresAt      DateTime
+  authorizedAt   DateTime?
+  cancelledAt    DateTime?
+  transactionId  String?  @unique
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  transaction Transaction? @relation(fields: [transactionId], references: [id], onDelete: SetNull)
+
+  @@unique([userId, reference])
+  @@unique([userId, version])
+  @@index([userId, state, createdAt])
+  @@index([expiresAt])
 }
 
 model Contact {

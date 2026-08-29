@@ -43,10 +43,7 @@ const executePayment = async ({
   sourceCountry = 'NG',
   destinationCountry = 'NG',
   routeType,
-  quoteId,
-  idempotencyKey,
-  memo,
-  memoType = 'text',
+  transactionId,
 }) => {
   const senderUser = sender;
   if (!senderUser) throw new Error('Sender not found.');
@@ -88,29 +85,54 @@ const executePayment = async ({
       destination,
       tx,
     });
-    if (!compliance.policySnapshot) {
-      throw new Error('Compliance policy snapshot is required.');
-    }
-
-    // Idempotency short-circuit: an earlier attempt with this key already
-    // reserved a transaction. Return it (and its quote) without creating
-    // duplicates or re-consuming a quote.
-    if (idempotencyKey) {
-      const prior = await tx.transaction.findUnique({ where: { idempotencyKey } });
-      if (prior) {
-        const priorQuote = prior.quoteId ? await tx.quote.findUnique({ where: { id: prior.quoteId } }) : null;
-        return { compliance, quote: priorQuote, transaction: prior };
-      }
-    }
-
-    let quote;
-    if (quoteId) {
-      const existing = await tx.quote.findUnique({ where: { id: quoteId } });
-      await validateQuoteForExecution({ quote: existing, userId: senderUser.id, asset: effectiveAsset, amount: normalizedAmount });
-      // Safe to settle: claim the quote so a retry with the same id is rejected.
-      quote = await tx.quote.update({ where: { id: quoteId }, data: { status: QUOTE_STATUS.CONSUMED } });
-    } else {
-      quote = await createQuote({
+    const q = await createQuote({
+      userId: senderUser.id,
+      sourceCurrency: effectiveAsset,
+      targetCurrency: effectiveAsset,
+      sourceAmount: amount,
+      route: rail,
+      provider: rail,
+    });
+    const t = await tx.transaction.create({
+      data: {
+        ...(transactionId ? { id: transactionId } : {}),
+        userId: senderUser.id,
+        type: 'send',
+        amount: String(amount),
+        asset: effectiveAsset,
+        recipientPhoneNumber,
+        destination,
+        rail,
+        routeType: effectiveRouteType,
+        quoteId: q.id,
+        status: 'processing',
+        metadata: {
+          fee: calculateFee(amount),
+          userHiddenRail: true,
+          riskScore: comp.riskScore,
+        },
+      },
+    });
+    return { compliance: comp, quote: q, transaction: t };
+  }) : (async () => {
+    const comp = await enforceTransactionPolicy({
+      user: senderUser,
+      amount,
+      routeType: effectiveRouteType,
+      destinationCountry,
+      tx: prisma,
+    });
+    const q = await createQuote({
+      userId: senderUser.id,
+      sourceCurrency: effectiveAsset,
+      targetCurrency: effectiveAsset,
+      sourceAmount: amount,
+      route: rail,
+      provider: rail,
+    });
+    const t = await prisma.transaction.create({
+      data: {
+        ...(transactionId ? { id: transactionId } : {}),
         userId: senderUser.id,
         sourceCurrency: effectiveAsset,
         targetCurrency: effectiveAsset,
