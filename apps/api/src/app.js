@@ -12,6 +12,7 @@ const pricingRoutes = require('./pricing/pricing.routes');
 const simRoutes = require('./routes/sim.routes');
 const authRoutes = require('./routes/auth.routes');
 const receiptRoutes = require('./routes/receipt.routes');
+const retentionRoutes = require('./routes/retention.routes');
 
 const errorHandler = require('./middlewares/errorHandler');
 const notFound = require('./middlewares/notFound');
@@ -216,6 +217,7 @@ if (config.features.walletRestApi) {
 }
 
 app.use('/api/admin', adminRoutes);
+app.use('/api/admin/retention', retentionRoutes);
 app.use('/api/compliance', complianceRoutes);
 app.use('/api/pricing', pricingRoutes);
 
