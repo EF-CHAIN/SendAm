@@ -2,7 +2,7 @@
 // { key, label, placeholder?, type?: 'text' | 'select', options?: string[] }.
 // Values are read from the URL via `getFilter` and written via `setFilter`,
 // which keeps them in sync with the shared list query state.
-export default function FilterBar({ fields = [], getFilter, setFilter, onReset, submitLabel = 'Apply' }) {
+export default function FilterBar({ fields = [], getFilter, setFilter, onReset }) {
   return (
     <form
       className="flex flex-wrap items-end gap-3 mb-4"

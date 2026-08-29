@@ -37,24 +37,25 @@ export default function Login() {
   };
 
   return (
-    <div className="min-h-[80vh] flex items-center justify-center bg-gray-50 px-4 sm:px-6 py-8">
+    <main className="min-h-[80vh] flex items-center justify-center bg-gray-50 px-4 sm:px-6 py-8">
       <div className="bg-white p-6 sm:p-8 rounded-2xl shadow-sm border border-gray-100 w-full max-w-md">
         <div className="flex justify-center mb-6 text-primary">
           <div className="p-4 bg-secondary rounded-full">
             <Lock size={32} />
           </div>
         </div>
-        <h2 className="text-2xl font-bold text-center mb-2">Admin Access</h2>
+        <h1 className="text-2xl font-bold text-center mb-2">Admin Access</h1>
         <p className="text-center text-gray-500 mb-8">Enter your credentials to access the dashboard</p>
 
         <form onSubmit={handleLogin} className="space-y-6">
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">Email</label>
-            <input type="email" required autoComplete="username" value={email} onChange={(e) => setEmail(e.target.value)} className="w-full px-4 py-3 rounded-lg border border-gray-200 focus:ring-2 focus:ring-primary outline-none transition-all" placeholder="you@example.com" />
+            <label htmlFor="login-email" className="block text-sm font-medium text-gray-700 mb-2">Email</label>
+            <input id="login-email" type="email" required autoComplete="username" value={email} onChange={(e) => setEmail(e.target.value)} className="w-full px-4 py-3 rounded-lg border border-gray-200 focus:ring-2 focus:ring-primary outline-none transition-all" placeholder="you@example.com" />
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">Password</label>
+            <label htmlFor="login-password" className="block text-sm font-medium text-gray-700 mb-2">Password</label>
             <input
+              id="login-password"
               type="password"
               required
               autoComplete="current-password"
@@ -65,7 +66,7 @@ export default function Login() {
             />
           </div>
           {error && (
-            <p className="text-sm text-red-600 text-center">{error}</p>
+            <p role="alert" className="text-sm text-red-600 text-center">{error}</p>
           )}
           <button
             type="submit"
@@ -76,6 +77,6 @@ export default function Login() {
           </button>
         </form>
       </div>
-    </div>
+    </main>
   );
 }

@@ -103,14 +103,54 @@ app.use((req, res, next) => {
   next();
 });
 
-// Capture the raw request body so the WhatsApp webhook can verify the
-// X-Hub-Signature-256 HMAC against exactly what Meta signed.
-app.use(express.json({ verify: (req, _res, buf) => { req.rawBody = buf; } }));
-app.use(express.urlencoded({ extended: true }));
+// Server-side request timeout. Protects workers from stalled or slow requests.
+const requestTimeoutMs = config.requestTimeoutMs || 30000;
+app.use((req, res, next) => {
+  req.setTimeout(requestTimeoutMs, () => {
+    increment('sendam_request_timeouts_total', { route: req.path });
+    if (!res.headersSent) {
+      res.status(408).json({ error: 'request_timeout' });
+    }
+    req.destroy();
+  });
+  next();
+});
+
+// Body parsing with route-appropriate size limits. The WhatsApp webhook can
+// receive media payloads, so it gets a larger limit; the rest of the API stays
+// conservative. Exceeding the limit is metered and returns a safe 413.
+const jsonBodyDefaults = { verify: (req, _res, buf) => { req.rawBody = buf; } };
+const defaultBodyLimit = config.bodyLimit ? config.bodyLimit.api : '100kb';
+const webhookBodyLimit = config.bodyLimit ? config.bodyLimit.webhook : '10mb';
+const jsonParserDefault = express.json({ ...jsonBodyDefaults, limit: defaultBodyLimit });
+const urlencodedParserDefault = express.urlencoded({ extended: true, limit: defaultBodyLimit });
+const jsonParserWebhook = express.json({ ...jsonBodyDefaults, limit: webhookBodyLimit });
+const urlencodedParserWebhook = express.urlencoded({ extended: true, limit: webhookBodyLimit });
+
+app.use((req, res, next) => {
+  const useWebhookLimit = req.path.startsWith('/webhook');
+  const jsonParser = useWebhookLimit ? jsonParserWebhook : jsonParserDefault;
+  const urlencodedParser = useWebhookLimit ? urlencodedParserWebhook : urlencodedParserDefault;
+  jsonParser(req, res, (err) => {
+    if (err) return next(err);
+    urlencodedParser(req, res, next);
+  });
+});
+
+// Body limit breaches are safe and observable.
+app.use((err, req, res, next) => {
+  if (err.type === 'entity.too.large') {
+    increment('sendam_body_limit_exceeded_total', { route: req.path });
+    if (!res.headersSent) {
+      return res.status(413).json({ error: 'payload_too_large' });
+    }
+  }
+  next(err);
+});
 
 // Rate limiting (REST). PostgreSQL-backed store so the per-IP window is shared
 // across instances. The WhatsApp webhook is throttled separately, per sender,
-// in its controller — Meta proxies all events through a few IPs, so an IP
+// in its controller — Meta proxies all events through a few IPS, so an IP
 // limiter there would throttle every user together.
 const limiter = rateLimit({
   windowMs: config.rateLimit.apiWindowMs,
@@ -188,7 +228,7 @@ if (config.features.chatSim) {
   }
   app.use('/api/sim', simRoutes);
 } else {
-  logger.info('Chat simulator (/api/sim) is disabled. Set ENABLE_CHAT_SIM=true to enable.');
+  logger.info('Chat simulator (/api/sim) is disabled. Set enable_CHAT_SIM=true to enable.');
 }
 
 // Error Handling

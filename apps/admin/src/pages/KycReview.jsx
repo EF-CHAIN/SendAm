@@ -17,23 +17,29 @@ export default function KycReview() {
 
   useEffect(() => {
     let active = true;
-    setLoading(true);
-    getAdminKyc(params)
-      .then((res) => {
+    // Loading is toggled inside the async fetch (same pattern as the other
+    // list pages) so the spinner shows on every refetch without calling
+    // setState synchronously in the effect body (react-hooks/set-state-in-effect).
+    const fetchKyc = async () => {
+      setLoading(true);
+      try {
+        const res = await getAdminKyc(params);
         if (active) {
           setRows(res.data || []);
           setPagination(res.pagination);
         }
-      })
-      .catch((err) => {
+      } catch (err) {
         if (active) setError(err.message || 'Failed to fetch KYC profiles');
-      })
-      .finally(() => {
+      } finally {
         if (active) setLoading(false);
-      });
+      }
+    };
+    fetchKyc();
     return () => {
       active = false;
     };
+    fetchKyc();
+    return () => { active = false; };
   }, [params]);
 
   const handleApprove = async (id) => {

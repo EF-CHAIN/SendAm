@@ -1,6 +1,10 @@
 const { sendSuccess, sendError, sendCursorPaginated } = require('../utils/response');
 const { authenticate, createInvitation, acceptInvitation, revokeSessions, hashPassword, changeOwnPassword } = require('../services/adminAuth.service');
 const { writeAuditLog } = require('../common/audit.service');
+const { appendEvent, EVENT_TYPES, queryEvents, verifyEventChain: verifyEventChainService } = require('../common/event.service');
+const { deactivateAccount, reactivateAccount, getAccountStatusHistory, DEACTIVATION_REASONS } = require('../compliance/account.service');
+const { getOnboardingStatus } = require('../compliance/onboarding.service');
+const { buildUserEvidencePackage, exportWorkflowEventsCsv, exportKycEvidenceCsv, exportAccountStatusHistoryCsv } = require('../compliance/evidence.service');
 const prisma = require('../common/prisma');
 const { withIdAliases } = require('../common/records');
 const { parseLimit, cursorQuery, MAX_EXPORT_ROWS } = require('../utils/cursorPagination');
@@ -304,6 +308,20 @@ const getWallets = async (req, res, next) => {
   } catch (error) { return next(error); }
 };
 
+const getTransaction = async (req, res, next) => {
+  try {
+    const tx = await prisma.transaction.findUnique({
+      where: { id: req.params.id },
+      include: { user: { select: { phoneNumber: true } } },
+    });
+    if (!tx) return sendError(res, 'Transaction not found', 404);
+    const item = withIdAliases([{ ...tx, userId: tx.user }])[0];
+    return sendSuccess(res, item);
+  } catch (error) {
+    next(error);
+  }
+};
+
 const getTransactions = async (req, res, next) => {
   try {
     const limit = parseLimit(req.query.limit);
@@ -532,6 +550,204 @@ const verifyAuditLogs = async (req, res, next) => {
     next(error);
   }
 };
+
+// ── Issue #318: Workflow event ledger ────────────────────────────────────────
+
+const getWorkflowEvents = async (req, res, next) => {
+  try {
+    const limit = parseLimit(req.query.limit);
+    const result = await queryEvents({
+      eventType: req.query.eventType,
+      actorType: req.query.actorType,
+      actorId: req.query.actorId,
+      aggregateType: req.query.aggregateType,
+      from: req.query.from,
+      to: req.query.to,
+      limit,
+      after: req.query.after,
+    });
+    return sendSuccess(res, { items: result.items, nextCursor: result.nextCursor });
+  } catch (error) {
+    next(error);
+  }
+};
+
+const verifyEventChain = async (req, res, next) => {
+  try {
+    const result = await verifyEventChainService();
+    await writeAuditLog({
+      actorType: 'administrator',
+      actorId: req.admin.id,
+      action: 'admin.events.verify',
+      entityType: 'WorkflowEvent',
+      metadata: { valid: result.valid, errorCount: result.errors.length, total: result.total },
+      req,
+    });
+    if (!result.valid) {
+      return sendError(res, 'Event chain integrity verification failed', 409, { errors: result.errors });
+    }
+    return sendSuccess(res, { valid: true, total: result.total }, 'Event chain verified successfully');
+  } catch (error) {
+    next(error);
+  }
+};
+
+const exportWorkflowEvents = async (req, res, next) => {
+  try {
+    const csv = await exportWorkflowEventsCsv({
+      filters: req.query,
+      actingAdminId: req.admin.id,
+      req,
+    });
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename="workflow-events-export.csv"');
+    return res.status(200).send(csv);
+  } catch (error) {
+    next(error);
+  }
+};
+
+// ── Issue #329: Compliance evidence exports ──────────────────────────────────
+
+const getUserEvidencePackage = async (req, res, next) => {
+  try {
+    const pkg = await buildUserEvidencePackage({
+      userId: req.params.userId,
+      actingAdminId: req.admin.id,
+      req,
+    });
+    return sendSuccess(res, pkg);
+  } catch (error) {
+    if (error.statusCode) return sendError(res, error.message, error.statusCode);
+    next(error);
+  }
+};
+
+const downloadUserEvidencePackage = async (req, res, next) => {
+  try {
+    const pkg = await buildUserEvidencePackage({
+      userId: req.params.userId,
+      actingAdminId: req.admin.id,
+      req,
+    });
+    const filename = `evidence-${req.params.userId}-${Date.now()}.json`;
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    return res.status(200).send(JSON.stringify(pkg, null, 2));
+  } catch (error) {
+    if (error.statusCode) return sendError(res, error.message, error.statusCode);
+    next(error);
+  }
+};
+
+const exportKycEvidence = async (req, res, next) => {
+  try {
+    const csv = await exportKycEvidenceCsv({
+      filters: req.query,
+      actingAdminId: req.admin.id,
+      req,
+    });
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename="kyc-evidence-export.csv"');
+    return res.status(200).send(csv);
+  } catch (error) {
+    next(error);
+  }
+};
+
+const exportAccountStatusHistory = async (req, res, next) => {
+  try {
+    const csv = await exportAccountStatusHistoryCsv({
+      filters: req.query,
+      actingAdminId: req.admin.id,
+      req,
+    });
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename="account-status-export.csv"');
+    return res.status(200).send(csv);
+  } catch (error) {
+    next(error);
+  }
+};
+
+// ── Issue #330: Onboarding status (admin view) ───────────────────────────────
+
+const getUserOnboardingStatus = async (req, res, next) => {
+  try {
+    const status = await getOnboardingStatus(req.params.userId);
+    return sendSuccess(res, status);
+  } catch (error) {
+    if (error.statusCode) return sendError(res, error.message, error.statusCode);
+    next(error);
+  }
+};
+
+// ── Issue #332: Account deactivation / reactivation ─────────────────────────
+
+const deactivateUserAccount = async (req, res, next) => {
+  try {
+    const { reason, notes, force } = req.body || {};
+
+    if (!reason) {
+      return sendError(
+        res,
+        `Deactivation reason is required. Valid reasons: ${[...Object.values(DEACTIVATION_REASONS)].join(', ')}`,
+        400,
+      );
+    }
+
+    const { user, record } = await deactivateAccount({
+      userId: req.params.userId,
+      reason,
+      notes,
+      adminId: req.admin.id,
+      force: Boolean(force),
+      req,
+    });
+
+    return sendSuccess(
+      res,
+      { userId: user.id, deactivatedAt: user.deactivatedAt, reason, recordId: record.id },
+      'Account deactivated',
+    );
+  } catch (error) {
+    if (error.statusCode) return sendError(res, error.message, error.statusCode);
+    next(error);
+  }
+};
+
+const reactivateUserAccount = async (req, res, next) => {
+  try {
+    const { notes, approvedBy } = req.body || {};
+
+    const { user, record } = await reactivateAccount({
+      userId: req.params.userId,
+      notes,
+      adminId: req.admin.id,
+      approvedBy,
+      req,
+    });
+
+    return sendSuccess(
+      res,
+      { userId: user.id, deactivatedAt: null, recordId: record.id, approvedBy: record.approvedBy },
+      'Account reactivated',
+    );
+  } catch (error) {
+    if (error.statusCode) return sendError(res, error.message, error.statusCode);
+    next(error);
+  }
+};
+
+const getUserAccountStatusHistory = async (req, res, next) => {
+  try {
+    const history = await getAccountStatusHistory(req.params.userId);
+    return sendSuccess(res, history);
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   login,
   acceptInvite,
@@ -547,6 +763,7 @@ module.exports = {
   getStats,
   getUsers,
   getWallets,
+  getTransaction,
   getTransactions,
   getKycProfiles,
   getAuditLogs,
@@ -560,4 +777,19 @@ module.exports = {
   escalateStuckPayment: actOnStuckPayment('escalate'),
   getLedgerDiscrepancies,
   verifyAuditLogs,
+  // #318 – Event ledger
+  getWorkflowEvents,
+  verifyEventChain,
+  exportWorkflowEvents,
+  // #329 – Compliance evidence exports
+  getUserEvidencePackage,
+  downloadUserEvidencePackage,
+  exportKycEvidence,
+  exportAccountStatusHistory,
+  // #330 – Onboarding status
+  getUserOnboardingStatus,
+  // #332 – Account deactivation/reactivation
+  deactivateUserAccount,
+  reactivateUserAccount,
+  getUserAccountStatusHistory,
 };

@@ -2,13 +2,49 @@ const config = require('../config/env');
 const prisma = require('../common/prisma');
 const logger = require('../utils/logger');
 const smileId = require('./smileId.provider');
-const { assertValidAmount, add, compare, formatUnits, getAssetRule } = require('../utils/money');
+const { assertValidAmount, add, compare, formatUnits, getAssetRule, parseUnits } = require('../utils/money');
+const { getPolicyConversionSnapshot, PolicyError, POLICY_ERROR_CODES } = require('../pricing/policyRate');
 
-const tierLimits = {
-  0: { daily: 0, single: 0 },
-  1: { daily: process.env.TIER_1_DAILY_LIMIT || '50000.00', single: process.env.TIER_1_SINGLE_LIMIT || '20000.00' },
-  2: { daily: process.env.TIER_2_DAILY_LIMIT || '500000.00', single: process.env.TIER_2_SINGLE_LIMIT || '200000.00' },
-  3: { daily: process.env.TIER_3_DAILY_LIMIT || '5000000.00', single: process.env.TIER_3_SINGLE_LIMIT || '1000000.00' },
+const defaultTierLimits = {
+  0: { daily: '0.00', single: '0.00' },
+  1: { daily: '50000.00', single: '20000.00' },
+  2: { daily: '500000.00', single: '200000.00' },
+  3: { daily: '5000000.00', single: '1000000.00' },
+};
+
+const policyCurrency = () => String(config.compliance?.policyCurrency || 'NGN').trim().toUpperCase();
+
+const canonicalizePolicyAmount = (value, currency) => {
+  const rule = getAssetRule(currency);
+  return formatUnits(parseUnits(String(value), rule.precision, { rejectExcessPrecision: false }), rule.precision);
+};
+
+const tierLimitsFor = (tier) => {
+  const configured = config.compliance?.tierLimits || defaultTierLimits;
+  const limits = configured[tier] || configured[0] || defaultTierLimits[0];
+  const currency = policyCurrency();
+  return {
+    daily: canonicalizePolicyAmount(limits.daily, currency),
+    single: canonicalizePolicyAmount(limits.single, currency),
+  };
+};
+
+const throwDailyIncomplete = () => {
+  throw new PolicyError(
+    POLICY_ERROR_CODES.DAILY_TOTAL_INCOMPLETE,
+    'Recent payments are missing a reference-currency amount; this payment cannot be evaluated against daily limits.',
+  );
+};
+
+const storedReferenceAmount = (transaction, currency) => {
+  if (!transaction || String(transaction.fiatCurrency || '').trim().toUpperCase() !== currency) {
+    throwDailyIncomplete();
+  }
+  try {
+    return canonicalizePolicyAmount(transaction.fiatAmount, currency);
+  } catch (_error) {
+    throwDailyIncomplete();
+  }
 };
 
 // Legacy country sets (deprecated — retained for fail-safe fallback only)
@@ -256,10 +292,12 @@ const processSmileIdCallback = async (payload) => {
 
 const cryptoHash = (value) => require('crypto').createHash('sha256').update(value).digest('hex');
 
-const calculateRiskScore = ({ amount, asset = 'NGN', routeType, destinationCountry, profileRiskScore = 0 }) => {
+const calculateRiskScore = ({ amount, asset, routeType, destinationCountry, profileRiskScore = 0 }) => {
+  const riskAsset = asset || policyCurrency();
+  const normalizedAmount = canonicalizePolicyAmount(amount, riskAsset);
   let score = 10;
-  if (compare(assertValidAmount(amount, asset), '100000.00', asset) > 0) score += 30;
-  if (compare(assertValidAmount(amount, asset), '50000.00', asset) > 0) score += 10;
+  if (compare(normalizedAmount, canonicalizePolicyAmount('100000.00', riskAsset), riskAsset) > 0) score += 30;
+  if (compare(normalizedAmount, canonicalizePolicyAmount('50000.00', riskAsset), riskAsset) > 0) score += 10;
   if (routeType === 'cross_border') score += 25;
   if (destinationCountry && destinationCountry !== 'NG') score += 15;
   score += Math.min(Math.max(Number(profileRiskScore) || 0, 0), 30);
@@ -499,11 +537,19 @@ const screenSanctionsLegacy = ({ destinationCountry, routeType }) => {
   };
 };
 
-const enforceTransactionPolicy = async ({ user, amount, asset = 'NGN', routeType, destinationCountry, recipientPhoneNumber, destination, tx = prisma }) => {
+const enforceTransactionPolicy = async ({ user, amount, asset = 'NGN', routeType, destinationCountry, tx = prisma, now, fetchFiatRate, fetchCryptoUsdRate }) => {
   const profile = await getOrCreateKycProfile(user);
-  const limits = tierLimits[profile.tier] || tierLimits[0];
-  const policyAsset = asset;
-  const normalizedAmount = assertValidAmount(amount, policyAsset);
+  const limits = tierLimitsFor(profile.tier);
+  const referenceCurrency = policyCurrency();
+  const settlementAsset = String(asset || referenceCurrency).trim().toUpperCase();
+  assertValidAmount(amount, settlementAsset);
+
+  if (user?.deactivatedAt) {
+    throw Object.assign(
+      new Error('This account is deactivated. Contact support to restore access.'),
+      { statusCode: 403, code: 'ACCOUNT_DEACTIVATED' },
+    );
+  }
 
   if (profile.status !== 'approved') {
     throw new Error('KYC approval is required before sending money.');
@@ -521,23 +567,35 @@ const enforceTransactionPolicy = async ({ user, amount, asset = 'NGN', routeType
     throw new Error('This account is under sanctions review and cannot send funds until cleared.');
   }
 
-  if (compare(normalizedAmount, limits.single, policyAsset) > 0) {
+  const policySnapshot = await getPolicyConversionSnapshot({
+    sourceAsset: settlementAsset,
+    amount,
+    now,
+    ...(fetchFiatRate ? { fetchFiatRate } : {}),
+    ...(fetchCryptoUsdRate ? { fetchCryptoUsdRate } : {}),
+  });
+  const convertedAmount = policySnapshot.convertedAmount;
+
+  if (compare(convertedAmount, limits.single, referenceCurrency) > 0) {
     throw new Error(`This payment exceeds your tier ${profile.tier} single transaction limit.`);
   }
 
-  const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
+  const since = new Date((now instanceof Date ? now.getTime() : Date.now()) - 24 * 60 * 60 * 1000);
   const recent = await tx.transaction.findMany({
     where: {
       userId: user.id,
-      asset: policyAsset,
+      type: 'send',
       status: { in: ['success', 'processing', 'pending'] },
       createdAt: { gte: since },
     },
-    select: { amount: true, asset: true },
+    select: { amount: true, asset: true, fiatAmount: true, fiatCurrency: true },
   });
-  const zeroAmount = formatUnits(0n, getAssetRule(policyAsset).precision);
-  const dailyTotal = recent.reduce((sum, t) => add(sum, t.amount || zeroAmount, policyAsset), zeroAmount);
-  if (compare(add(dailyTotal, normalizedAmount, policyAsset), limits.daily, policyAsset) > 0) {
+  const zeroAmount = formatUnits(0n, getAssetRule(referenceCurrency).precision);
+  const dailyTotal = recent.reduce(
+    (sum, t) => add(sum, storedReferenceAmount(t, referenceCurrency), referenceCurrency),
+    zeroAmount,
+  );
+  if (compare(add(dailyTotal, convertedAmount, referenceCurrency), limits.daily, referenceCurrency) > 0) {
     throw new Error(`This payment exceeds your tier ${profile.tier} daily limit.`);
   }
 
@@ -558,12 +616,18 @@ const enforceTransactionPolicy = async ({ user, amount, asset = 'NGN', routeType
     throw new Error(`This payment requires manual compliance review: ${sanctionsResult.reason}`);
   }
 
-  const riskScore = calculateRiskScore({ amount: normalizedAmount, asset: policyAsset, routeType, destinationCountry, profileRiskScore: profile.riskScore });
+  const riskScore = calculateRiskScore({
+    amount: convertedAmount,
+    asset: referenceCurrency,
+    routeType,
+    destinationCountry,
+    profileRiskScore: updatedProfile.riskScore,
+  });
   if (riskScore >= 80) {
     throw new Error('This payment requires manual compliance review.');
   }
 
-  return { profile, riskScore, sanctionsResult };
+  return { profile: updatedProfile, riskScore, policySnapshot };
 };
 
 module.exports = {
@@ -573,8 +637,6 @@ module.exports = {
   startKycVerification,
   processSmileIdCallback,
   callbackDecision,
-  screenSanctions,
-  screenSanctionsLegacy,
-  SCREENING_STATUS,
-  SUBJECT_TYPE,
+  PolicyError,
+  POLICY_ERROR_CODES,
 };

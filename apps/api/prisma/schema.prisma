@@ -258,6 +258,22 @@ model KycWebhookEvent {
   @@index([receivedAt])
 }
 
+// Maker-checker approval record for high-impact KYC overrides.
+model KycApproval {
+  id              String   @id @default(cuid())
+  profileId       String
+  proposedChanges Json
+  requestedBy     String
+  status          String   @default("pending") // pending | approved | rejected | superseded
+  approvedBy      String?
+  decidedAt       DateTime?
+  createdAt       DateTime @default(now())
+
+  @@index([profileId])
+  @@index([status])
+  @@index([requestedBy])
+}
+
 model VoiceCommand {
   id                String   @id @default(cuid())
   userId            String?
@@ -309,6 +325,7 @@ model AdminUser {
   name              String
   passwordHash      String
   roleId            String
+  partnerId         String?   // Tenant/partner isolation for multi-tenant deployments
   disabledAt        DateTime?
   // Set when an administrator was provisioned from the legacy shared
   // ADMIN_PASSWORD bootstrap (or any other temporary credential). The account
@@ -321,12 +338,14 @@ model AdminUser {
   createdAt         DateTime   @default(now())
   updatedAt         DateTime   @updatedAt
 
-  role        AdminRole         @relation(fields: [roleId], references: [id])
+  role    AdminRole    @relation(fields: [roleId], references: [id])
+  partner Partner?     @relation(fields: [partnerId], references: [id], onDelete: SetNull)
   sessions    AdminSession[]
   invitations AdminInvitation[] @relation("InvitationCreator")
 
   @@index([roleId])
   @@index([disabledAt])
+  @@index([partnerId])
 }
 
 model AdminSession {
@@ -614,4 +633,160 @@ model DepositOutboxRecord {
   @@index([status, createdAt])
   @@index([walletId])
   @@index([stellarPaymentId])
+}
+
+// Reconciliation checkpoint for transaction state alignment across wallet, ledger, and database.
+// Tracks mismatches and reconciliation jobs for operator review and manual correction.
+model ReconciliationCheckpoint {
+  id                String   @id @default(cuid())
+  transactionId     String
+  walletId          String?
+  checkpointType    String   // 'wallet_ledger' | 'ledger_database' | 'full_cycle'
+  status            String   @default("pending") // pending | in_progress | success | mismatch | failed
+  walletBalance     String?  // Decimal string of wallet balance at checkpoint
+  ledgerBalance     String?  // Decimal string of ledger balance at checkpoint
+  databaseBalance   String?  // Decimal string of database balance at checkpoint
+  mismatchDetails   Json     @default("{}")
+  evidence          Json     @default("{}") // Checkpoint evidence and audit trail
+  resolvedBy        String?  // Admin ID who resolved the mismatch
+  resolvedAt        DateTime?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  transaction Transaction @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+
+  @@index([transactionId, checkpointType])
+  @@index([status, createdAt])
+  @@index([walletId])
+}
+
+// Support case for tracking disputed payments, KYC issues, and error investigations.
+// Provides structured case lifecycle and full audit trail of operator actions.
+model SupportCase {
+  id                 String   @id @default(cuid())
+  caseNumber         String   @unique // Human-readable case ID (e.g., CASE-001, auto-generated)
+  userId             String?
+  status             String   @default("open") // open | in_progress | resolved | closed
+  priority           String   @default("normal") // low | normal | high | critical
+  category           String   // payment_dispute | kyc_issue | error_investigation | account_access | other
+  title              String
+  description        String
+  transactionId      String?
+  walletId           String?
+  linkedCases        String[] @default([])  // Array of related case IDs
+  assignedTo         String?  // Admin user ID
+  resolution         String?
+  resolvedBy         String?  // Admin user ID
+  resolvedAt         DateTime?
+  closedAt           DateTime?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  user      User?                @relation(fields: [userId], references: [id], onDelete: SetNull)
+  comments  SupportCaseComment[]
+  snapshots SupportCaseSnapshot[]
+
+  @@index([userId, status])
+  @@index([status, createdAt])
+  @@index([priority, status])
+  @@index([assignedTo])
+}
+
+// Immutable audit trail for support case actions and decisions.
+model SupportCaseComment {
+  id           String   @id @default(cuid())
+  caseId       String
+  authorType   String   // 'admin' | 'system' | 'customer'
+  authorId     String?
+  actionType   String   // 'comment' | 'status_change' | 'assignment' | 'escalation'
+  body         String?
+  metadata     Json     @default("{}")
+  createdAt    DateTime @default(now())
+
+  case SupportCase @relation(fields: [caseId], references: [id], onDelete: Cascade)
+
+  @@index([caseId, createdAt])
+  @@index([authorType])
+}
+
+// Point-in-time snapshot of customer, wallet, and transaction context at case creation.
+// Enables historical audit and prevents data loss if related records are modified.
+model SupportCaseSnapshot {
+  id           String   @id @default(cuid())
+  caseId       String
+  snapshotType String   // 'creation' | 'escalation' | 'resolution'
+  userData     Json     // User profile at snapshot time
+  walletData   Json?    // Wallet state at snapshot time
+  transactionData Json? // Transaction details at snapshot time
+  context      Json     @default("{}")
+  createdAt    DateTime @default(now())
+
+  case SupportCase @relation(fields: [caseId], references: [id], onDelete: Cascade)
+
+  @@index([caseId, snapshotType])
+}
+
+// ─── Issue #318: Event sourcing / workflow event ledger ──────────────────────
+// Immutable, append-only domain event log for execution-critical workflows.
+// Each record is chained to the previous via HMAC so deletions and reorderings
+// are detectable. Events are never updated or deleted — new events supersede.
+//
+// `aggregateType` / `aggregateId` identify the domain object the event belongs
+// to (e.g. "Transaction"/"cuid", "Wallet"/"cuid", "User"/"cuid").
+// `payload` holds structured event data: who triggered it, what changed, why.
+model WorkflowEvent {
+  id            String   @id @default(cuid())
+  eventType     String   // e.g. payment.submitted, kyc.approved, account.deactivated
+  aggregateType String?  // Domain model name (Transaction, Wallet, User, KycProfile, …)
+  aggregateId   String?  // ID of the domain object
+  actorType     String   @default("system") // user | administrator | system
+  actorId       String?  // userId or adminId that triggered the event
+  payload       Json     @default("{}") // structured event data
+  previousHash  String?  @unique // chained reference for tamper-detection
+  hash          String?  @unique // HMAC over (previousHash + event fields)
+  createdAt     DateTime @default(now())
+
+  @@index([eventType, createdAt])
+  @@index([aggregateType, aggregateId])
+  @@index([actorType, actorId])
+  @@index([createdAt, id])
+}
+
+// ─── Issue #332: Account deactivation/reactivation ───────────────────────────
+// Records every deactivation and reactivation for a user account, along with
+// the reason, approving admin, and current state. Wallet and payment activity
+// is blocked while status = 'deactivated'. Reactivation requires admin approval
+// and writes a matching event to WorkflowEvent for the full audit trail.
+model AccountStatusRecord {
+  id          String   @id @default(cuid())
+  userId      String
+  status      String   // 'active' | 'deactivated'
+  reason      String   // structured reason code
+  notes       String?  // free-text detail
+  initiatedBy String   // admin user ID or 'system'
+  approvedBy  String?  // second-approval admin user ID (for reactivation)
+  approvedAt  DateTime?
+  effectiveAt DateTime @default(now())
+  createdAt   DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([status, createdAt])
+}
+
+// Multi-tenant / partner isolation marker for routing and authorization scoping.
+// Allows future onboarding of partners while enforcing data isolation server-side.
+model Partner {
+  id            String   @id @default(cuid())
+  name          String   @unique
+  externalId    String?  @unique // Partner's own identifier
+  status        String   @default("active") // active | suspended | archived
+  config        Json     @default("{}") // Partner-specific configuration
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  adminUsers AdminUser[]
+
+  @@index([status])
 }

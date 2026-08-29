@@ -87,6 +87,7 @@ const createOrGetWallet = async ({ user, phoneNumber }) => {
       update: {},
     });
   }
+  assertAccountActive(owner);
 
   const existing = await prisma.wallet.findUnique({ where: { userId_chain: { userId: owner.id, chain: CHAIN } } });
   if (existing) return withIdAlias(await provisionWallet(existing.id));
@@ -120,6 +121,16 @@ const createOrGetWallet = async ({ user, phoneNumber }) => {
     entityId: String(wallet.id),
     metadata: { chain: CHAIN },
   });
+
+  // Durable workflow event (#318)
+  await appendEvent({
+    eventType: EVENT_TYPES.WALLET_CREATED,
+    aggregateType: 'Wallet',
+    aggregateId: String(wallet.id),
+    actorType: 'system',
+    actorId: String(owner.id),
+    payload: { chain: CHAIN, publicKey: wallet.publicKey, network: wallet.network },
+  }).catch(() => {});
 
   return withIdAlias(wallet);
 };

@@ -23,7 +23,7 @@ const errorHandler = (err, _req, res, _next) => {
   if (correlationId && !res.get('x-correlation-id')) {
     res.set('x-correlation-id', correlationId);
   }
-  res.status(normalized.statusCode).json(errorEnvelope(err, { correlationId, normalized }));
+  res.status(status).json(errorEnvelope(err, { correlationId, normalized }));
 };
 
 module.exports = errorHandler;
