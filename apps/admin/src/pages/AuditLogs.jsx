@@ -13,7 +13,7 @@ import FilterBar from '@/components/FilterBar';
 
 export default function AuditLogs() {
   const { params, getFilter, setFilter, resetFilters, goNext, goPrev } = useListQuery([
-    'action', 'actorType', 'entityType', 'identifier', 'from', 'to',
+    'action', 'actorType', 'actorId', 'entityType', 'identifier', 'from', 'to',
   ]);
   const [rows, setRows] = useState([]);
   const [pagination, setPagination] = useState(null);
@@ -23,6 +23,7 @@ export default function AuditLogs() {
   const [verifyingChain, setVerifyingChain] = useState(false);
   const [chainResult, setChainResult] = useState(null);
   const [error, setError] = useState('');
+  const [refreshKey, setRefreshKey] = useState(0);
 
   useEffect(() => {
 to    // Same fetch pattern as the other list pages (Users, Wallets,
@@ -35,14 +36,10 @@ to    // Same fetch pattern as the other list pages (Users, Wallets,
         const res = await getAdminAuditLogs(params);
         setRows(res.data || []);
         setPagination(res.pagination);
-      } catch (err) {
-        setError(err.message || 'Failed to fetch audit logs');
-      } finally {
-        setLoading(false);
-      }
-    };
-    fetchLogs();
-  }, [params]);
+      })
+      .catch((err) => setError(err.message || 'Failed to fetch audit logs'))
+      .finally(() => setLoading(false));
+  }, [params, refreshKey]);
 
   const handleExportAudit = async () => {
     setExportingAudit(true);
@@ -83,6 +80,7 @@ to    // Same fetch pattern as the other list pages (Users, Wallets,
   };
 
   if (loading) return <div className="flex justify-center py-20"><Loader size={32} /></div>;
+  const handleRefresh = () => setRefreshKey((prev) => prev + 1);
 
   const columns = [
     { header: 'Actor', accessor: 'actorType' },
@@ -95,37 +93,26 @@ to    // Same fetch pattern as the other list pages (Users, Wallets,
   return (
     <div>
       <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3 mb-6">
-        <div>
-          <h1 className="text-2xl font-bold text-slate-900">Audit & Event Ledger</h1>
-          <p className="text-xs text-slate-500 mt-1">Durable audit trails and tamper-evident workflow event history (#318, #329)</p>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <button
-            type="button"
-            onClick={handleVerifyChain}
-            disabled={verifyingChain}
-            className="text-xs rounded-lg border border-primary text-primary bg-primary/5 px-3 py-1.5 font-semibold hover:bg-primary/10 transition disabled:opacity-50"
-          >
-            {verifyingChain ? 'Verifying HMAC Chain…' : 'Verify Event Ledger'}
-          </button>
-          <button
-            type="button"
-            onClick={handleExportEvents}
-            disabled={exportingEvents}
-            className="text-xs rounded-lg border border-slate-200 bg-white px-3 py-1.5 font-medium shadow-sm hover:bg-slate-50 disabled:opacity-50"
-          >
-            {exportingEvents ? 'Exporting…' : 'Export Events CSV'}
-          </button>
-          <button
-            type="button"
-            onClick={handleExportAudit}
-            disabled={exportingAudit}
-            className="text-xs rounded-lg border border-slate-200 bg-white px-3 py-1.5 font-medium shadow-sm hover:bg-slate-50 disabled:opacity-50"
-            data-testid="export-audit"
-          >
-            {exportingAudit ? 'Exporting…' : 'Export Audit CSV'}
-          </button>
-        </div>
+        <h1 className="text-2xl font-bold">Audit Logs</h1>
+        <div className="flex gap-2">
+        <button
+         type="button"
+        onClick={handleRefresh}
+        className="text-sm rounded-lg border border-gray-200 bg-white px-3 py-1.5 font-medium shadow-sm hover:bg-gray-50"
+        data-testid="refresh-audit"
+        >
+      Refresh
+    </button>
+        <button
+          type="button"
+          onClick={handleExport}
+          disabled={exporting}
+          className="text-sm rounded-lg border border-gray-200 bg-white px-3 py-1.5 font-medium shadow-sm hover:bg-gray-50 disabled:opacity-50"
+          data-testid="export-audit"
+        >
+          {exporting ? 'Exporting…' : 'Export CSV'}
+        </button>
+      </div>
       </div>
 
       {chainResult && (
@@ -150,6 +137,7 @@ to    // Same fetch pattern as the other list pages (Users, Wallets,
         fields={[
           { key: 'action', label: 'Action', placeholder: 'e.g. admin.login' },
           { key: 'actorType', label: 'Actor', placeholder: 'e.g. administrator' },
+          {key: 'actorId', label: 'Actor ID', placeholder: 'e.g. Specific actor ID' },
           { key: 'entityType', label: 'Entity', placeholder: 'e.g. Transaction' },
           { key: 'identifier', label: 'ID', placeholder: 'entityId…' },
           { key: 'from', label: 'From', type: 'date' },

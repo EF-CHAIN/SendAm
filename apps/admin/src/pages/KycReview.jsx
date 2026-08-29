@@ -14,6 +14,7 @@ export default function KycReview() {
   const [loading, setLoading] = useState(true);
   const [exporting, setExporting] = useState(false);
   const [error, setError] = useState('');
+  const [refreshKey, setRefreshKey] = useState(0);
 
   useEffect(() => {
     let active = true;
@@ -38,9 +39,7 @@ export default function KycReview() {
     return () => {
       active = false;
     };
-    fetchKyc();
-    return () => { active = false; };
-  }, [params]);
+  }, [params, refreshKey]);
 
   const handleApprove = async (id) => {
     setMutatingId(id);
@@ -83,6 +82,7 @@ export default function KycReview() {
   };
 
   if (loading) return <div className="flex justify-center py-20" data-testid="kyc-loading"><Loader size={32} /></div>;
+  const handleRefresh = () => setRefreshKey((prev) => prev + 1);
 
   const columns = [
     { header: 'User', render: (row) => row.userId?.phoneNumber || '-' },
@@ -119,10 +119,19 @@ export default function KycReview() {
         <h1 className="text-2xl font-bold">KYC Review</h1>
         <button
           type="button"
-          onClick={handleExport}
-          disabled={exporting}
+          onClick={handleRefresh}
+          disabled={loading}
           className="text-sm rounded-lg border border-gray-200 bg-white px-3 py-1.5 font-medium shadow-sm hover:bg-gray-50 disabled:opacity-50"
-          data-testid="export-kyc"
+          data-testid="refresh-kyc"
+        >
+        Refresh
+       </button>
+       <button
+         type="button"
+         onClick={handleExport}
+         disabled={exporting}
+         className="text-sm rounded-lg border border-gray-200 bg-white px-3 py-1.5 font-medium shadow-sm hover:bg-gray-50 disabled:opacity-50"
+         data-testid="export-kyc"
         >
           {exporting ? 'Exporting…' : 'Export CSV'}
         </button>
