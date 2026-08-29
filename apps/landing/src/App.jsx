@@ -3,6 +3,7 @@ import ErrorBoundary from '@shared/ErrorBoundary.jsx';
 import Navbar from './components/Navbar.jsx';
 import Footer from './components/Footer.jsx';
 import Home from './pages/Home.jsx';
+import OnboardingStatus from './pages/OnboardingStatus.jsx';
 import NotFound from './pages/NotFound.jsx';
 
 export default function App() {

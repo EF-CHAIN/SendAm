@@ -36,6 +36,10 @@ module.exports = {
     callbackUrl: process.env.WHATSPPP_CALLBACK_URL,
     businessAccountId: process.env.WHATSPPP_BUSINESS_ACCOUNT_ID,
     graphApiVersion: process.env.META_GRAPH_API_VERSION,
+    connectTimeoutMs: Number(process.env.WHATSAPP_CONNECT_TIMEOUT_MS || 10000),
+    responseTimeoutMs: Number(process.env.WHATSAPP_RESPONSE_TIMEOUT_MS || 10000),
+    maxSendRetries: Number(process.env.WHATSAPP_SEND_MAX_RETRIES || 2),
+    retryBaseDelayMs: Number(process.env.WHATSAPP_SEND_RETRY_BASE_DELAY_MS || 250),
   },
   limits: {
     maxSendAmount: Number(process.env.MAX_SEND_AMOUNT || 1000),
@@ -84,9 +88,12 @@ module.exports = {
     sentinelMasterName: process.env.REDIS_SENTINEL_MASTER_NAME || '',
   },
   worker: {
+    healthPort: Number(process.env.WORKER_HEALTH_PORT || 3003),
     concurrency: Number(process.env.WORKER_CONCURRENCY || 5),
     lockDurationMs: Number(process.env.WORKER_LOCK_DURATION_MS || 30000),
     heartbeatIntervalMs: Number(process.env.WORKER_HEARTBEAT_INTERVAL_MS || 30000),
+    heartbeatFreshnessMs: Number(process.env.WORKER_HEARTBEAT_FRESHNESS_MS || 90000),
+    metricsIntervalMs: Number(process.env.WORKER_METRICS_INTERVAL_MS || 15000),
     shutdownTimeoutMs: Number(process.env.WORKER_SHUTDOWN_TIMEOUT_MS || 10000),
   },
   health: {

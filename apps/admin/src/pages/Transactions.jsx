@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { getAdminTransactions } from '@/lib/adminApi';
 import { useListQuery } from '@/lib/useListQuery';
 import { formatDate } from '@shared/formatDate';
@@ -9,7 +10,13 @@ import StatusBadge from '@/components/StatusBadge';
 import Pagination from '@/components/Pagination';
 import FilterBar from '@/components/FilterBar';
 
+/**
+ * Transaction list with full filter support and row-level drill-down.
+ * Closes #324 — filters: status, asset, rail, phone, userId, identifier,
+ * date range. Clicking a row navigates to /transactions/:id.
+ */
 export default function Transactions() {
+  const navigate = useNavigate();
   const { params, getFilter, setFilter, resetFilters, goNext, goPrev } = useListQuery([
     'status', 'asset', 'rail', 'phone', 'userId', 'identifier', 'from', 'to',
   ]);
@@ -44,7 +51,7 @@ export default function Transactions() {
     { header: 'Rail', render: (row) => <span className="capitalize">{row.rail}</span> },
     { header: 'Destination', render: (row) => (
       <span className="font-mono text-xs text-gray-500">
-        {row.destination ? `${row.destination.substring(0, 8)}...` : '-'}
+        {row.destination ? `${row.destination.substring(0, 8)}…` : '—'}
       </span>
     )},
     { header: 'Receipt', render: (row) => row.explorerUrl ? (
@@ -52,11 +59,12 @@ export default function Transactions() {
         href={row.explorerUrl}
         target="_blank"
         rel="noreferrer"
+        onClick={(e) => e.stopPropagation()}
         className="text-primary hover:underline text-sm font-medium"
       >
         View
       </a>
-    ) : '-' },
+    ) : '—' },
     { header: 'Status', render: (row) => <StatusBadge status={row.status} /> },
     { header: 'Date', render: (row) => formatDate(row.createdAt) },
   ];
@@ -75,7 +83,8 @@ export default function Transactions() {
           { key: 'status', label: 'Status', type: 'select', options: ['pending', 'processing', 'success', 'failed'] },
           { key: 'asset', label: 'Asset', placeholder: 'e.g. USDC' },
           { key: 'rail', label: 'Rail', placeholder: 'e.g. stellar' },
-          { key: 'phone', label: 'User Phone', placeholder: 'Search phone…' },
+          { key: 'phone', label: 'Customer Phone', placeholder: 'Search phone…' },
+          { key: 'userId', label: 'User ID', placeholder: 'User ID…' },
           { key: 'identifier', label: 'Tx ID / Hash', placeholder: 'id, txHash…' },
           { key: 'from', label: 'From', type: 'date' },
           { key: 'to', label: 'To', type: 'date' },
@@ -113,7 +122,14 @@ export default function Transactions() {
         </div>
       ) : (
         <>
-          <DataTable columns={columns} data={transactions} keyField="_id" />
+          {/* Rows are clickable — navigates to the drill-down detail page. */}
+          <DataTable
+            columns={columns}
+            data={transactions}
+            keyField="_id"
+            onRowClick={(row) => navigate(`/transactions/${row._id || row.id}`)}
+            rowClassName="cursor-pointer hover:bg-primary/5 transition-colors"
+          />
           <Pagination pagination={pagination} onNext={goNext} onPrev={goPrev} />
         </>
       )}

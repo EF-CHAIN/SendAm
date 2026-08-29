@@ -3,6 +3,7 @@ const router = express.Router();
 const verifyWebhook = require('../middlewares/verifyWebhook');
 const verifyWhatsappSignature = require('../middlewares/verifyWhatsappSignature');
 const webhookController = require('../controllers/webhook.controller');
+const { validateExternalPayload } = require('../common/validation');
 
 // Parse JSON bodies with a size limit, preserving the raw request body for signature verification.
 router.use(
@@ -35,8 +36,15 @@ router.get('/', verifyWebhook, (req, res) => {
 });
 
 // POST endpoint for incoming messages.
-// Enforce a 30-second timeout and verify the WhatsApp signature before processing.
-router.post('/', requestTimeout(30000), verifyWhatsappSignature, webhookController.handleIncomingMessage);
+// Enforce a 30-second timeout, verify the WhatsApp signature, then validate the
+// wire-format schema before processing (#321).
+router.post(
+  '/',
+  requestTimeout(30000),
+  verifyWhatsappSignature,
+  validateExternalPayload('whatsapp.message'),
+  webhookController.handleIncomingMessage,
+);
 
 // Handle errors from body parsing and request timeouts gracefully.
 router.use((err, req, res, next) => {
