@@ -8,7 +8,7 @@ export default defineConfig([
     ignores: ['node_modules/**', 'prisma/generated/**'],
   },
   {
-    files: ['src/**/*.js', 'test/**/*.js'],
+    files: ['src/**/*.js', 'test/**/*.js', 'load/**/*.js', 'scripts/**/*.js'],
     extends: [js.configs.recommended],
     languageOptions: {
       // CommonJS globals: require, module, exports, __dirname, __filename,

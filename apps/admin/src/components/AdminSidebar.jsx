@@ -1,20 +1,34 @@
+import { useEffect, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { LayoutDashboard, Users, Wallet, ArrowRightLeft, LogOut, FileSearch, Activity } from 'lucide-react';
+import { LayoutDashboard, Users, Wallet, ArrowRightLeft, LogOut, FileSearch, Activity, ShieldCheck } from 'lucide-react';
 import { removeToken } from '@/lib/auth';
+import { getAdminMe } from '@/lib/adminApi';
+import { hasPermission } from '@/lib/permissions';
+
+const ALL_LINKS = [
+  { name: 'Overview', path: '/', icon: LayoutDashboard, permission: 'admin.read' },
+  { name: 'Users', path: '/users', icon: Users, permission: 'admin.read' },
+  { name: 'Wallets', path: '/wallets', icon: Wallet, permission: 'admin.read' },
+  { name: 'Transactions', path: '/transactions', icon: ArrowRightLeft, permission: 'admin.read' },
+  { name: 'KYC', path: '/kyc', icon: FileSearch, permission: 'compliance.read' },
+  { name: 'Audit', path: '/audit-logs', icon: FileSearch, permission: 'admin.read' },
+  { name: 'Health', path: '/system-health', icon: Activity, permission: 'operations.write' },
+];
 
 export default function AdminSidebar() {
   const { pathname } = useLocation();
   const navigate = useNavigate();
+  const [permissions, setPermissions] = useState(null);
 
-  const links = [
-    { name: 'Overview', path: '/', icon: LayoutDashboard },
-    { name: 'Users', path: '/users', icon: Users },
-    { name: 'Wallets', path: '/wallets', icon: Wallet },
-    { name: 'Transactions', path: '/transactions', icon: ArrowRightLeft },
-    { name: 'KYC', path: '/kyc', icon: FileSearch },
-    { name: 'Audit', path: '/audit-logs', icon: FileSearch },
-    { name: 'Health', path: '/system-health', icon: Activity },
-  ];
+  useEffect(() => {
+    let active = true;
+    getAdminMe()
+      .then((me) => { if (active) setPermissions(me?.permissions || []); })
+      .catch(() => { if (active) setPermissions([]); });
+    return () => { active = false; };
+  }, []);
+
+  const links = permissions ? ALL_LINKS.filter((l) => hasPermission(permissions, l.permission)) : [];
 
   const handleLogout = () => {
     removeToken();
@@ -44,6 +58,7 @@ export default function AdminSidebar() {
               </Link>
             );
           })}
+          {permissions && <ShieldCheck className="w-5 h-5 text-gray-300 mx-auto mt-2" aria-hidden />}
         </nav>
       </div>
 

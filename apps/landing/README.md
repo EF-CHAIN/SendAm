@@ -33,6 +33,19 @@ npm run dev:landing   # http://localhost:3000
 npm run build --workspace=apps/landing
 ```
 
+## Test
+
+From the repository root:
+
+```bash
+npm run test:landing
+```
+
+Runs component/smoke tests (navigation, CTAs, FAQ) and `jest-axe` accessibility
+checks against the rendered home page with Vitest + Testing Library, in jsdom.
+No live services or network access required. CI runs this on every PR via the
+`landing-tests` job in [`test.yml`](../../.github/workflows/test.yml).
+
 ## Tech Stack
 
 - Vite + React

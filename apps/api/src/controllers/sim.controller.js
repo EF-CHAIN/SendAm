@@ -1,4 +1,4 @@
-const { isValidPhoneNumber } = require('../utils/validators');
+const { isValidPhoneNumber, canonicalizePhoneNumber } = require('../utils/validators');
 const { sendError } = require('../utils/response');
 
 const serializeMessage = (message) => ({
@@ -20,10 +20,11 @@ const createSimController = ({ processMessage } = {}) => {
   const conversations = new Map();
 
   const appendMessage = (phoneNumber, direction, text) => {
+    const canonicalPhone = canonicalizePhoneNumber(phoneNumber);
     const message = { direction, text, createdAt: new Date() };
-    const history = conversations.get(phoneNumber) || [];
+    const history = conversations.get(canonicalPhone) || [];
     history.push(message);
-    conversations.set(phoneNumber, history);
+    conversations.set(canonicalPhone, history);
     return message;
   };
 
@@ -40,13 +41,14 @@ const createSimController = ({ processMessage } = {}) => {
         return sendError(res, 'text is required');
       }
 
-      appendMessage(phoneNumber, 'in', text);
+      const canonicalPhone = canonicalizePhoneNumber(phoneNumber);
+      appendMessage(canonicalPhone, 'in', text);
 
       const replies = [];
-      await pipeline(phoneNumber, name, text, {
+      await pipeline(canonicalPhone, name, text, {
         notify: async (_phoneNumber, replyText) => {
           replies.push(replyText);
-          appendMessage(phoneNumber, 'out', replyText);
+          appendMessage(canonicalPhone, 'out', replyText);
         },
       });
 
@@ -64,7 +66,8 @@ const createSimController = ({ processMessage } = {}) => {
       return sendError(res, 'A valid phone number is required');
     }
 
-    let history = conversations.get(phone) || [];
+    const canonicalPhone = canonicalizePhoneNumber(phone);
+    let history = conversations.get(canonicalPhone) || [];
 
     const { since } = req.query;
     if (since !== undefined) {

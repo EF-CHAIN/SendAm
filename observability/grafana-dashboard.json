@@ -1,0 +1,62 @@
+{
+  "annotations": { "list": [] },
+  "editable": false,
+  "panels": [
+    {
+      "id": 1,
+      "title": "HTTP requests / second",
+      "type": "timeseries",
+      "targets": [
+        { "expr": "sum by (status_code) (rate(sendam_http_requests_total[5m]))", "legendFormat": "{{status_code}}" }
+      ],
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 }
+    },
+    {
+      "id": 2,
+      "title": "HTTP p95 latency",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(sendam_http_request_duration_seconds_bucket[5m])))",
+          "legendFormat": "p95"
+        }
+      ],
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 }
+    },
+    {
+      "id": 3,
+      "title": "Exceptions by source",
+      "type": "timeseries",
+      "targets": [
+        { "expr": "sum by (source) (rate(sendam_exceptions_total[5m]))", "legendFormat": "{{source}}" }
+      ],
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 8 }
+    },
+    {
+      "id": 4,
+      "title": "Queue outcomes",
+      "type": "timeseries",
+      "targets": [
+        { "expr": "sum by (queue, status) (rate(sendam_queue_jobs_total[5m]))", "legendFormat": "{{queue}} {{status}}" }
+      ],
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 8 }
+    },
+    {
+      "id": 5,
+      "title": "Webhook outcomes",
+      "type": "timeseries",
+      "targets": [
+        { "expr": "sum by (status) (rate(sendam_webhook_events_total[5m]))", "legendFormat": "{{status}}" }
+      ],
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 8 }
+    }
+  ],
+  "schemaVersion": 39,
+  "tags": ["sendam", "production"],
+  "templating": { "list": [] },
+  "time": { "from": "now-6h", "to": "now" },
+  "timezone": "browser",
+  "title": "SendAm Production",
+  "uid": "sendam-production",
+  "version": 1
+}

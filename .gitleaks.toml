@@ -1,0 +1,142 @@
+title = "SendAm Gitleaks Configuration"
+
+[build]
+verbose = false
+max_target_size = 10485760
+
+# ── Global allowlist ──────────────────────────────────────────────────────────
+# Paths and regexes that are never flagged, regardless of rule.
+
+[allowlist]
+description = "Global allowlist — build artifacts, lockfiles, examples, docs, template strings"
+paths = [
+  "(?i)node_modules/",
+  "(?i)\\.next/",
+  "(?i)dist/",
+  "(?i)build/",
+  "(?i)coverage/",
+  "(?i)\\.env\\.example$",
+  "(?i)\\.env\\.local\\.example$",
+  "(?i)package-lock\\.json$",
+  "(?i)\\.md$",
+]
+regexes = [
+  "\\$\\{[A-Z_]+\\}",
+  "\\$\\([A-Z_]+\\)",
+  "<[A-Z_]+>",
+]
+
+# ── Custom rules ──────────────────────────────────────────────────────────────
+
+[[rules]]
+id = "stellar-secret-key"
+description = "Stellar secret key (starts with S, 56 alphanumeric base-32 chars)"
+regex = '''\bS[A-Z2-7]{55}\b'''
+tags = ["stellar", "secret-key"]
+severity = "critical"
+
+  [rules.allowlist]
+  description = "Stellar public keys start with G or T, not S; allow test placeholders"
+  regexes = [
+    '''S[A-Z2-7]{10}FAKE[A-Z2-7]*''',
+    '''SAAAAA''',
+  ]
+
+[[rules]]
+id = "stellar-seed-phrase"
+description = "Stellar BIP-39 style seed phrase (12 or 24 lowercase words)"
+regex = '''(?i)(?:seed|mnemonic|phrase)\s*[:=]\s*["']?([a-z]+(?:\s+[a-z]+){11,23})'''
+tags = ["stellar", "mnemonic"]
+severity = "critical"
+
+[[rules]]
+id = "database-url-password"
+description = "PostgreSQL / MySQL connection string with an embedded literal password"
+regex = '''(?:postgresql|mysql|postgres)://[^:\s]+:([^@\s$\{][^@\s]*)@'''
+tags = ["database", "password"]
+severity = "critical"
+
+  [rules.allowlist]
+  description = "Example and test database URLs"
+  regexes = [
+    '''postgresql://USER:PASSWORD@''',
+    '''postgresql://postgres:password@''',
+    '''postgresql://sendam:fake_''',
+    '''localhost:5432''',
+  ]
+
+[[rules]]
+id = "redis-url-password"
+description = "Redis connection string with an embedded password"
+regex = '''redis(s)?://:([^@\s$\{]{4,})@'''
+tags = ["redis", "password"]
+severity = "high"
+
+[[rules]]
+id = "jwt-secret-assignment"
+description = "JWT_SECRET assigned a non-placeholder value"
+regex = '''[Jj][Ww][Tt]_[Ss][Ee][Cc][Rr][Ee][Tt]\s*=\s*["']?[A-Za-z0-9+/=_\-]{20,}'''
+tags = ["jwt", "secret"]
+severity = "critical"
+
+  [rules.allowlist]
+  description = "Empty or placeholder JWT_SECRET"
+  regexes = [
+    '''[Jj][Ww][Tt]_[Ss][Ee][Cc][Rr][Ee][Tt]\s*=\s*["']?\s*["']?$''',
+    '''[Jj][Ww][Tt]_[Ss][Ee][Cc][Rr][Ee][Tt]\s*=\s*["']?(your-|change-|test-|fake-)''',
+  ]
+
+[[rules]]
+id = "encryption-key-assignment"
+description = "ENCRYPTION_KEY assigned a hex value (AES-256-GCM key)"
+regex = '''ENCRYPTION_KEY\s*=\s*["']?[0-9a-fA-F]{32,}'''
+tags = ["encryption", "key"]
+severity = "critical"
+
+  [rules.allowlist]
+  description = "Empty or placeholder ENCRYPTION_KEY"
+  regexes = [
+    '''ENCRYPTION_KEY\s*=\s*["']?\s*["']?$''',
+    '''ENCRYPTION_KEY\s*=\s*["']?(your-|change-|test-|fake-)''',
+  ]
+
+[[rules]]
+id = "generic-api-key-assignment"
+description = "Generic API_KEY / SECRET / TOKEN assignment with a non-placeholder value"
+regex = '''(?:[Aa][Pp][Ii][_-]?[Kk][Ee][Yy]|[Aa][Pp][Ii][_-]?[Ss][Ee][Cc][Rr][Ee][Tt]|[Ss][Ee][Cc][Rr][Ee][Tt][_-]?[Kk][Ee][Yy]|[Tt][Oo][Kk][Ee][Nn])\s*=\s*["']?[A-Za-z0-9+/=_\-]{20,}'''
+tags = ["api-key"]
+severity = "high"
+
+  [rules.allowlist]
+  description = "Placeholder API key values"
+  regexes = [
+    '''(?:API_KEY|API_SECRET|SECRET_KEY|TOKEN)\s*=\s*["']?(your-|change-|test-|fake-|ak_live_fake)''',
+  ]
+
+[[rules]]
+id = "private-key-pem"
+description = "PEM-encoded private key block"
+regex = '''-----BEGIN (EC |OPENSSH |RSA )?PRIVATE KEY-----'''
+tags = ["pem", "private-key"]
+severity = "critical"
+
+[[rules]]
+id = "aws-secret-key"
+description = "AWS secret access key"
+regex = '''(?:aws_secret_access_key|AWS_SECRET_ACCESS_KEY)\s*=\s*["']?[A-Za-z0-9/+=]{40}'''
+tags = ["aws", "secret-key"]
+severity = "critical"
+
+[[rules]]
+id = "whatsapp-token"
+description = "WhatsApp / Meta Graph API token"
+regex = '''(?:WHATSAPP_TOKEN|WHATSAPP_APP_SECRET)\s*=\s*["']?[A-Za-z0-9\-]{20,}'''
+tags = ["whatsapp", "meta"]
+severity = "critical"
+
+  [rules.allowlist]
+  description = "Placeholder WhatsApp token values"
+  regexes = [
+    '''WHATSAPP_TOKEN\s*=\s*["']?your_''',
+    '''WHATSAPP_APP_SECRET\s*=\s*["']?\s*["']?$''',
+  ]

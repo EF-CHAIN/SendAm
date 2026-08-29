@@ -58,7 +58,16 @@ Consequences you'll hit in code:
 - Fees are tiny (100 stroops base = 0.00001 XLM) but nonzero, paid in XLM by
   the source account. *Fee-bump transactions* let a different account pay
   the fee, if that's ever needed.
-- Transactions can carry a **memo** (useful later for payment references).
+- Transactions can carry a **memo** (useful for payment references and exchange deposit routing).
+
+## Memos and Muxed Accounts (SEP-23 & SEP-30)
+
+Stellar payments can specify destination routing via Memos or Muxed Addresses:
+
+- **Supported Memo Types**: `text` (max 28 bytes UTF-8), `id` (unsigned 64-bit integer string), `hash` (32-byte hex/buffer), `return` (32-byte hex/buffer).
+- **Muxed Accounts (`M...`)**: SEP-23 Muxed addresses embed a 64-bit subaccount ID into a 69-character address (`M...`). SendAm resolves the underlying classic `G...` key for Horizon account verification while keeping the `M...` address for payment operation destination.
+- **Conflicting Combination Rule**: Providing both a Muxed destination (`M...`) AND an explicit separate memo is **conflicting** and will be rejected prior to transaction construction.
+- **Redaction**: Memos containing sensitive identifiers are masked (`ab***ef`) in user-facing receipts, logs, and audit records.
 
 ## Horizon (the API you actually call)
 
@@ -75,6 +84,31 @@ Endpoints you'll meet in this codebase:
 
 Horizon error responses carry `extras.result_codes` — that's where
 `op_no_trust`, `op_underfunded`, `tx_bad_seq` live.
+
+## Funding-account health and operator runbook
+
+SendAm now measures the live funding account's base fee, native XLM balance, and projected reserve pressure before wallet creation or payouts block. The monitor is implemented in `stellar.adapter.js` via `getFundingAccountHealth()` and reads thresholds from `config.stellar.thresholds`.
+
+Recommended defaults:
+
+- Base fee warning: 200 stroops, critical: 250 stroops
+- Funding balance warning: 20 XLM, critical: 10 XLM
+- Reserve usage warning: 70%, critical: 85%
+
+A healthy funding account should have:
+
+- `status === 'ok'`
+- `reserveStatus` below warning threshold
+- enough free XLM to cover at least one future reserve cycle for new customer wallets
+
+If the monitor raises a warning or critical alert, use this runbook:
+
+1. Top up the configured funding account before funding more wallets.
+2. Check the current Horizon base fee; if it is near or above the critical threshold, slow batch payouts and fund the account immediately.
+3. Review reserve stress: if projected reserve consumption exceeds the warning threshold, pause wallet creation and trustline setup until the balance recovers.
+4. Confirm the operator alert is tied to a real account and not a temporary network spike before redeploying traffic.
+
+This gives operators a single signal to act on instead of discovering failed wallet creation after the fact.
 
 ## Testnet vs mainnet
 
@@ -143,6 +177,39 @@ If a mainnet deployment needs to be rolled back:
   SEP-2 (federated addresses like `ada*sendam.app`).
 - **Explorer** — receipts link to [stellar.expert](https://stellar.expert);
   paste any tx hash or account there while debugging.
+
+## SEP-10 REST authentication
+
+REST clients authenticate ownership of a Stellar account; they never establish
+identity with a phone number. WhatsApp remains a separate trusted path: Meta's
+webhook signature authenticates the transport and the verified sender number is
+the customer identity. A REST session cannot select or override that identity.
+
+1. `GET /api/auth/challenge?account=G...` returns a short-lived SEP-10 challenge.
+2. The wallet signs it and posts the XDR as `transaction` to `/api/auth/token`.
+3. The response is a random, 15-minute bearer token; only its hash is stored.
+4. Use it for wallet, PIN, and KYC routes. `/api/auth/logout` revokes it.
+
+Challenges are consumed atomically. Expired, replayed, malformed, wrong-signer,
+wrong-domain, and wrong-network challenges fail. Auth endpoints allow 10 attempts
+per IP per minute, and important outcomes are recorded in `AuditLog`.
+
+### Configuration, rollout, and recovery
+
+Use a dedicated unfunded key for `STELLAR_AUTH_SIGNING_KEY`. Set
+`STELLAR_HOME_DOMAIN` to the domain publishing `stellar.toml` and
+`STELLAR_WEB_AUTH_DOMAIN` to the exact API host; its `WEB_AUTH_ENDPOINT` and
+`SIGNING_KEY` must agree. Optional limits are
+`STELLAR_AUTH_CHALLENGE_TTL_SECONDS` (30-900) and `REST_SESSION_TTL_MINUTES`
+(1-60). Deploy the database migration and domain configuration before enabling
+`ENABLE_WALLET_REST_API`. The flag is an operational kill switch, not auth.
+
+Monitor `auth.verification.failed` audit events by IP and reason, HTTP 401/429
+rates, and session creation volume. During an incident, disable the REST flag
+and revoke active sessions with
+`UPDATE "RestSession" SET "revokedAt" = NOW() WHERE "revokedAt" IS NULL`.
+Rotate the signing key and `stellar.toml` together. Rotation invalidates open
+challenges; revoke sessions explicitly if compromise is suspected.
 
 ## Further reading
 

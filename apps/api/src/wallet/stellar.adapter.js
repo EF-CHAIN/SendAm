@@ -1,9 +1,12 @@
 // Stellar wallet adapter — keypair creation, Friendbot funding, balance,
 // and payment submission. The only chain SDK integration in the codebase.
 const { server, StellarSdk } = require("../config/stellar");
+const { isHorizonWriteUncertain } = require("../config/horizon");
 const axios = require("axios");
 const logger = require("../utils/logger");
 const config = require("../config/env");
+const { assertValidAmount } = require("../utils/money");
+const { outboundHeaders } = require("../observability/context");
 
 const chain = "stellar";
 
@@ -18,8 +21,88 @@ const createWallet = () => {
 const validateAddress = (address) => {
   return (
     typeof address === "string" &&
-    StellarSdk.StrKey.isValidEd25519PublicKey(address)
+    (StellarSdk.StrKey.isValidEd25519PublicKey(address) ||
+      StellarSdk.StrKey.isValidMed25519PublicKey(address))
   );
+};
+
+const isMuxedAddress = (address) => {
+  return (
+    typeof address === "string" &&
+    StellarSdk.StrKey.isValidMed25519PublicKey(address)
+  );
+};
+
+const getBaseAccountId = (destination) => {
+  if (isMuxedAddress(destination)) {
+    const decoded = StellarSdk.StrKey.decodeMed25519PublicKey(destination);
+    return StellarSdk.StrKey.encodeEd25519PublicKey(decoded.slice(0, 32));
+  }
+  return destination;
+};
+
+const validateMemo = ({ memo, memoType = "text" }) => {
+  if (memo === undefined || memo === null || memo === "") return true;
+  const type = String(memoType || "text").toLowerCase();
+  if (!["text", "id", "hash", "return"].includes(type)) {
+    throw new Error(`Unsupported memo type: ${memoType}. Must be text, id, hash, or return.`);
+  }
+  if (type === "text") {
+    if (Buffer.byteLength(String(memo), "utf8") > 28) {
+      throw new Error("Invalid text memo: maximum 28 bytes allowed.");
+    }
+  } else if (type === "id") {
+    const str = String(memo).trim();
+    if (!/^\d+$/.test(str)) {
+      throw new Error("Invalid id memo: must be a numeric integer string.");
+    }
+    try {
+      const val = BigInt(str);
+      if (val < 0n || val > 18446744073709551615n) {
+        throw new Error("Invalid id memo: must fit in an unsigned 64-bit integer.");
+      }
+    } catch (_e) {
+      throw new Error("Invalid id memo: must fit in an unsigned 64-bit integer.");
+    }
+  } else if (type === "hash" || type === "return") {
+    if (Buffer.isBuffer(memo)) {
+      if (memo.length !== 32) {
+        throw new Error(`Invalid ${type} memo: Buffer must be 32 bytes.`);
+      }
+    } else if (typeof memo === "string") {
+      const hex = memo.trim();
+      if (!/^[0-9a-fA-F]{64}$/.test(hex)) {
+        throw new Error(`Invalid ${type} memo: must be a 32-byte hex string (64 characters).`);
+      }
+    } else {
+      throw new Error(`Invalid ${type} memo: must be a 32-byte hex string or Buffer.`);
+    }
+  }
+  return true;
+};
+
+const buildStellarMemo = ({ memo, memoType = "text" }) => {
+  if (memo === undefined || memo === null || memo === "") return null;
+  validateMemo({ memo, memoType });
+  const type = String(memoType || "text").toLowerCase();
+  if (type === "text") return StellarSdk.Memo.text(String(memo));
+  if (type === "id") return StellarSdk.Memo.id(String(memo).trim());
+  if (type === "hash") {
+    const buf = Buffer.isBuffer(memo) ? memo : Buffer.from(String(memo).trim(), "hex");
+    return StellarSdk.Memo.hash(buf);
+  }
+  if (type === "return") {
+    const buf = Buffer.isBuffer(memo) ? memo : Buffer.from(String(memo).trim(), "hex");
+    return StellarSdk.Memo.return(buf);
+  }
+  return null;
+};
+
+const redactMemo = (memo) => {
+  if (memo === undefined || memo === null || memo === "") return "";
+  const str = String(memo);
+  if (str.length <= 4) return "****";
+  return `${str.slice(0, 2)}***${str.slice(-2)}`;
 };
 
 const getTransactionUrl = (txHash) => {
@@ -29,7 +112,67 @@ const getTransactionUrl = (txHash) => {
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+const BASE_RESERVE_XLM = 1;
+const BASE_RESERVE_PER_ENTRY = 0.5;
 const FUNDING_MAX_ATTEMPTS = 3;
+const NATIVE_BASE_RESERVE = Number(process.env.STELLAR_BASE_RESERVE_XLM || 0.5);
+const NATIVE_RESERVE_BUFFER = Number(process.env.STELLAR_RESERVE_BUFFER_XLM || 0.1);
+
+function assertNativeReserve(account, feeStroops, additionalSubentries = 0) {
+  const native = account.balances.find((balance) => balance.asset_type === 'native');
+  const available = Number(native?.balance || 0);
+  const subentries = Number(account.subentry_count || 0) + additionalSubentries;
+  const required = NATIVE_BASE_RESERVE * (2 + subentries)
+    + NATIVE_RESERVE_BUFFER + Number(feeStroops || 0) / 1e7;
+  if (!Number.isFinite(available) || available < required) {
+    throw new Error(
+      `Insufficient XLM reserve. Keep at least ${required.toFixed(7)} XLM for account reserve and fees, then retry.`,
+    );
+  }
+  return { available, required };
+}
+
+const getSeverityPriority = (status) => ({ ok: 0, warning: 1, critical: 2 }[status] || 0);
+
+const getHighWaterMarkStatus = (value, warningThreshold, criticalThreshold) => {
+  if (criticalThreshold != null && value >= criticalThreshold) return 'critical';
+  if (warningThreshold != null && value >= warningThreshold) return 'warning';
+  return 'ok';
+};
+
+const getLowWaterMarkStatus = (value, warningThreshold, criticalThreshold) => {
+  if (criticalThreshold != null && value <= criticalThreshold) return 'critical';
+  if (warningThreshold != null && value <= warningThreshold) return 'warning';
+  return 'ok';
+};
+
+const getReservePressureStatus = (ratio, warningThreshold, criticalThreshold) => {
+  if (criticalThreshold != null && ratio >= criticalThreshold) return 'critical';
+  if (warningThreshold != null && ratio >= warningThreshold) return 'warning';
+  return 'ok';
+};
+
+const getOperatorRunbook = ({ baseFeeStatus, fundingBalanceStatus, reserveStatus, baseFee, fundingBalance, projectedReserveRatio }) => {
+  const steps = [];
+
+  if (baseFeeStatus !== 'ok') {
+    steps.push(`Base fee is ${baseFee} stroops; raise the funding account or slow outbound payments until network demand settles.`);
+  }
+
+  if (fundingBalanceStatus !== 'ok') {
+    steps.push(`Funding account balance is ${fundingBalance} XLM; add XLM so customer wallet creation and sends keep a safe buffer.`);
+  }
+
+  if (reserveStatus !== 'ok') {
+    steps.push(`Projected reserve consumption is ${(projectedReserveRatio * 100).toFixed(1)}% of funding balance; reduce new trustlines or pause wallet creation until reserve headroom returns.`);
+  }
+
+  if (steps.length === 0) {
+    return ['Funding account is healthy; continue normal wallet creation and payment flow.'];
+  }
+
+  return steps;
+};
 
 // Friendbot is unreliable (frequent 5xx/timeouts), and a failed first-time
 // funding used to leave a user with an empty wallet and no way to recover.
@@ -48,6 +191,7 @@ const fundTestnetAccount = async (publicKey) => {
     try {
       const response = await axios.get(
         `https://friendbot.stellar.org?addr=${encodeURIComponent(publicKey)}`,
+        { headers: outboundHeaders() },
       );
       return { funded: true, data: response.data };
     } catch (error) {
@@ -83,6 +227,93 @@ const getBalance = async (publicKey) => {
     logger.error("Error getting balance", error.message);
     throw new Error("Could not fetch balance. Check if account is funded.");
   }
+};
+
+const getFundingAccountHealth = async ({
+  publicKey,
+  reserveEntries = 0,
+  baseFeeWarningThreshold,
+  baseFeeCriticalThreshold,
+  fundingBalanceWarningThreshold,
+  fundingBalanceCriticalThreshold,
+  reserveWarningThreshold,
+  reserveCriticalThreshold,
+} = {}) => {
+  const targetPublicKey = publicKey || config.stellar.fundingAccountPublicKey;
+  if (!targetPublicKey) {
+    throw new Error('Stellar funding account public key is not configured.');
+  }
+
+  const thresholds = {
+    baseFeeWarningThreshold: baseFeeWarningThreshold ?? config.stellar.thresholds.baseFeeWarningThreshold,
+    baseFeeCriticalThreshold: baseFeeCriticalThreshold ?? config.stellar.thresholds.baseFeeCriticalThreshold,
+    fundingBalanceWarningThreshold: fundingBalanceWarningThreshold ?? config.stellar.thresholds.fundingBalanceWarningThreshold,
+    fundingBalanceCriticalThreshold: fundingBalanceCriticalThreshold ?? config.stellar.thresholds.fundingBalanceCriticalThreshold,
+    reserveWarningThreshold: reserveWarningThreshold ?? config.stellar.thresholds.reserveWarningThreshold,
+    reserveCriticalThreshold: reserveCriticalThreshold ?? config.stellar.thresholds.reserveCriticalThreshold,
+  };
+
+  const account = await server.loadAccount(targetPublicKey);
+  const nativeBalance = account.balances.find((b) => b.asset_type === 'native');
+  const fundingBalance = Number(nativeBalance ? nativeBalance.balance : '0');
+  const subentryCount = Number(account.subentry_count || 0);
+  const currentReserveRequired = BASE_RESERVE_XLM + subentryCount * BASE_RESERVE_PER_ENTRY;
+  const projectedReserveRequired = BASE_RESERVE_XLM + (subentryCount + Number(reserveEntries)) * BASE_RESERVE_PER_ENTRY;
+  const currentReserveRatio = currentReserveRequired / Math.max(fundingBalance, Number.EPSILON);
+  const projectedReserveRatio = projectedReserveRequired / Math.max(fundingBalance, Number.EPSILON);
+  const baseFee = Number(await server.fetchBaseFee());
+
+  const baseFeeStatus = getHighWaterMarkStatus(
+    baseFee,
+    thresholds.baseFeeWarningThreshold,
+    thresholds.baseFeeCriticalThreshold,
+  );
+  const fundingBalanceStatus = getLowWaterMarkStatus(
+    fundingBalance,
+    thresholds.fundingBalanceWarningThreshold,
+    thresholds.fundingBalanceCriticalThreshold,
+  );
+  const reserveStatus = getReservePressureStatus(
+    Math.max(currentReserveRatio, projectedReserveRatio),
+    thresholds.reserveWarningThreshold,
+    thresholds.reserveCriticalThreshold,
+  );
+
+  const status = [baseFeeStatus, fundingBalanceStatus, reserveStatus]
+    .reduce((highest, entry) => (
+      getSeverityPriority(entry) > getSeverityPriority(highest) ? entry : highest
+    ), 'ok');
+
+  const report = {
+    status,
+    publicKey: targetPublicKey,
+    baseFee,
+    baseFeeStatus,
+    fundingBalance,
+    fundingBalanceStatus,
+    reserveRequired: Number(currentReserveRequired.toFixed(7)),
+    projectedReserveRequired: Number(projectedReserveRequired.toFixed(7)),
+    currentReserveRatio: Number(currentReserveRatio.toFixed(4)),
+    projectedReserveRatio: Number(projectedReserveRatio.toFixed(4)),
+    reserveStatus,
+    fundingCapacityWallets: Math.max(0, Math.floor(fundingBalance / Math.max(1 + Number(reserveEntries) * BASE_RESERVE_PER_ENTRY, Number.EPSILON))),
+    runbook: getOperatorRunbook({
+      baseFeeStatus,
+      fundingBalanceStatus,
+      reserveStatus,
+      baseFee,
+      fundingBalance,
+      projectedReserveRatio,
+    }),
+  };
+
+  if (status !== 'ok') {
+    logger.warn(
+      `Stellar funding-account health warning: ${status} for ${targetPublicKey}; baseFee=${baseFee} stroops, balance=${fundingBalance} XLM, projectedReserveUsage=${(projectedReserveRatio * 100).toFixed(1)}%.`,
+    );
+  }
+
+  return report;
 };
 
 // Every relevant balance for a wallet: XLM plus USDC when the account holds
@@ -142,6 +373,17 @@ const isBadSequence = (error) => {
   return codes?.transaction === "tx_bad_seq";
 };
 
+// Best-effort hash extraction from a built transaction (used to verify a
+// submission whose response was lost to a timeout).
+const safeHash = (transaction) => {
+  try {
+    const hash = transaction.hash();
+    return typeof hash === "string" ? hash : hash.toString("hex");
+  } catch {
+    return null;
+  }
+};
+
 const getFriendlyPaymentError = (error) => {
   const codes = error?.response?.data?.extras?.result_codes;
 
@@ -161,23 +403,32 @@ const submitPayment = async ({
   destination,
   amount,
   asset = "XLM",
+  memo,
+  memoType,
 }) => {
   try {
     if (!validateAddress(destination)) {
-      throw new Error("Destination must be a valid Stellar public key.");
+      throw new Error("Destination must be a valid Stellar public key or muxed address.");
     }
 
-    const parsedAmount = Number(amount);
-    if (!Number.isFinite(parsedAmount) || parsedAmount <= 0) {
-      throw new Error("Amount must be greater than zero.");
+    if (isMuxedAddress(destination) && memo !== undefined && memo !== null && memo !== "") {
+      throw new Error("Muxed account destination already includes an embedded ID; providing a separate memo is conflicting.");
     }
+
+    if (memo !== undefined && memo !== null && memo !== "") {
+      validateMemo({ memo, memoType });
+    }
+
+    const normalizedAmount = assertValidAmount(amount, asset);
 
     const sourceKeypair = StellarSdk.Keypair.fromSecret(secretKey);
     const sourcePublicKey = sourceKeypair.publicKey();
 
+    const baseDestination = getBaseAccountId(destination);
+
     // Check if destination exists (once; this doesn't change between retries).
     try {
-      await server.loadAccount(destination);
+      await server.loadAccount(baseDestination);
     } catch (_e) {
       throw new Error("Destination account does not exist or is not funded.");
     }
@@ -188,27 +439,39 @@ const submitPayment = async ({
         ? StellarSdk.Networks.TESTNET
         : StellarSdk.Networks.PUBLIC;
 
-    // Reload the account (fresh sequence), rebuild, sign, and submit on each
-    // attempt. Retry only on tx_bad_seq — any other failure is terminal.
+    const stellarMemo = buildStellarMemo({ memo, memoType });
+
+    // The transaction is built once and (for a timeout/ambiguous write failure)
+    // the SAME signed envelope is reused for a bounded number of retries. This
+    // makes submission idempotent: a timed-out payment is verified against
+    // Horizon rather than resubmitted as a fresh transaction that could double.
+    // On tx_bad_seq (sequence number already advanced by a concurrent write) we
+    // reload the source account for a fresh sequence and rebuild instead.
+    let transaction;
+    let hash;
     let lastError;
     for (let attempt = 1; attempt <= SEND_MAX_ATTEMPTS; attempt += 1) {
       const sourceAccount = await server.loadAccount(sourcePublicKey);
+      assertNativeReserve(sourceAccount, fee);
 
-      const transaction = new StellarSdk.TransactionBuilder(sourceAccount, {
+      const builder = new StellarSdk.TransactionBuilder(sourceAccount, {
         fee,
         networkPassphrase,
-      })
-        .addOperation(
-          StellarSdk.Operation.payment({
-            destination,
-            asset: resolveAsset(asset),
-            amount: amount.toString(),
-          }),
-        )
-        .setTimeout(30)
-        .build();
+      }).addOperation(
+        StellarSdk.Operation.payment({
+          destination,
+          asset: resolveAsset(asset),
+          amount: normalizedAmount,
+        }),
+      );
 
+      if (stellarMemo) {
+        builder.addMemo(stellarMemo);
+      }
+
+      transaction = builder.setTimeout(30).build();
       transaction.sign(sourceKeypair);
+      hash = safeHash(transaction);
 
       try {
         const txResponse = await server.submitTransaction(transaction);
@@ -217,13 +480,51 @@ const submitPayment = async ({
           explorerUrl: getTransactionUrl(txResponse.hash),
         };
       } catch (error) {
-        if (isBadSequence(error) && attempt < SEND_MAX_ATTEMPTS) {
-          lastError = error;
-          logger.warn(
-            `Payment hit tx_bad_seq (attempt ${attempt}/${SEND_MAX_ATTEMPTS}); reloading sequence and retrying.`,
-          );
-          await sleep(attempt * 250);
-          continue;
+        if (isHorizonWriteUncertain(error)) {
+          if (hash) {
+            try {
+              const found = await server.transactions().transactionHash(hash).call();
+              if (found) {
+                logger.info(`Recovered seemingly-timed-out payment ${hash} via Horizon lookup.`);
+                return { txHash: hash, explorerUrl: getTransactionUrl(hash) };
+              }
+            } catch (_) {
+              // Ignore lookup errors
+            }
+          }
+
+          if (attempt < SEND_MAX_ATTEMPTS) {
+            logger.warn(`Payment uncertain (attempt ${attempt}/${SEND_MAX_ATTEMPTS}); resubmitting same envelope.`);
+            await sleep(attempt * 250);
+            continue;
+          } else {
+            throw new Error(
+              "Transaction submission status unknown after timeout; not resubmitting to avoid a duplicate.",
+            );
+          }
+        }
+
+        if (isBadSequence(error)) {
+          if (hash) {
+            try {
+              const found = await server.transactions().transactionHash(hash).call();
+              if (found) {
+                logger.info(`Recovered tx_bad_seq payment ${hash} via Horizon lookup.`);
+                return { txHash: hash, explorerUrl: getTransactionUrl(hash) };
+              }
+            } catch (_) {
+            }
+          }
+
+          if (attempt < SEND_MAX_ATTEMPTS) {
+            lastError = error;
+            logger.warn(
+              `Payment hit tx_bad_seq (attempt ${attempt}/${SEND_MAX_ATTEMPTS}); reloading sequence and retrying.`,
+            );
+            transaction = null;
+            await sleep(attempt * 250);
+            continue;
+          }
         }
 
         const friendlyMessage = getFriendlyPaymentError(error);
@@ -277,6 +578,7 @@ const establishTrustline = async ({ secretKey, assetCode }) => {
   }
 
   const fee = await server.fetchBaseFee();
+  assertNativeReserve(account, fee, 1);
   const networkPassphrase =
     config.stellar.network === "testnet"
       ? StellarSdk.Networks.TESTNET
@@ -311,10 +613,17 @@ module.exports = {
   createWallet,
   getBalance,
   getBalances,
+  getFundingAccountHealth,
   submitPayment,
   establishTrustline,
+  assertNativeReserve,
   resolveAsset,
   validateAddress,
+  isMuxedAddress,
+  getBaseAccountId,
+  validateMemo,
+  buildStellarMemo,
+  redactMemo,
   fundTestnetAccount,
   getTransactionUrl,
 };

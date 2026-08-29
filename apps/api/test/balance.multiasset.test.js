@@ -152,10 +152,10 @@ describe('walletService.balancesForUser', () => {
     };
     fakeAdapter.getBalances = async () => [{ asset: 'XLM', value: '1.0000000' }];
 
-    await walletService.balancesForUser({ phoneNumber: '+1234567890' });
+    await walletService.balancesForUser({ phoneNumber: '+2348000000000' });
 
     assert.equal(calls.length, 1);
-    assert.deepEqual(calls[0].where, { phoneNumber: '+1234567890', chain: 'stellar' });
+    assert.deepEqual(calls[0].where, { phoneNumber: '+2348000000000', chain: 'stellar' });
   });
 });
 

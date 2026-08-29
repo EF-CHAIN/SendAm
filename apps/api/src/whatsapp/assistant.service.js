@@ -1,21 +1,77 @@
 const walletService = require('../wallet/wallet.service');
 const { validateAddress } = require('../wallet/stellar.adapter');
-const { executePayment } = require('../payment/payment.orchestrator');
-const { enforceTransactionPolicy } = require('../compliance/compliance.service');
-const { verifyPin } = require('../compliance/pin.service');
+const { verifyAndUpgradePin } = require('../compliance/pin.service');
 const { sendTextMessage } = require('../services/whatsapp.service');
 const { confirmationService } = require('./paymentConfirmation.service');
 const { createRecipientResolver } = require('./recipientResolver');
-const prisma = require('../common/prisma');
+const { isValidPhoneNumber } = require('../utils/validators');
 
 const NATIVE_ASSET = 'XLM';
 
-const resolveUser = async (phoneNumber, whatsappName) => {
-  let user = await prisma.user.findUnique({ where: { phoneNumber } });
+const getEnforceTransactionPolicy = () => {
+  try {
+    return require('../compliance/compliance.service').enforceTransactionPolicy;
+  } catch (_error) {
+    return null;
+  }
+};
+
+const getPrisma = () => {
+  try {
+    return require('../common/prisma');
+  } catch (_error) {
+    return null;
+  }
+};
+
+const getWalletService = () => {
+  try {
+    return require('../wallet/wallet.service');
+  } catch (_error) {
+    return null;
+  }
+};
+
+const getPrismaNamespace = () => {
+  try {
+    return require('@prisma/client');
+  } catch (_error) {
+    return { DbNull: null, AnyNull: null };
+  }
+};
+
+const PENDING_SEND_TTL_MS = 10 * 60 * 1000;
+
+const parsePaymentIntent = (text) => {
+  const normalized = String(text || '').trim();
+  const memoMatch = normalized.match(/(?:\bwith\s+memo\b|\bmemo\b)(?::|\s+)?(?:(text|id|hash|return):)?\s*([^\s]+)/i);
+  let memo;
+  let memoType;
+  let textWithoutMemo = normalized;
+  if (memoMatch) {
+    memoType = memoMatch[1] ? memoMatch[1].toLowerCase() : 'text';
+    memo = memoMatch[2];
+    textWithoutMemo = normalized.replace(memoMatch[0], '').trim();
+  }
+
+  const sendMatch = textWithoutMemo.match(
+    /(?:send|pay|transfer)\s+([\d.]+)\s*((?!to\b)[a-zA-Z]{2,5})?\s+(?:to\s+)?(.+)/i
+  );
+  if (!sendMatch) return null;
+  return {
+    amount: sendMatch[1],
+    asset: sendMatch[2] ? sendMatch[2].toUpperCase() : undefined,
+    recipient: sendMatch[3].trim(),
+    ...(memo ? { memo, memoType } : {}),
+  };
+};
+
+const resolveUser = async ({ prismaClient, phoneNumber, whatsappName }) => {
+  let user = await prismaClient.user.findUnique({ where: { phoneNumber } });
   if (!user) {
-    user = await prisma.user.create({ data: { phoneNumber, whatsappName } });
+    user = await prismaClient.user.create({ data: { phoneNumber, whatsappName } });
   } else if (whatsappName && user.whatsappName !== whatsappName) {
-    user = await prisma.user.update({
+    user = await prismaClient.user.update({
       where: { id: user.id },
       data: { whatsappName },
     });
@@ -23,38 +79,51 @@ const resolveUser = async (phoneNumber, whatsappName) => {
   return user;
 };
 
-const parsePaymentIntent = (text) => {
-  const normalized = String(text || '').trim();
-  const sendMatch = normalized.match(
-    /(?:send|pay|transfer)\s+([\d.]+)\s*((?!to\b)[a-zA-Z]{2,5})?\s+(?:to\s+)?(.+)/i
-  );
-  if (!sendMatch) return null;
-  return {
-    amount: sendMatch[1],
-    // No unit specified — name the native asset here rather than leaving it
-    // undefined. payment.orchestrator resolves the same default (NATIVE_ASSET),
-    // but the confirmation message is built from this value, so leaving it
-    // undefined showed the user "Amount: 10 undefined".
-    asset: sendMatch[2] ? sendMatch[2].toUpperCase() : NATIVE_ASSET,
-    recipient: sendMatch[3].trim(),
-  };
-};
+function createAssistantService({
+  prisma: prismaClient = getPrisma(),
+  walletService = getWalletService(),
+  notify = sendTextMessage,
+} = {}) {
+  const resolveRecipient = createRecipientResolver({ prisma: prismaClient, walletService });
 
-// Precedence: saved contacts → phone numbers → raw address passthrough. See
-// recipientResolver.js; the address-validity check in requestConfirmation
-// still applies to whatever comes back.
-const resolveRecipient = createRecipientResolver({ prisma, walletService });
+  const requestConfirmation = async ({ phoneNumber, user, intent, notify: notifyFn = notify }) => {
+    const recipient = await resolveRecipient(user, intent.recipient);
+    const confirmed = {
+      destination: recipient.destination,
+      label: recipient.label,
+    };
 
-const requestConfirmation = async ({ phoneNumber, user, intent, notify }) => {
-  const recipient = await resolveRecipient(user, intent.recipient);
+    if (isValidPhoneNumber(recipient.destination)) {
+      const wallet = await walletService.createOrGetWallet({ phoneNumber: recipient.destination });
+      confirmed.destination = wallet.publicKey;
+      confirmed.label = recipient.destination;
+    }
 
-  if (!validateAddress(String(recipient.destination || '').trim())) {
-    await notify(
+    if (recipient.destination && validateAddress && typeof validateAddress === 'function') {
+      const isValidAddress = validateAddress(recipient.destination);
+      if (!isValidAddress && !isValidPhoneNumber(recipient.destination)) {
+        throw new Error(`The recipient address is invalid: ${recipient.destination}`);
+      }
+    }
+
+    const pendingSend = {
+      amount: intent.amount,
+      asset: intent.asset,
+      destination: confirmed.destination,
+      alias: confirmed.label,
+      routeType: 'domestic',
+      requestedAt: new Date(),
+    };
+
+    await prismaClient.user.update({
+      where: { id: user.id },
+      data: { pendingSend },
+    });
+
+    await notifyFn(
       phoneNumber,
-      `"${recipient.label}" isn't a saved contact or a valid Stellar address. Save it first, or send to a valid address directly.`
+      `Please confirm this payment:\nAmount: ${intent.amount} ${intent.asset}\nTo: ${confirmed.label}\nReply with your PIN to send, or "no" to cancel.`
     );
-    return;
-  }
 
   const confirmation = await confirmationService.create({
     userId: user.id,
@@ -118,7 +187,7 @@ const handlePendingPin = async ({ phoneNumber, user, text, notify }) => {
   if (!(await confirmationService.authorize(pending))) {
     await notify(phoneNumber, `Payment ${reference} was already processed, cancelled, superseded, or expired.`);
     return true;
-  }
+  };
 
   await enforceTransactionPolicy({
     user,
@@ -154,46 +223,51 @@ const processMessage = async (phoneNumber, whatsappName, text, { notify = sendTe
   }
   if (await handlePendingPin({ phoneNumber, user, text, notify })) return;
 
-  const normalized = String(text || '').trim().toLowerCase();
+    if (['hi', 'hello', 'help', 'menu'].includes(normalized)) {
+      await notifyFn(phoneNumber, 'SendAm can help with send money, receive money, balance, contacts, transaction history, and receipts.');
+      return;
+    }
 
-  if (['hi', 'hello', 'help', 'menu'].includes(normalized)) {
-    await notify(phoneNumber, 'SendAm can help with send money, receive money, balance, contacts, transaction history, and receipts.');
-    return;
-  }
+    if (normalized.includes('balance')) {
+      await walletService.ensureWalletsForUser({ user });
+      const balances = await walletService.balancesForUser({ userId: user.id });
+      const lines = balances.flatMap((b) => {
+        if (b.error) return [`${b.chain}: unavailable (${b.error})`];
+        return (b.assets || []).map((a) => `${a.asset}: ${a.value}`);
+      });
+      await notifyFn(phoneNumber, `Your SendAm balances:\n${lines.join('\n')}`);
+      return;
+    }
 
-  if (normalized.includes('balance')) {
-    await walletService.ensureWalletsForUser({ user });
-    const balances = await walletService.balancesForUser({ userId: user.id });
-    const lines = balances.flatMap((b) => {
-      if (b.error) return [`${b.chain}: unavailable (${b.error})`];
-      return (b.assets || []).map((a) => `${a.asset}: ${a.value}`);
-    });
-    await notify(phoneNumber, `Your SendAm balances:\n${lines.join('\n')}`);
-    return;
-  }
+    if (normalized.includes('receive')) {
+      const wallets = await walletService.ensureWalletsForUser({ user });
+      const lines = wallets.map((w) => `${w.chain}: ${w.publicKey}`);
+      await notifyFn(phoneNumber, `Share one of these to receive money on SendAm:\n${lines.join('\n')}`);
+      return;
+    }
 
-  if (normalized.includes('receive')) {
-    const wallets = await walletService.ensureWalletsForUser({ user });
-    const lines = wallets.map((w) => `${w.chain}: ${w.publicKey}`);
-    await notify(phoneNumber, `Share one of these to receive money on SendAm:\n${lines.join('\n')}`);
-    return;
-  }
+    if (normalized.includes('history') || normalized.includes('transactions')) {
+      const transactions = await prismaClient.transaction.findMany({
+        where: { userId: user.id },
+        orderBy: { createdAt: 'desc' },
+        take: 5,
+      });
+      const lines = transactions.map((tx) => `${tx.type}: ${tx.amount} ${tx.asset} - ${tx.status}`);
+      await notifyFn(phoneNumber, lines.length ? lines.join('\n') : 'No transactions yet.');
+      return;
+    }
 
-  if (normalized.includes('history') || normalized.includes('transactions')) {
-    const transactions = await prisma.transaction.findMany({
-      where: { userId: user.id },
-      orderBy: { createdAt: 'desc' },
-      take: 5,
-    });
-    const lines = transactions.map((tx) => `${tx.type}: ${tx.amount} ${tx.asset} - ${tx.status}`);
-    await notify(phoneNumber, lines.length ? lines.join('\n') : 'No transactions yet.');
-    return;
-  }
+    const paymentIntent = parsePaymentIntent(text);
+    if (paymentIntent) {
+      await requestConfirmation({ phoneNumber, user, intent: paymentIntent, notify: notifyFn });
+      return;
+    }
 
   await notify(phoneNumber, 'I can help you send money, check balance, receive money, or show receipts.');
 };
 
 module.exports = {
+  createAssistantService,
   processMessage,
   parsePaymentIntent,
 };

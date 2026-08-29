@@ -1,9 +1,22 @@
 const { registerWhatsAppJobs } = require('./whatsapp.jobs');
-const { startPoller } = require('./poller');
+const { startDepositPoller } = require('./deposits.jobs');
+const { startAuditPoller } = require('./audit.jobs');
+const { startVerificationExpiryPoller } = require('./verification.expiry.jobs');
 
 const registerJobs = () => {
-  registerWhatsAppJobs();
-  startPoller();
+  const whatsappWorker = registerWhatsAppJobs();
+  const depositPoller = startDepositPoller();
+  const auditPoller = startAuditPoller();
+  const verificationExpiryPoller = startVerificationExpiryPoller();
+  return {
+    whatsappWorker,
+    processorNames: ['whatsapp-inbound'],
+    stop: async () => {
+      depositPoller.stop();
+      auditPoller.stop();
+      verificationExpiryPoller.stop();
+    },
+  };
 };
 
 module.exports = {

@@ -212,6 +212,26 @@ npm run build --workspace=apps/admin
 
 These same checks run automatically in CI (`.github/workflows/ci.yml`) on every pull request.
 
+### Secret scanning
+
+CI runs [gitleaks](https://github.com/gitleaks/gitleaks) on every push and PR
+to `main` (`.github/workflows/secret-scan.yml`). The ruleset covers Stellar
+keys, provider tokens, database URLs, and generic high-entropy secrets.
+
+Before pushing, you can verify the scanner locally:
+
+```bash
+./scripts/secret-scan-self-test.sh   # requires gitleaks binary
+```
+
+If gitleaks flags something that is not a real secret (a test fixture,
+placeholder, or documentation example), add a targeted allowlist entry in
+`.gitleaks.toml` and document the reason in your PR. Do **not** commit real
+credentials to work around the scanner — rotate them instead.
+
+See [`docs/SECRET-SCANNING.md`](docs/SECRET-SCANNING.md) for the full
+false-positive review process and credential-rotation response runbook.
+
 ## Security Policy
 
 See [`SECURITY.md`](SECURITY.md) for the full reporting process and current security posture.

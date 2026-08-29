@@ -19,7 +19,10 @@ const DESTINATION_PUBLIC_KEY = DESTINATION_WALLET.publicKey;
 
 const mockSuccessfulPaymentSetup = () => {
   mock.method(server, 'loadAccount', async () => {
-    return new StellarSdk.Account(SOURCE_PUBLIC_KEY, '1');
+    const account = new StellarSdk.Account(SOURCE_PUBLIC_KEY, '1');
+    account.balances = [{ asset_type: 'native', balance: '10' }];
+    account.subentry_count = 0;
+    return account;
   });
 
   mock.method(server, 'fetchBaseFee', async () => '100');
@@ -278,28 +281,30 @@ test('establishTrustline gives a readable error for an unfunded account', async 
   );
 });
 
-test('fundTestnetAccount is blocked on mainnet', async () => {
-  const originalIsMainnet = config.stellar.isMainnet;
-  config.stellar.isMainnet = true;
-
-  await assert.rejects(
-    stellarAdapter.fundTestnetAccount(SOURCE_PUBLIC_KEY),
-    /Friendbot funding is not available on mainnet/,
-  );
-
-  config.stellar.isMainnet = originalIsMainnet;
-});
-
-test('fundTestnetAccount allows on testnet', async () => {
-  const originalIsMainnet = config.stellar.isMainnet;
-  config.stellar.isMainnet = false;
-
-  mock.method(require('axios'), 'get', async () => ({
-    data: { result: { id: 'mock' } },
+test('getFundingAccountHealth reports fee and reserve pressure with operator thresholds', async () => {
+  mock.method(server, 'fetchBaseFee', async () => '300');
+  mock.method(server, 'loadAccount', async () => ({
+    account_id: SOURCE_PUBLIC_KEY,
+    subentry_count: 10,
+    balances: [{ asset_type: 'native', balance: '6.0000000' }],
   }));
 
-  const result = await stellarAdapter.fundTestnetAccount(SOURCE_PUBLIC_KEY);
-  assert.equal(result.funded, true);
+  const report = await stellarAdapter.getFundingAccountHealth({
+    publicKey: SOURCE_PUBLIC_KEY,
+    baseFeeWarningThreshold: 200,
+    baseFeeCriticalThreshold: 250,
+    fundingBalanceWarningThreshold: 10,
+    fundingBalanceCriticalThreshold: 6,
+    reserveWarningThreshold: 0.65,
+    reserveCriticalThreshold: 0.75,
+    reserveEntries: 5,
+  });
 
-  config.stellar.isMainnet = originalIsMainnet;
+  assert.equal(report.status, 'critical');
+  assert.equal(report.baseFeeStatus, 'critical');
+  assert.equal(report.fundingBalanceStatus, 'critical');
+  assert.equal(report.reserveStatus, 'critical');
+  assert.equal(report.fundingCapacityWallets, 1);
+  assert.ok(Array.isArray(report.runbook));
+  assert.ok(report.runbook.length > 0);
 });

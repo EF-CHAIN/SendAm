@@ -1,21 +1,23 @@
 import { useState, useEffect } from 'react';
 import { getAdminWallets } from '@/lib/adminApi';
+import { useListQuery } from '@/lib/useListQuery';
 import { formatDate } from '@shared/formatDate';
 import DataTable from '@/components/DataTable';
 import Loader from '@shared/Loader';
 import Pagination from '@/components/Pagination';
+import FilterBar from '@/components/FilterBar';
 
 export default function Wallets() {
+  const { params, getFilter, setFilter, resetFilters, goNext, goPrev } = useListQuery(['phone', 'chain', 'fundingState']);
   const [wallets, setWallets] = useState([]);
   const [pagination, setPagination] = useState(null);
-  const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     const fetchWallets = async () => {
       setLoading(true);
       try {
-        const res = await getAdminWallets({ page });
+        const res = await getAdminWallets(params);
         setWallets(res.data);
         setPagination(res.pagination);
       } catch (err) {
@@ -25,7 +27,7 @@ export default function Wallets() {
       }
     };
     fetchWallets();
-  }, [page]);
+  }, [params]);
 
   const columns = [
     { header: 'User Phone', render: (row) => row.userId?.phoneNumber || 'Unknown' },
@@ -42,17 +44,25 @@ export default function Wallets() {
     <div className="min-w-0">
       <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3 mb-6">
         <h1 className="text-xl sm:text-2xl font-bold">Wallets</h1>
-        <span className="text-sm text-gray-500 bg-white px-3 py-1 rounded-full border border-gray-200 shadow-sm">
-          Total: {pagination?.total ?? wallets.length}
-        </span>
       </div>
+
+      <FilterBar
+        fields={[
+          { key: 'phone', label: 'Phone', placeholder: 'Search phone…' },
+          { key: 'chain', label: 'Chain', placeholder: 'e.g. stellar' },
+          { key: 'fundingState', label: 'Funding', type: 'select', options: ['pending', 'funded', 'failed'] },
+        ]}
+        getFilter={getFilter}
+        setFilter={setFilter}
+        onReset={resetFilters}
+      />
 
       {loading ? (
         <div className="flex justify-center py-20"><Loader /></div>
       ) : (
         <>
           <DataTable columns={columns} data={wallets} keyField="_id" />
-          <Pagination pagination={pagination} onPageChange={setPage} />
+          <Pagination pagination={pagination} onNext={goNext} onPrev={goPrev} />
         </>
       )}
     </div>
