@@ -1,5 +1,6 @@
 import { lazy, Suspense } from 'react';
 import { Routes, Route } from 'react-router-dom';
+import ErrorBoundary from '@shared/ErrorBoundary.jsx';
 import AdminLayout from './components/AdminLayout.jsx';
 
 // Route-level code splitting: each page is its own JS chunk.

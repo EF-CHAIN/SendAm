@@ -105,14 +105,18 @@ const triggerDownload = (blob, filename) => {
 };
 
 export const exportAdminKyc = async (params = {}) => {
-  const { after, before, limit, ...filters } = params;
+  // Strip cursor/pagination params — exports always cover the full filtered set.
+  // eslint-disable-next-line no-unused-vars
+  const { after: _a, before: _b, limit: _l, ...filters } = params;
   const response = await api.get('/admin/kyc/export', { params: filters, responseType: 'blob' });
   triggerDownload(response.data, 'kyc-export.csv');
   return response.data;
 };
 
 export const exportAdminAuditLogs = async (params = {}) => {
-  const { after, before, limit, ...filters } = params;
+  // Strip cursor/pagination params — exports always cover the full filtered set.
+  // eslint-disable-next-line no-unused-vars
+  const { after: _a, before: _b, limit: _l, ...filters } = params;
   const response = await api.get('/admin/audit-logs/export', { params: filters, responseType: 'blob' });
   triggerDownload(response.data, 'audit-logs-export.csv');
   return response.data;
