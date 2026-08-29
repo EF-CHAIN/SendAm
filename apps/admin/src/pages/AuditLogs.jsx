@@ -8,13 +8,14 @@ import FilterBar from '@/components/FilterBar';
 
 export default function AuditLogs() {
   const { params, getFilter, setFilter, resetFilters, goNext, goPrev } = useListQuery([
-    'action', 'actorType', 'entityType', 'identifier', 'from', 'to',
+    'action', 'actorType', 'actorId', 'entityType', 'identifier', 'from', 'to',
   ]);
   const [rows, setRows] = useState([]);
   const [pagination, setPagination] = useState(null);
   const [loading, setLoading] = useState(true);
   const [exporting, setExporting] = useState(false);
   const [error, setError] = useState('');
+  const [refreshKey, setRefreshKey] = useState(0);
 
   useEffect(() => {
     setLoading(true);
@@ -25,7 +26,7 @@ export default function AuditLogs() {
       })
       .catch((err) => setError(err.message || 'Failed to fetch audit logs'))
       .finally(() => setLoading(false));
-  }, [params]);
+  }, [params, refreshKey]);
 
   const handleExport = async () => {
     setExporting(true);
@@ -40,6 +41,7 @@ export default function AuditLogs() {
   };
 
   if (loading) return <div className="flex justify-center py-20"><Loader size={32} /></div>;
+  const handleRefresh = () => setRefreshKey((prev) => prev + 1);
 
   const columns = [
     { header: 'Actor', accessor: 'actorType' },
@@ -53,6 +55,15 @@ export default function AuditLogs() {
     <div>
       <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3 mb-6">
         <h1 className="text-2xl font-bold">Audit Logs</h1>
+        <div className="flex gap-2">
+        <button
+         type="button"
+        onClick={handleRefresh}
+        className="text-sm rounded-lg border border-gray-200 bg-white px-3 py-1.5 font-medium shadow-sm hover:bg-gray-50"
+        data-testid="refresh-audit"
+        >
+      Refresh
+    </button>
         <button
           type="button"
           onClick={handleExport}
@@ -63,11 +74,13 @@ export default function AuditLogs() {
           {exporting ? 'Exporting…' : 'Export CSV'}
         </button>
       </div>
+      </div>
 
       <FilterBar
         fields={[
           { key: 'action', label: 'Action', placeholder: 'e.g. admin.login' },
           { key: 'actorType', label: 'Actor', placeholder: 'e.g. administrator' },
+          {key: 'actorId', label: 'Actor ID', placeholder: 'e.g. Specific actor ID' },
           { key: 'entityType', label: 'Entity', placeholder: 'e.g. Transaction' },
           { key: 'identifier', label: 'ID', placeholder: 'entityId…' },
           { key: 'from', label: 'From', type: 'date' },

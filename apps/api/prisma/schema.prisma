@@ -251,7 +251,7 @@ model KycProfile {
   @@index([status])
   @@index([sanctionsStatus])
   @@index([custodyStatus])
-  @@index([status, updatedAt])
+  @@index([status, updatedAt, id])
   @@index([updatedAt, id])
 }
 
@@ -339,6 +339,7 @@ model AuditLog {
   @@index([actorType, createdAt])
   @@index([entityType, createdAt])
   @@index([entityId, createdAt])
+  @@index([actorId, createdAt])
 }
 
 model AdminUser {

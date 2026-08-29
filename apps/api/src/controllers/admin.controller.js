@@ -9,7 +9,7 @@ const { listStuckPayments, operatorResolveStuckPayment, listLedgerDiscrepancies 
 // Build an inclusive [gte, lte] range from `from`/`to` query params. Tolerant of
 // bare dates ("2024-01-01") and full ISO timestamps; invalid input is ignored
 // so a bad filter never returns a hard error.
-const parseDateRange = (query, field = 'createdAt') => {
+const  parseDateRange = (query, field = 'createdAt') => {
   const { from, to, [field]: fieldRange } = query;
   const start = from || (fieldRange ? fieldRange.split(',')[0] : null);
   const end = to || (fieldRange ? fieldRange.split(',')[1] : null);
@@ -81,6 +81,7 @@ const auditWhere = (query) => {
   const where = {};
   if (query.action) where.action = { equals: query.action };
   if (query.actorType) where.actorType = { equals: query.actorType };
+  if (query.actorId) where.actorId = { equals: query.actorId };
   if (query.entityType) where.entityType = { equals: query.entityType };
   Object.assign(where, parseDateRange(query, 'createdAt'));
   Object.assign(where, identifierWhere(query.identifier, ['id', 'entityId']));
