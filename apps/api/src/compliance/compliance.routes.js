@@ -4,25 +4,101 @@ const controller = require('./compliance.controller');
 const privacyController = require('./privacy.controller');
 const requireAdmin = require('../middlewares/requireAdmin');
 const requireRestApiEnabled = require('../middlewares/requireRestApiEnabled');
-const requireRestSession = require('../middlewares/requireRestSession');
-const { validateExternalPayload } = require('../common/validation');
+const { validateRequest } = require('../middlewares/validateRequest');
 
-router.get('/kyc/:phone', requireAdmin('compliance.read'), controller.getProfile);
-router.get('/kyc', requireRestApiEnabled, requireRestSession, controller.getOwnProfile);
-router.post('/kyc/start', requireRestApiEnabled, requireRestSession, controller.startKyc);
-router.post('/kyc/callback/smileid', validateExternalPayload('smileid.callback'), controller.smileIdCallback);
-router.post('/kyc/:id/review', requireAdmin('compliance.write'), controller.reviewKyc);
-router.post('/kyc/:id/approve', requireAdmin('compliance.write'), controller.approveOverride);
-router.post('/pin', requireRestApiEnabled, requireRestSession, controller.setPin);
+router.get(
+  '/kyc/:phone',
+  requireAdmin,
+  validateRequest({
+    params: {
+      allowedKeys: ['phone'],
+      required: ['phone'],
+      fields: {
+        phone: {
+          type: 'string',
+          trim: true,
+          custom: (value) => value.length > 5,
+          message: 'A valid phone number is required',
+        },
+      },
+    },
+  }),
+  controller.getProfile,
+);
 
-// ── Onboarding status (#330) ────────────────────────────────────────────
-// Customer self-service: retrieve their own onboarding checkpoints and next step.
-router.get('/onboarding', requireRestApiEnabled, requireRestSession, controller.getOnboardingStatus);
+router.post(
+  '/kyc/start',
+  requireRestApiEnabled,
+  validateRequest({
+    body: {
+      allowedKeys: ['phoneNumber', 'providerReference'],
+      required: ['phoneNumber'],
+      fields: {
+        phoneNumber: {
+          type: 'string',
+          trim: true,
+          custom: (value) => value.length > 5,
+          message: 'A valid phone number is required',
+        },
+        providerReference: { type: 'string', optional: true },
+      },
+    },
+  }),
+  controller.startKyc,
+);
 
-// Customer privacy lifecycle (self-service): export own data, request erasure.
-const privacyRouter = express.Router();
-privacyRouter.post('/export', requireRestApiEnabled, requireRestSession, privacyController.exportOwnData);
-privacyRouter.post('/erasure', requireRestApiEnabled, requireRestSession, privacyController.requestOwnErasure);
-router.use('/privacy', privacyRouter);
+router.post(
+  '/kyc/:id/review',
+  requireAdmin,
+  validateRequest({
+    params: {
+      allowedKeys: ['id'],
+      required: ['id'],
+      fields: {
+        id: {
+          type: 'string',
+          trim: true,
+          custom: (value) => value.length > 0,
+          message: 'KYC profile id is required',
+        },
+      },
+    },
+    body: {
+      allowedKeys: ['status', 'tier', 'riskScore'],
+      fields: {
+        status: { type: 'string', optional: true },
+        tier: { type: 'number', optional: true },
+        riskScore: { type: 'number', optional: true },
+      },
+    },
+  }),
+  controller.reviewKyc,
+);
+
+router.post(
+  '/pin',
+  requireRestApiEnabled,
+  validateRequest({
+    body: {
+      allowedKeys: ['phoneNumber', 'pin'],
+      required: ['phoneNumber', 'pin'],
+      fields: {
+        phoneNumber: {
+          type: 'string',
+          trim: true,
+          custom: (value) => value.length > 5,
+          message: 'A valid phone number is required',
+        },
+        pin: {
+          type: 'string',
+          trim: true,
+          custom: (value) => value.length >= 4,
+          message: 'PIN must be at least 4 characters',
+        },
+      },
+    },
+  }),
+  controller.setPin,
+);
 
 module.exports = router;
