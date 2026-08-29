@@ -16,6 +16,16 @@ if (!config.admin.password) {
 const JWT_SECRET = config.admin.jwtSecret;
 const ADMIN_PASSWORD = config.admin.password;
 const TTL_MS = config.admin.sessionTtlHours * 60 * 60 * 1000;
+const ADMIN_PERMISSIONS = [
+  'stats:read',
+  'users:read',
+  'wallets:read',
+  'transactions:read',
+  'kyc:read',
+  'audit:read',
+  'system:read',
+  'sensitive:reveal',
+];
 
 const sign = (body) =>
   crypto.createHmac('sha256', JWT_SECRET).update(body).digest('base64url');
@@ -35,7 +45,7 @@ const verifyPassword = (candidate) => {
 };
 
 const createToken = () => {
-  const payload = { role: 'admin', iat: Date.now(), exp: Date.now() + TTL_MS };
+  const payload = { role: 'admin', permissions: ADMIN_PERMISSIONS, iat: Date.now(), exp: Date.now() + TTL_MS };
   const body = Buffer.from(JSON.stringify(payload)).toString('base64url');
   return `${body}.${sign(body)}`;
 };
@@ -61,6 +71,7 @@ const verifyToken = (token) => {
 };
 
 module.exports = {
+  ADMIN_PERMISSIONS,
   verifyPassword,
   createToken,
   verifyToken,

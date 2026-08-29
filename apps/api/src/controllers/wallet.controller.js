@@ -4,6 +4,12 @@ const walletService = require('../wallet/wallet.service');
 const { validateAddress } = require('../wallet/stellar.adapter');
 const { executePayment } = require('../payment/payment.orchestrator');
 const prisma = require('../common/prisma');
+const {
+  IdempotencyError,
+  validateKey,
+  fingerprintRequest,
+  idempotencyService,
+} = require('../payment/idempotency.service');
 
 const createWallet = async (req, res, next) => {
   try {
@@ -42,6 +48,11 @@ const checkBalance = async (req, res, next) => {
 const sendFunds = async (req, res, next) => {
   try {
     const { phoneNumber, amount, destination } = req.body;
+    const idempotencyKey = req.get('Idempotency-Key');
+
+    if (!validateKey(idempotencyKey)) {
+      return sendError(res, 'Idempotency-Key header is required (8-128 URL-safe characters)', 400);
+    }
 
     if (!isValidPhoneNumber(phoneNumber) || !isValidAmount(amount) || !destination) {
       return sendError(res, 'A valid phone number, amount, and destination are required');
@@ -53,23 +64,35 @@ const sendFunds = async (req, res, next) => {
     const user = await prisma.user.findUnique({ where: { phoneNumber } });
     if (!user) return sendError(res, 'User not found', 404);
 
-    const result = await executePayment({
-      sender: user,
-      destination,
-      amount,
-      asset: req.body.asset,
-      routeType: req.body.routeType,
-      sourceCountry: req.body.sourceCountry,
-      destinationCountry: req.body.destinationCountry,
+    const fingerprint = fingerprintRequest(req.body);
+    const outcome = await idempotencyService.execute({
+      userId: user.id,
+      key: idempotencyKey,
+      fingerprint,
+      run: async ({ transactionId }) => {
+        const result = await executePayment({
+          sender: user,
+          destination,
+          amount,
+          asset: req.body.asset,
+          routeType: req.body.routeType,
+          sourceCountry: req.body.sourceCountry,
+          destinationCountry: req.body.destinationCountry,
+          transactionId,
+        });
+        return {
+          transactionId: result.transaction._id,
+          status: result.transaction.status,
+          rail: result.transaction.rail,
+          receipt: result.receipt,
+        };
+      },
     });
 
-    return sendSuccess(res, {
-      transactionId: result.transaction._id,
-      status: result.transaction.status,
-      rail: result.transaction.rail,
-      receipt: result.receipt,
-    }, 'Payment accepted');
+    res.set('Idempotency-Replayed', outcome.replayed ? 'true' : 'false');
+    return sendSuccess(res, outcome.response, outcome.replayed ? 'Original payment result replayed' : 'Payment accepted');
   } catch (error) {
+    if (error instanceof IdempotencyError) return sendError(res, error.message, error.statusCode);
     next(error);
   }
 };

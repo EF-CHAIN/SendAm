@@ -2,6 +2,8 @@ const { sendSuccess, sendError, sendPaginated } = require('../utils/response');
 const { verifyPassword, createToken } = require('../services/adminAuth.service');
 const prisma = require('../common/prisma');
 const { withIdAliases } = require('../common/records');
+const { writeAuditLog } = require('../common/audit.service');
+const { userDto, walletDto, transactionDto, kycProfileDto } = require('../admin/adminDtos');
 
 // Parse ?page and ?limit into safe bounds so list endpoints can never be asked
 // to load the entire collection at once. Defaults to 50/page, capped at 100.
@@ -66,17 +68,17 @@ const getUsers = async (req, res, next) => {
     const { page, limit, skip } = parsePagination(req.query);
     const [users, total] = await Promise.all([
       prisma.user.findMany({
-        include: { wallets: { select: { chain: true, publicKey: true, network: true, createdAt: true } } },
+        select: {
+          id: true, phoneNumber: true, whatsappName: true, kycTier: true, createdAt: true,
+          wallets: { select: { chain: true, publicKey: true, network: true, funded: true } },
+        },
         orderBy: { createdAt: 'desc' },
         skip,
         take: limit,
       }),
       prisma.user.count(),
     ]);
-    sendPaginated(res, withIdAliases(users.map((user) => ({
-      ...user,
-      pinHash: undefined,
-    }))), { page, limit, total });
+    sendPaginated(res, withIdAliases(users.map(userDto)), { page, limit, total });
   } catch (error) {
     next(error);
   }
@@ -87,18 +89,17 @@ const getWallets = async (req, res, next) => {
     const { page, limit, skip } = parsePagination(req.query);
     const [wallets, total] = await Promise.all([
       prisma.wallet.findMany({
-        include: { user: { select: { phoneNumber: true, whatsappName: true } } },
+        select: {
+          id: true, chain: true, publicKey: true, funded: true, network: true, createdAt: true,
+          user: { select: { id: true, phoneNumber: true } },
+        },
         orderBy: { createdAt: 'desc' },
         skip,
         take: limit,
       }),
       prisma.wallet.count(),
     ]);
-    sendPaginated(res, withIdAliases(wallets.map((wallet) => ({
-      ...wallet,
-      encryptedSecretKey: undefined,
-      userId: wallet.user,
-    }))), { page, limit, total });
+    sendPaginated(res, withIdAliases(wallets.map(walletDto)), { page, limit, total });
   } catch (error) {
     next(error);
   }
@@ -109,17 +110,19 @@ const getTransactions = async (req, res, next) => {
     const { page, limit, skip } = parsePagination(req.query);
     const [transactions, total] = await Promise.all([
       prisma.transaction.findMany({
-        include: { user: { select: { phoneNumber: true } } },
+        select: {
+          id: true, type: true, amount: true, asset: true, rail: true, routeType: true,
+          status: true, destination: true, recipientPhoneNumber: true, txHash: true,
+          createdAt: true, updatedAt: true,
+          user: { select: { id: true, phoneNumber: true } },
+        },
         orderBy: { createdAt: 'desc' },
         skip,
         take: limit,
       }),
       prisma.transaction.count(),
     ]);
-    sendPaginated(res, withIdAliases(transactions.map((transaction) => ({
-      ...transaction,
-      userId: transaction.user,
-    }))), { page, limit, total });
+    sendPaginated(res, withIdAliases(transactions.map(transactionDto)), { page, limit, total });
   } catch (error) {
     next(error);
   }
@@ -128,13 +131,58 @@ const getTransactions = async (req, res, next) => {
 const getKycProfiles = async (_req, res, next) => {
   try {
     const profiles = await prisma.kycProfile.findMany({
-      include: { user: { select: { phoneNumber: true, whatsappName: true } } },
+      select: {
+        id: true, tier: true, status: true, country: true, riskScore: true,
+        sanctionsStatus: true, sanctionsScreenedAt: true, custodyStatus: true,
+        custodyReviewedAt: true, lastScreenedAt: true, createdAt: true, updatedAt: true,
+        user: { select: { id: true, phoneNumber: true } },
+      },
       orderBy: { updatedAt: 'desc' },
     });
-    sendSuccess(res, withIdAliases(profiles.map((profile) => ({
-      ...profile,
-      userId: profile.user,
-    }))));
+    sendSuccess(res, withIdAliases(profiles.map(kycProfileDto)));
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Full identifiers are available only through an explicit, permission-gated,
+// single-record action. The response expires quickly and every reveal is
+// recorded. Secrets and raw provider metadata are never revealable.
+const revealSensitiveFields = async (req, res, next) => {
+  try {
+    const { resource, id } = req.params;
+    const queries = {
+      user: () => prisma.user.findUnique({ where: { id }, select: { phoneNumber: true, whatsappName: true } }),
+      wallet: () => prisma.wallet.findUnique({ where: { id }, select: { publicKey: true, phoneNumber: true } }),
+      transaction: () => prisma.transaction.findUnique({
+        where: { id },
+        select: { destination: true, recipientPhoneNumber: true, txHash: true, providerTransactionId: true },
+      }),
+      kyc: () => prisma.kycProfile.findUnique({
+        where: { id },
+        select: { providerReference: true, deniedReason: true },
+      }),
+    };
+    if (!queries[resource]) return sendError(res, 'Unsupported reveal resource', 400);
+    const fields = await queries[resource]();
+    if (!fields) return sendError(res, 'Record not found', 404);
+
+    await writeAuditLog({
+      actorType: 'admin',
+      actorId: req.admin?.role,
+      action: 'admin.sensitive.revealed',
+      entityType: resource,
+      entityId: id,
+      metadata: { fields: Object.keys(fields) },
+      req,
+    });
+
+    return sendSuccess(res, {
+      resource,
+      id,
+      fields,
+      validUntil: new Date(Date.now() + 60_000).toISOString(),
+    }, 'Sensitive fields revealed for this response only');
   } catch (error) {
     next(error);
   }
@@ -176,4 +224,5 @@ module.exports = {
   getKycProfiles,
   getAuditLogs,
   getSystemHealth,
+  revealSensitiveFields,
 };

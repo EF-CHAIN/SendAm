@@ -38,6 +38,7 @@ const executePayment = async ({
   sourceCountry = 'NG',
   destinationCountry = 'NG',
   routeType,
+  transactionId,
 }) => {
   const senderUser = sender;
   if (!senderUser) throw new Error('Sender not found.');
@@ -71,6 +72,7 @@ const executePayment = async ({
     });
     const t = await tx.transaction.create({
       data: {
+        ...(transactionId ? { id: transactionId } : {}),
         userId: senderUser.id,
         type: 'send',
         amount: String(amount),
@@ -107,6 +109,7 @@ const executePayment = async ({
     });
     const t = await prisma.transaction.create({
       data: {
+        ...(transactionId ? { id: transactionId } : {}),
         userId: senderUser.id,
         type: 'send',
         amount: String(amount),

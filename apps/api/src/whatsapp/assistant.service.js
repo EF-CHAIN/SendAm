@@ -1,15 +1,13 @@
-const { Prisma } = require('@prisma/client');
 const walletService = require('../wallet/wallet.service');
 const { validateAddress } = require('../wallet/stellar.adapter');
 const { executePayment } = require('../payment/payment.orchestrator');
 const { enforceTransactionPolicy } = require('../compliance/compliance.service');
 const { verifyPin } = require('../compliance/pin.service');
 const { sendTextMessage } = require('../services/whatsapp.service');
-const { claimPendingSend } = require('./pendingClaim');
+const { confirmationService } = require('./paymentConfirmation.service');
 const { createRecipientResolver } = require('./recipientResolver');
 const prisma = require('../common/prisma');
 
-const PENDING_SEND_TTL_MS = 10 * 60 * 1000;
 const NATIVE_ASSET = 'XLM';
 
 const resolveUser = async (phoneNumber, whatsappName) => {
@@ -58,45 +56,57 @@ const requestConfirmation = async ({ phoneNumber, user, intent, notify }) => {
     return;
   }
 
-  const pendingSend = {
+  const confirmation = await confirmationService.create({
+    userId: user.id,
     amount: intent.amount,
     asset: intent.asset,
     destination: recipient.destination,
-    alias: recipient.label,
+    recipientLabel: recipient.label,
     routeType: 'domestic',
-    requestedAt: new Date(),
-  };
-  await prisma.user.update({
-    where: { id: user.id },
-    data: { pendingSend },
   });
 
   await notify(
     phoneNumber,
-    `Please confirm this payment:\nAmount: ${intent.amount} ${intent.asset}\nTo: ${recipient.label}\nReply with your PIN to send, or "no" to cancel.`
+    `Please confirm payment ${confirmation.reference}:\nAmount: ${intent.amount} ${intent.asset}\nTo: ${recipient.label}\nReply with "<PIN> ${confirmation.reference}" to send, or "cancel ${confirmation.reference}".`
   );
 };
 
 const handlePendingPin = async ({ phoneNumber, user, text, notify }) => {
-  if (!user.pendingSend?.destination) return false;
-
   const lowered = String(text).trim().toLowerCase();
-  if (lowered === 'no' || lowered === 'cancel') {
-    // Json? columns need Prisma.DbNull — a plain null in `data` throws at runtime.
-    await prisma.user.update({ where: { id: user.id }, data: { pendingSend: Prisma.DbNull } });
-    await notify(phoneNumber, 'Payment cancelled.');
+  const reference = String(text).toUpperCase().match(/\b[A-F0-9]{6}\b/)?.[0];
+  const hasPending = await confirmationService.hasPending(user.id);
+  if (!reference) {
+    if (!hasPending) return false;
+    await notify(phoneNumber, 'Include the 6-character payment reference from the prompt so I confirm the right payment.');
     return true;
   }
 
-  if (Date.now() - new Date(user.pendingSend.requestedAt).getTime() > PENDING_SEND_TTL_MS) {
-    await prisma.user.update({ where: { id: user.id }, data: { pendingSend: Prisma.DbNull } });
-    await notify(phoneNumber, 'That payment request expired. Please start again.');
+  const pending = await confirmationService.find(user.id, reference);
+  if (!pending) {
+    await notify(phoneNumber, `Payment reference ${reference} was not found.`);
+    return true;
+  }
+  if (pending.state !== 'pending') {
+    await notify(phoneNumber, `Payment ${reference} is ${pending.state} and cannot be authorized.`);
+    return true;
+  }
+  if (lowered.startsWith('cancel ') || lowered.startsWith('no ')) {
+    // Json? columns need Prisma.DbNull — a plain null in `data` throws at runtime.
+    const cancelled = await confirmationService.cancel(pending);
+    await notify(phoneNumber, cancelled ? `Payment ${reference} cancelled.` : `Payment ${reference} was already handled.`);
+    return true;
+  }
+
+  if (pending.expiresAt <= new Date()) {
+    await confirmationService.expire(pending);
+    await notify(phoneNumber, `Payment ${reference} expired. Please start again.`);
     return true;
   }
 
   const userWithPin = await prisma.user.findUnique({ where: { id: user.id } });
-  if (!verifyPin(text, userWithPin.pinHash)) {
-    await notify(phoneNumber, 'PIN verification failed. Please try again or reply "no" to cancel.');
+  const pin = String(text).trim().split(/\s+/)[0];
+  if (!verifyPin(pin, userWithPin.pinHash)) {
+    await notify(phoneNumber, `PIN verification failed. Try again with "<PIN> ${reference}" or cancel ${reference}.`);
     return true;
   }
 
@@ -105,9 +115,8 @@ const handlePendingPin = async ({ phoneNumber, user, text, notify }) => {
   // guarantees exactly one of them executes the payment; the loser gets a
   // clear reply instead of a double spend. A payment that fails after the
   // claim requires the user to start the send again — the safe direction.
-  const pending = user.pendingSend;
-  if (!(await claimPendingSend({ prisma, Prisma, userId: user.id }))) {
-    await notify(phoneNumber, 'That payment was already processed or cancelled.');
+  if (!(await confirmationService.authorize(pending))) {
+    await notify(phoneNumber, `Payment ${reference} was already processed, cancelled, superseded, or expired.`);
     return true;
   }
 
@@ -126,7 +135,9 @@ const handlePendingPin = async ({ phoneNumber, user, text, notify }) => {
     routeType: pending.routeType,
   });
 
-  await notify(phoneNumber, `Payment ${result.transaction.status}. Receipt: ${result.receipt.transactionId}`);
+  await confirmationService.complete(pending.id, result.transaction.id);
+
+  await notify(phoneNumber, `Payment ${reference} ${result.transaction.status}. Receipt: ${result.receipt.transactionId}`);
   return true;
 };
 
@@ -136,6 +147,11 @@ const handlePendingPin = async ({ phoneNumber, user, text, notify }) => {
 // see apps/api/src/controllers/sim.controller.js.
 const processMessage = async (phoneNumber, whatsappName, text, { notify = sendTextMessage } = {}) => {
   const user = await resolveUser(phoneNumber, whatsappName);
+  const paymentIntent = parsePaymentIntent(text);
+  if (paymentIntent) {
+    await requestConfirmation({ phoneNumber, user, intent: paymentIntent, notify });
+    return;
+  }
   if (await handlePendingPin({ phoneNumber, user, text, notify })) return;
 
   const normalized = String(text || '').trim().toLowerCase();
@@ -171,12 +187,6 @@ const processMessage = async (phoneNumber, whatsappName, text, { notify = sendTe
     });
     const lines = transactions.map((tx) => `${tx.type}: ${tx.amount} ${tx.asset} - ${tx.status}`);
     await notify(phoneNumber, lines.length ? lines.join('\n') : 'No transactions yet.');
-    return;
-  }
-
-  const paymentIntent = parsePaymentIntent(text);
-  if (paymentIntent) {
-    await requestConfirmation({ phoneNumber, user, intent: paymentIntent, notify });
     return;
   }
 

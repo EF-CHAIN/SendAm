@@ -17,3 +17,9 @@ const requireAdmin = (req, res, next) => {
 };
 
 module.exports = requireAdmin;
+module.exports.requirePermission = (permission) => (req, res, next) => {
+  if (!req.admin?.permissions?.includes(permission)) {
+    return sendError(res, 'Forbidden', 403);
+  }
+  next();
+};
