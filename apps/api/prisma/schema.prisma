@@ -816,3 +816,27 @@ model Partner {
 
   @@index([status])
 }
+
+/// Replay protection and ordering state for every external callback (#311).
+/// One row per (source, eventKey); `eventAt` is the provider's own timestamp
+/// and is what the ordering guard compares, never our receipt time.
+model WebhookEvent {
+  id            String    @id @default(cuid())
+  source        String
+  eventKey      String
+  subjectId     String?
+  payloadHash   String
+  eventAt       DateTime?
+  state         String    @default("processing")
+  attempts      Int       @default(1)
+  skippedReason String?
+  error         String?
+  processedAt   DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@unique([source, eventKey])
+  @@index([source, subjectId, eventAt])
+  @@index([state, updatedAt])
+  @@index([createdAt])
+}
