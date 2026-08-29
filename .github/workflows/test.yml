@@ -7,9 +7,29 @@ on:
     branches: [main]
 
 jobs:
-  backend:
-    name: Backend tests
+  database-migrations:
+    name: Database migrations (${{ matrix.scenario }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        scenario: [empty, existing]
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: password
+          POSTGRES_DB: sendam_migration_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d sendam_migration_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://postgres:password@localhost:5432/sendam_migration_test
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -17,16 +37,67 @@ jobs:
           node-version-file: .nvmrc
           cache: npm
       - run: npm ci
-      # Generate the Prisma client. Tests never talk to a database, but any
-      # test that requires a module which imports src/common/prisma.js needs
-      # the generated client to exist or it dies with
-      # "Cannot find module '.prisma/client/default'". prisma.config.ts reads
-      # DATABASE_URL, so a throwaway value is enough — nothing connects.
+      - name: Prepare existing installation
+        if: matrix.scenario == 'existing'
+        working-directory: apps/api
+        run: |
+          forward_migration="$(find prisma/migrations -mindepth 1 -maxdepth 1 -type d | sort | tail -n 1)"
+          mv "$forward_migration" /tmp/forward-migration
+          npm run prisma:deploy
+          node -e "const {Client}=require('pg'); (async()=>{const c=new Client({connectionString:process.env.DATABASE_URL}); await c.connect(); await c.query(\`INSERT INTO \"User\" (id,\"phoneNumber\",\"updatedAt\") VALUES ('migration-sentinel','+2348000000101',NOW())\`); await c.end()})().catch(e=>{console.error(e);process.exit(1)})"
+          mv /tmp/forward-migration "$forward_migration"
+      - name: Apply all forward migrations
+        run: npm run db:provision --workspace=apps/api
+      - name: Verify existing data survived
+        if: matrix.scenario == 'existing'
+        working-directory: apps/api
+        run: node -e "const {Client}=require('pg'); (async()=>{const c=new Client({connectionString:process.env.DATABASE_URL}); await c.connect(); const r=await c.query(\`SELECT id FROM \"User\" WHERE id='migration-sentinel'\`); await c.end(); if(r.rowCount!==1) throw new Error('existing data was lost')})().catch(e=>{console.error(e);process.exit(1)})"
+      - name: Validator rejects an unreachable database
+        working-directory: apps/api
+        run: |
+          if DATABASE_URL=postgresql://postgres:password@127.0.0.1:1/unreachable npm run db:validate; then
+            echo "validator unexpectedly accepted an unreachable database"
+            exit 1
+          fi
+
+  backend:
+    name: Backend tests
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: password
+          POSTGRES_DB: sendam_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      # Generate the Prisma client.
       - run: npm run prisma:generate --workspace=apps/api
         env:
-          DATABASE_URL: postgresql://ci:ci@localhost:5432/ci
+          DATABASE_URL: postgresql://postgres:password@localhost:5432/sendam_test
+      # Validate database migrations against a clean Postgres instance. Run it
+      # through the workspace, not with --schema from the repo root: prisma
+      # discovers datasource.url from apps/api/prisma.config.ts, and from the
+      # root that file is never loaded — "The datasource.url property is
+      # required in your Prisma config file when using prisma migrate deploy".
+      - run: npm run prisma:deploy --workspace=apps/api
+        env:
+          DATABASE_URL: postgresql://postgres:password@localhost:5432/sendam_test
       # Unit tests (parser, crypto, admin auth, transfer guardrails, recipient
-      # resolution, validators) — no database required.
+      # resolution, validators)
       - run: npm test
 
   frontend-build:
@@ -39,7 +110,28 @@ jobs:
           node-version-file: .nvmrc
           cache: npm
       - run: npm ci
+      # Run admin dashboard tests
+      - run: npm run test --workspace=apps/admin
       # Build both Vite frontends so a compile break in either app fails the
       # check and blocks the merge, exactly like a failing test.
       - run: npm run build:landing
       - run: npm run build:admin
+      # Enforce JS, CSS and image size budgets. A material regression in bundle
+      # size fails CI with an actionable per-file report so developers know
+      # exactly which chunk or asset crossed the threshold.
+      - name: Check frontend performance budgets
+        run: node scripts/check-frontend-budgets.js
+
+  landing-tests:
+    name: Landing tests & accessibility
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      # Component/smoke tests plus jest-axe accessibility checks for the
+      # rendered home page. No live services required (jsdom + MemoryRouter).
+      - run: npm run test:landing

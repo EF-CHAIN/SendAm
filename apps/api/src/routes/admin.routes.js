@@ -2,6 +2,7 @@ const express = require('express');
 const rateLimit = require('express-rate-limit');
 const router = express.Router();
 const adminController = require('../controllers/admin.controller');
+const privacyController = require('../compliance/privacy.controller');
 const requireAdmin = require('../middlewares/requireAdmin');
 const { validateRequest } = require('../middlewares/validateRequest');
 

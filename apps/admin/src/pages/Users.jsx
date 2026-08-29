@@ -1,22 +1,24 @@
 import { useState, useEffect } from 'react';
 import { getAdminUsers } from '@/lib/adminApi';
+import { useListQuery } from '@/lib/useListQuery';
 import { formatDate } from '@shared/formatDate';
 import DataTable from '@/components/DataTable';
 import Loader from '@shared/Loader';
 import StatusBadge from '@/components/StatusBadge';
 import Pagination from '@/components/Pagination';
+import FilterBar from '@/components/FilterBar';
 
 export default function Users() {
+  const { params, getFilter, setFilter, resetFilters, goNext, goPrev } = useListQuery(['phone']);
   const [users, setUsers] = useState([]);
   const [pagination, setPagination] = useState(null);
-  const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     const fetchUsers = async () => {
       setLoading(true);
       try {
-        const res = await getAdminUsers({ page });
+        const res = await getAdminUsers(params);
         setUsers(res.data);
         setPagination(res.pagination);
       } catch (err) {
@@ -26,7 +28,7 @@ export default function Users() {
       }
     };
     fetchUsers();
-  }, [page]);
+  }, [params]);
 
   const columns = [
     { header: 'Phone Number', accessor: 'phoneNumber' },
@@ -43,17 +45,21 @@ export default function Users() {
     <div className="min-w-0">
       <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3 mb-6">
         <h1 className="text-xl sm:text-2xl font-bold">Users</h1>
-        <span className="text-sm text-gray-500 bg-white px-3 py-1 rounded-full border border-gray-200 shadow-sm">
-          Total: {pagination?.total ?? users.length}
-        </span>
       </div>
+
+      <FilterBar
+        fields={[{ key: 'phone', label: 'Phone', placeholder: 'Search phone…' }]}
+        getFilter={getFilter}
+        setFilter={setFilter}
+        onReset={resetFilters}
+      />
 
       {loading ? (
         <div className="flex justify-center py-20"><Loader /></div>
       ) : (
         <>
           <DataTable columns={columns} data={users} keyField="_id" />
-          <Pagination pagination={pagination} onPageChange={setPage} />
+          <Pagination pagination={pagination} onNext={goNext} onPrev={goPrev} />
         </>
       )}
     </div>

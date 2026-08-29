@@ -1,0 +1,32 @@
+{
+  "apps": {
+    "landing": {
+      "distDir": "apps/landing/dist",
+      "comment": "Baseline: JS 256 KB, CSS 22.6 KB (gzip). Budgets are 20% headroom above baseline.",
+      "budgets": {
+        "totalJsKb": 320,
+        "totalCssKb": 40,
+        "maxImageKb": 100,
+        "maxChunkKb": 300,
+        "gzip": {
+          "totalJsKb": 100,
+          "totalCssKb": 10
+        }
+      }
+    },
+    "admin": {
+      "distDir": "apps/admin/dist",
+      "comment": "Baseline: JS 312 KB, CSS 14.9 KB (gzip). Budgets are 20% headroom above baseline.",
+      "budgets": {
+        "totalJsKb": 400,
+        "totalCssKb": 30,
+        "maxImageKb": 100,
+        "maxChunkKb": 380,
+        "gzip": {
+          "totalJsKb": 130,
+          "totalCssKb": 10
+        }
+      }
+    }
+  }
+}

@@ -4,6 +4,7 @@ import { adminLogin } from '@/lib/adminApi';
 import { Lock } from 'lucide-react';
 
 export default function Login() {
+  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
@@ -14,9 +15,16 @@ export default function Login() {
     setError('');
     setLoading(true);
     try {
-      const token = await adminLogin(password);
-      if (token) {
-        navigate('/');
+      const result = await adminLogin(email, password);
+      if (result?.token) {
+        // A bootstrap/temporary credential only authenticates the self-serve
+        // password rotation: force the operator to pick a private password
+        // before any admin work.
+        if (result.mustChangePassword) {
+          navigate('/set-password');
+        } else {
+          navigate('/');
+        }
       } else {
         setError('Login failed. Please try again.');
       }
@@ -41,9 +49,15 @@ export default function Login() {
 
         <form onSubmit={handleLogin} className="space-y-6">
           <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">Email</label>
+            <input type="email" required autoComplete="username" value={email} onChange={(e) => setEmail(e.target.value)} className="w-full px-4 py-3 rounded-lg border border-gray-200 focus:ring-2 focus:ring-primary outline-none transition-all" placeholder="you@example.com" />
+          </div>
+          <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">Password</label>
             <input
               type="password"
+              required
+              autoComplete="current-password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               className="w-full px-4 py-3 rounded-lg border border-gray-200 focus:ring-2 focus:ring-primary outline-none transition-all"

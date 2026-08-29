@@ -24,6 +24,7 @@ SendAm/
     api/       Express backend and worker-ready modules
     landing/   Vite + React public site
     admin/     Vite + React admin dashboard
+    chat-sim/  WhatsApp chat simulator for local development (dev-only)
   packages/
     shared/    Shared frontend utilities and UI
 ```
@@ -178,17 +179,17 @@ npm run build:admin
 
 ## Production Readiness Gaps
 
-- Support non-native Stellar assets via `changeTrust` (USDC and anchor-issued assets).
+- ~~Support non-native Stellar assets via `changeTrust` (USDC and anchor-issued assets)~~ — **Done.** XLM and USDC are both built; `resolveAsset('USDC')`, `getBalances()`, and `establishTrustline()` are in the adapter and wallets auto-open the USDC trustline at creation. See [`ROADMAP.md`](ROADMAP.md#usdc--non-native-asset-support--built).
 - Wire Smile ID or Dojah production KYC callbacks.
 - Apply the Prisma migration to the Neon database and run provider-level smoke tests.
 - Split background workers from the API process in deployment.
-- Add automated tests for orchestrator, wallet, webhook, voice, and compliance flows.
+- Expand automated test coverage for the payment orchestrator, voice, and compliance flows (webhook and auth integration tests exist — see [`ROADMAP.md`](ROADMAP.md#test-coverage)).
 - Add monitoring, alerting, audit review workflows, and admin RBAC.
 - Build real per-user authentication for the compliance PIN and KYC-start endpoints — they're gated off in production by default (`ENABLE_WALLET_REST_API`, same as the wallet REST API) until then, so they have no working production path yet.
 
 ### Run The Tests
 
-The backend ships with a unit test suite on the built-in Node test runner (no extra dependencies), covering wallet-secret encryption, admin auth, and request validators:
+The backend uses Node's built-in `node:test` runner (no extra test framework dependency). The suite covers unit and integration scenarios: wallet-key encryption, admin auth, request validators, Stellar adapter, multi-asset balances, USDC trustlines, full webhook flow, SEP-10 auth routes, authenticated REST routes, deposit polling, idempotency, payment orchestration, compliance service, and KYC lifecycle.
 
 ```bash
 npm test                            # from the repo root

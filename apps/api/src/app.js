@@ -10,6 +10,8 @@ const adminRoutes = require('./routes/admin.routes');
 const complianceRoutes = require('./compliance/compliance.routes');
 const pricingRoutes = require('./pricing/pricing.routes');
 const simRoutes = require('./routes/sim.routes');
+const authRoutes = require('./routes/auth.routes');
+const receiptRoutes = require('./routes/receipt.routes');
 
 const errorHandler = require('./middlewares/errorHandler');
 const notFound = require('./middlewares/notFound');
@@ -17,30 +19,89 @@ const PostgresRateStore = require('./middlewares/postgresRateStore');
 const config = require('./config/env');
 const logger = require('./utils/logger');
 const prisma = require('./common/prisma');
+const { correlationMiddleware } = require('./observability/context');
+const { requestMetrics, metricsHandler, increment } = require('./observability/metrics');
+const { AppError } = require('./errors');
+const { getContext } = require('./observability/context');
+const { pingRedis } = require('./queues/queue.service');
 
 const app = express();
+let startupComplete = false;
 
 // Middlewares
-app.use(helmet());
+app.use(correlationMiddleware);
+app.use(requestMetrics);
+// Security Middlewares
+const cspDirectives = config.isProduction ? {
+  defaultSrc: ["'none'"],
+  frameAncestors: ["'none'"],
+  baseUri: ["'none'"],
+  formAction: ["'none'"]
+} : {
+  defaultSrc: ["'self'"],
+  frameAncestors: ["'none'"],
+};
 
-// CORS: in production only the configured origins may call the API. Outside
-// production we fall back to open CORS for convenience, but warn if no
-// allowlist is set so it isn't forgotten before launch.
-if (config.corsOrigins.length > 0) {
-  app.use(cors({ origin: config.corsOrigins }));
-} else {
-  if (config.isProduction) {
-    logger.error('CORS_ORIGINS is not set in production — refusing all cross-origin requests.');
-  } else {
-    logger.warn('CORS_ORIGINS is not set; allowing all origins (development only).');
+app.use(helmet({
+  contentSecurityPolicy: { directives: cspDirectives },
+  referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
+}));
+app.use((req, res, next) => {
+  res.setHeader('Permissions-Policy', 'geolocation=(), microphone=(), camera=()');
+  next();
+});
+
+// CORS: explicitly define origin allowlists by environment. 
+// Cross-origin access strictly requires configuration.
+const corsOptions = {
+  origin: (origin, callback) => {
+    // Allow non-browser requests (e.g. server-to-server, webhook)
+    if (!origin) {
+      return callback(null, true);
+    }
+    
+    if (origin === 'null') {
+      increment('sendam_cors_rejected_total', { reason: 'null_origin' });
+      const err = new Error('CORS error: null origin not allowed');
+      err.name = 'CorsError';
+      return callback(err);
+    }
+    
+    if (config.corsOrigins.includes(origin)) {
+      return callback(null, true);
+    }
+    
+    increment('sendam_cors_rejected_total', { reason: 'unapproved_origin' });
+    const err = new Error('Not allowed by CORS');
+    err.name = 'CorsError';
+    return callback(err);
+  },
+  credentials: true,
+};
+
+app.use(cors(corsOptions));
+app.use((err, req, res, next) => {
+  if (err.name === 'CorsError' || err.message.includes('CORS')) {
+    logger.warn('CORS request rejected', { origin: req.headers.origin, error: err.message });
+    return res.status(403).json({ success: false, message: err.message });
   }
-  app.use(cors({ origin: config.isProduction ? false : true }));
-}
+  next(err);
+});
 
 // Access logs: the verbose, colorized 'dev' format is great locally but unfit
 // for production log aggregation. Use the standard Apache 'combined' format in
 // production so hosted log drains get parseable, complete request lines.
-app.use(morgan(config.isProduction ? 'combined' : 'dev'));
+if (!config.isProduction) app.use(morgan('dev'));
+app.use((req, res, next) => {
+  const started = process.hrtime.bigint();
+  res.on('finish', () => logger.info('http_request_completed', {
+    method: req.method,
+    path: req.path,
+    statusCode: res.statusCode,
+    durationMs: Number(process.hrtime.bigint() - started) / 1e6,
+  }));
+  next();
+});
 
 // Capture the raw request body so the WhatsApp webhook can verify the
 // X-Hub-Signature-256 HMAC against exactly what Meta signed.
@@ -57,29 +118,57 @@ const limiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   store: new PostgresRateStore(),
+  // 429s flow through the standard error envelope so clients get a stable
+  // `rate_limited` code instead of the express-rate-limit default shape.
+  handler: (_req, _res, next) => next(new AppError('rate_limited')),
 });
 app.use('/api/', limiter);
 
-// Health check for uptime monitors and platform probes. Not rate-limited and
-// requires no auth; reports 503 if the database link is down.
-app.get('/health', async (req, res) => {
+// Prometheus scrape endpoint. It is deliberately outside the API limiter so a
+// traffic spike cannot blind monitoring, and protected by a dedicated token.
+app.get('/metrics', metricsHandler);
+
+app.get('/health/live', (_req, res) => {
+  res.status(200).json({ status: 'ok', uptime: process.uptime() });
+});
+
+app.get('/health/startup', (_req, res) => {
+  res.status(startupComplete ? 200 : 503).json({ status: startupComplete ? 'ok' : 'starting' });
+});
+
+app.get(['/health', '/health/ready'], async (req, res) => {
+  const correlationId = getContext().correlationId || null;
   try {
-    await prisma.$queryRaw`SELECT 1`;
-    res.status(200).json({ status: 'ok', db: 'connected', uptime: process.uptime() });
-  } catch (_error) {
-    res.status(503).json({ status: 'degraded', db: 'disconnected', uptime: process.uptime() });
+    await Promise.race([
+      Promise.all([prisma.$queryRaw`SELECT 1`, pingRedis(config.health.timeoutMs)]),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('Readiness check timed out')), config.health.timeoutMs)),
+    ]);
+    increment('sendam_health_checks_total', { status: 'ok' });
+    res.status(200).json({ status: 'ok', db: 'connected', redis: 'connected', uptime: process.uptime(), correlationId });
+  } catch (error) {
+    increment('sendam_health_checks_total', { status: 'degraded' });
+    logger.error('readiness_check_failed', error);
+    res.status(503).json({ status: 'degraded', db: 'unknown', redis: 'unknown', uptime: process.uptime(), correlationId });
   }
+});
+
+const path = require('path');
+const openapiSpecPath = path.join(__dirname, '../openapi.json');
+
+app.get(['/api/docs/openapi.json', '/api/docs'], (req, res) => {
+  res.sendFile(openapiSpecPath);
 });
 
 // Routes
 app.use('/webhook', webhookRoutes);
+app.use('/api/auth', authRoutes);
+app.use('/api/receipts', receiptRoutes);
 
-// The REST wallet API is unauthenticated (phone number in the body is the only
-// "identity"), so it's gated off in production by default. WhatsApp is the real
-// surface; see config.features.walletRestApi.
+// The REST wallet API requires a SEP-10 application session. The feature flag
+// remains an operational rollout and incident-response kill switch.
 if (config.features.walletRestApi) {
   if (config.isProduction) {
-    logger.warn('ENABLE_WALLET_REST_API=true in production — the unauthenticated /api/wallet routes are exposed.');
+    logger.info('Authenticated REST wallet API enabled in production.');
   }
   app.use('/api/wallet', walletRoutes);
 } else {
@@ -105,5 +194,7 @@ if (config.features.chatSim) {
 // Error Handling
 app.use(notFound);
 app.use(errorHandler);
+
+app.markStartupComplete = () => { startupComplete = true; };
 
 module.exports = app;

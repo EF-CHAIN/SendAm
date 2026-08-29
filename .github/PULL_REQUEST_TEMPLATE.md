@@ -29,6 +29,7 @@ Closes #N
 - [ ] Documentation is updated if behavior changed (or this is not applicable)
 - [ ] Frontend changes lint and build (`npm run lint`/`npm run build --workspace=apps/<app>`)
 - [ ] No secrets, private keys, or `.env` files committed
+- [ ] Secret scan passes (CI green or run `./scripts/secret-scan-self-test.sh` locally)
 - [ ] New environment variables are documented in `.env.example` and the README
 - [ ] Security/data-model implications considered (see `SECURITY.md`)
 

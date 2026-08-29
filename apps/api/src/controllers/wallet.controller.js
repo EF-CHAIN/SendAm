@@ -1,19 +1,12 @@
-const { isValidPhoneNumber, isValidAmount } = require('../utils/validators');
+const { isValidAmount } = require('../utils/validators');
 const { sendSuccess, sendError } = require('../utils/response');
 const walletService = require('../wallet/wallet.service');
 const { validateAddress } = require('../wallet/stellar.adapter');
 const { executePayment } = require('../payment/payment.orchestrator');
-const prisma = require('../common/prisma');
 
 const createWallet = async (req, res, next) => {
   try {
-    const { phoneNumber } = req.body;
-    if (!isValidPhoneNumber(phoneNumber)) return sendError(res, 'A valid phone number is required');
-
-    let user = await prisma.user.findUnique({ where: { phoneNumber } });
-    if (!user) {
-      user = await prisma.user.create({ data: { phoneNumber } });
-    }
+    const user = req.restUser;
 
     const wallets = await walletService.ensureWalletsForUser({ user });
 
@@ -27,11 +20,8 @@ const createWallet = async (req, res, next) => {
 
 const checkBalance = async (req, res, next) => {
   try {
-    const { phone } = req.params;
-    if (!isValidPhoneNumber(phone)) return sendError(res, 'A valid phone number is required');
-
-    const balances = await walletService.balancesForUser({ phoneNumber: phone });
-    if (balances.length === 0) return sendError(res, 'Wallet not found for this phone number', 404);
+    const balances = await walletService.balancesForUser({ phoneNumber: req.restUser.phoneNumber });
+    if (balances.length === 0) return sendError(res, 'Wallet not found', 404);
 
     return sendSuccess(res, { balances }, 'Balances fetched successfully');
   } catch (error) {
@@ -41,17 +31,16 @@ const checkBalance = async (req, res, next) => {
 
 const sendFunds = async (req, res, next) => {
   try {
-    const { phoneNumber, amount, destination } = req.body;
+    const { amount, destination } = req.body;
 
-    if (!isValidPhoneNumber(phoneNumber) || !isValidAmount(amount) || !destination) {
-      return sendError(res, 'A valid phone number, amount, and destination are required');
+    if (!isValidAmount(amount) || !destination) {
+      return sendError(res, 'A valid amount and destination are required');
     }
     if (!validateAddress(String(destination).trim())) {
       return sendError(res, 'Destination must be a valid Stellar address');
     }
 
-    const user = await prisma.user.findUnique({ where: { phoneNumber } });
-    if (!user) return sendError(res, 'User not found', 404);
+    const user = req.restUser;
 
     const result = await executePayment({
       sender: user,
@@ -76,13 +65,7 @@ const sendFunds = async (req, res, next) => {
 
 const getTransactionHistory = async (req, res, next) => {
   try {
-    const { phone } = req.params;
-    if (!isValidPhoneNumber(phone)) return sendError(res, 'A valid phone number is required');
-
-    const user = await prisma.user.findUnique({ where: { phoneNumber: phone } });
-    if (!user) return sendError(res, 'User not found', 404);
-
-    const history = await walletService.transactionHistory({ userId: user.id });
+    const history = await walletService.transactionHistory({ userId: req.restUser.id });
     return sendSuccess(res, history);
   } catch (error) {
     next(error);

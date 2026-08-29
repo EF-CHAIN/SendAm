@@ -1,0 +1,46 @@
+name: sendam-production
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    stop_grace_period: 60s
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-sendam}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in the deployment secret store}
+      POSTGRES_DB: ${POSTGRES_DB:-sendam}
+      POSTGRES_INITDB_ARGS: --data-checksums --encoding=UTF8
+    volumes:
+      - sendam_postgres_data:/var/lib/postgresql/data
+      - sendam_postgres_backups:/backups
+    networks:
+      - database
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U "$$POSTGRES_USER" -d "$$POSTGRES_DB"']
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    shm_size: 256mb
+    security_opt:
+      - no-new-privileges:true
+    command:
+      - postgres
+      - -c
+      - log_connections=on
+      - -c
+      - log_disconnections=on
+      - -c
+      - log_min_duration_statement=${POSTGRES_LOG_MIN_DURATION_MS:-1000}
+      - -c
+      - shared_buffers=${POSTGRES_SHARED_BUFFERS:-256MB}
+      - -c
+      - max_connections=${POSTGRES_MAX_CONNECTIONS:-100}
+
+networks:
+  database:
+    internal: true
+
+volumes:
+  sendam_postgres_data:
+  sendam_postgres_backups:

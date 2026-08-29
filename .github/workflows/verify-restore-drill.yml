@@ -1,0 +1,79 @@
+name: Verify restore drill
+
+on:
+  schedule:
+    - cron: '17 9 * * 1'
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: Type VERIFY_RESTORE to restore into the drill target and validate it
+        required: true
+        type: string
+
+concurrency:
+  group: restore-verification-drill
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    if: github.event_name == 'schedule' || inputs.confirmation == 'VERIFY_RESTORE'
+    runs-on: ubuntu-latest
+    environment: disaster-recovery-drill
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - name: Restore latest backup into isolated target
+        env:
+          RESTORE_COMMAND: ${{ secrets.RESTORE_DRILL_COMMAND }}
+          DRILL_DATABASE_URL: ${{ secrets.RESTORE_DRILL_DATABASE_URL }}
+          LATEST_BACKUP_ID: ${{ vars.LATEST_BACKUP_ID }}
+          LATEST_BACKUP_COMPLETED_AT: ${{ vars.LATEST_BACKUP_COMPLETED_AT }}
+        run: |
+          if [ -z "$RESTORE_COMMAND" ]; then
+            echo "RESTORE_DRILL_COMMAND must restore the latest production backup into RESTORE_DRILL_DATABASE_URL" >&2
+            exit 1
+          fi
+          eval "$RESTORE_COMMAND"
+      - name: Generate Prisma client
+        run: npm run prisma:generate --workspace=apps/api
+        env:
+          DATABASE_URL: ${{ secrets.RESTORE_DRILL_DATABASE_URL }}
+      - name: Validate restored database, encrypted wallets, and queue metadata
+        run: npm run db:verify-restore --workspace=apps/api
+        env:
+          NODE_ENV: production
+          DRILL_DATABASE_URL: ${{ secrets.RESTORE_DRILL_DATABASE_URL }}
+          REDIS_URL: ${{ secrets.RESTORE_DRILL_REDIS_URL }}
+          ENCRYPTION_KEY: ${{ secrets.RESTORE_DRILL_ENCRYPTION_KEY }}
+          LATEST_BACKUP_ID: ${{ vars.LATEST_BACKUP_ID }}
+          LATEST_BACKUP_COMPLETED_AT: ${{ vars.LATEST_BACKUP_COMPLETED_AT }}
+          BACKUP_METADATA_JSON: ${{ vars.BACKUP_METADATA_JSON }}
+          RESTORE_DRILL_MAX_BACKUP_AGE_MINUTES: ${{ vars.RESTORE_DRILL_MAX_BACKUP_AGE_MINUTES }}
+          RESTORE_DRILL_RTO_OBJECTIVE_MINUTES: ${{ vars.RESTORE_DRILL_RTO_OBJECTIVE_MINUTES }}
+          RESTORE_DRILL_QUEUE_MAX_AGE_MINUTES: ${{ vars.RESTORE_DRILL_QUEUE_MAX_AGE_MINUTES }}
+      - name: Tear down isolated restore target
+        if: always()
+        env:
+          TEARDOWN_COMMAND: ${{ secrets.RESTORE_DRILL_TEARDOWN_COMMAND }}
+          DRILL_DATABASE_URL: ${{ secrets.RESTORE_DRILL_DATABASE_URL }}
+        run: |
+          if [ -n "$TEARDOWN_COMMAND" ]; then
+            eval "$TEARDOWN_COMMAND"
+          fi
+      - name: Alert on failed drill
+        if: failure()
+        env:
+          ALERT_WEBHOOK_URL: ${{ secrets.RESTORE_DRILL_ALERT_WEBHOOK_URL }}
+        run: |
+          if [ -n "$ALERT_WEBHOOK_URL" ]; then
+            curl -fsS -X POST -H 'content-type: application/json' \
+              --data "{\"text\":\"SendAm restore verification drill failed: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}\"}" \
+              "$ALERT_WEBHOOK_URL"
+          else
+            echo "No RESTORE_DRILL_ALERT_WEBHOOK_URL configured; relying on GitHub Actions failure notifications."
+          fi

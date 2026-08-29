@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const controller = require('./compliance.controller');
+const privacyController = require('./privacy.controller');
 const requireAdmin = require('../middlewares/requireAdmin');
 const requireRestApiEnabled = require('../middlewares/requireRestApiEnabled');
 const { validateRequest } = require('../middlewares/validateRequest');
