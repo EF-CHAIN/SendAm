@@ -196,4 +196,7 @@ module.exports = {
   balancesForUser,
   submitPayment,
   transactionHistory,
+  rotateWalletKey: require('./walletRecovery.service').rotateWalletKey,
+  initiateWalletRecovery: require('./walletRecovery.service').initiateWalletRecovery,
+  completeWalletRecovery: require('./walletRecovery.service').completeWalletRecovery,
 };
