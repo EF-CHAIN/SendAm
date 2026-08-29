@@ -228,7 +228,13 @@ module.exports = {
     // follows the same kill-switch pattern: OFF in production unless
     // explicitly set, ON elsewhere for local testing.
     chatSim: process.env.ENABLE_CHAT_SIO
-	  ? process.env.ENABLE_CHAT_SIM === 'true'
+ 	  ? process.env.ENABLE_CHAT_SIM === 'true'
       : env !== 'production',
+
+    // Secret rotation automation.
+    secretRotationCheckIntervalMs: Number(process.env.SECRET_ROTATION_CHECK_INTERVAL_MS || 0),
+    secretRotationWarningDays: Number(process.env.SECRET_ROTATION_WARNING_DAYS || 30),
+    secretRotationAlertWebhookUrl: process.env.SECRET_ROTATION_ALERT_WEBHOOK_URL || process.env.ERROR_MONITOR_WEBHOOK_URL,
+    secretRotationAlertToken: process.env.SECRET_ROTATION_ALERT_TOKEN || process.env.ERROR_MONITOR_TOKEN,
   },
 };

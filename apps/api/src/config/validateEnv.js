@@ -136,4 +136,16 @@ const validateWorkerEnv = (config) => {
   if (problems.length) throw new Error(`Invalid worker configuration:\n  - ${problems.join('\n  - ')}`);
 };
 
-module.exports = { validateEnv, validateWorkerEnv };
+const validateDeploymentManifest = () => {
+  try {
+    const { validateManifestAtStartup } = require('./deploymentManifest');
+    const result = validateManifestAtStartup();
+    if (!result.skipped && !result.valid) {
+      throw new Error(result.reason || 'Deployment manifest verification failed.');
+    }
+  } catch (error) {
+    throw new Error(`Deployment manifest verification failed:\n  - ${error.message}`);
+  }
+};
+
+module.exports = { validateEnv, validateWorkerEnv, validateDeploymentManifest };

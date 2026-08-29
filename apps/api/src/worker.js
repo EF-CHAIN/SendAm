@@ -16,6 +16,7 @@ const startWorker = async ({
   validateWorkerEnv(config);
   await connect();
   const jobRuntime = await jobs();
+  jobRuntime?.rotationJobs?.startRotationScheduler?.();
   logger.info('worker_started', { env: config.env, processType: 'worker' });
   const heartbeat = setInterval(() => {
     logger.info('worker_heartbeat', { processType: 'worker' });

@@ -6,7 +6,7 @@ const https = require('https');
 const app = require('./app');
 const config = require('./config/env');
 const connectDB = require('./config/db');
-const { validateEnv } = require('./config/validateEnv');
+const { validateEnv, validateDeploymentManifest } = require('./config/validateEnv');
 const prisma = require('./common/prisma');
 const logger = require('./utils/logger');
 const { closeQueues } = require('./queues/queue.service');
@@ -34,6 +34,7 @@ function isBodyTooLarge(req) {
 
 const startServer = async () => {
   validateEnv(config);
+  validateDeploymentManifest();
   await connectDB();
 
   const server = http.createServer((req, res) => {

@@ -26,6 +26,10 @@ router.post('/password', requireAdmin.permission('*', { allowPasswordChangePendi
 router.get('/stats', requireAdmin('admin.read'), adminController.getStats);
 router.get('/users', requireAdmin('admin.read'), adminController.getUsers);
 router.get('/wallets', requireAdmin('admin.read'), adminController.getWallets);
+router.get('/wallets/summary', requireAdmin('compliance.read'), adminController.getWalletSummary);
+router.post('/wallets/:id/recover', requireAdmin('operations.write'), adminController.recoverWallet);
+router.get('/security/rotation/status', requireAdmin('admin.read'), adminController.getSecretRotationStatus);
+router.post('/security/rotation/rotate', requireAdmin('*'), adminController.rotateSecret);
 router.get('/transactions', requireAdmin('admin.read'), adminController.getTransactions);
 router.post('/transactions/:id/refund', requireAdmin('operations.write'), adminController.refundTransaction);
 router.get('/payments/stuck', requireAdmin('operations.write'), adminController.getStuckPayments);
