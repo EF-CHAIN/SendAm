@@ -10,6 +10,7 @@ const registerJobs = () => {
   const verificationExpiryPoller = startVerificationExpiryPoller();
   return {
     whatsappWorker,
+    processorNames: ['whatsapp-inbound'],
     stop: async () => {
       depositPoller.stop();
       auditPoller.stop();
