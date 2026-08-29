@@ -186,3 +186,23 @@ causes instability, disable scraping at Prometheus rather than exposing an
 unprotected endpoint, and point `ERROR_MONITOR_WEBHOOK_URL` to a healthy
 fallback receiver. Validate `/health`, financial reconciliation, and alert
 routing after rollback.
+
+### Queue backlog
+
+Fires when `sendam_queue_backlog_size` exceeds warning (50) or critical (200) thresholds.
+1. Check worker process health (`pm2 status`, `kubectl get pods -l app=sendam-worker`).
+2. Scale worker concurrency via `WORKER_CONCURRENCY` or add worker replicas.
+3. Verify downstream API/blockchain latency (Stellar Horizon, Meta WhatsApp webhook).
+
+### Queue lag
+
+Fires when `sendam_queue_lag_seconds` exceeds 300s (5 minutes).
+1. Inspect oldest pending job timestamp to identify stuck processors or blocking I/O calls.
+2. Check Redis connection latency with `redis-cli --latency`.
+3. Restart worker instances if deadlock or unhandled promise rejection is detected.
+
+### Dead-letter queue (DLQ)
+
+Fires on `SendAmDeadLetterQueueGrowing` when repeated job failures move to the dead-letter queue.
+1. Inspect DLQ messages with `node apps/api/scripts/whatsapp-dlq.js inspect`.
+2. Fix underlying provider errors before replaying: `node apps/api/scripts/whatsapp-dlq.js replay`.
