@@ -15,13 +15,13 @@ model User {
   pinHash      String?
   pinSetAt     DateTime?
   pendingSend    Json?
+  confirmationVersion Int       @default(0)
   welcomeSentAt  DateTime?
-  contactsJson               Json?
-  lastCustomerInteractionAt  DateTime?
-  messagingConsent           String    @default("opted_in")
-  consentSource             String?   @default("system")
-  consentUpdatedAt          DateTime? @default(now())
-  locale                     String    @default("en")
+  contactsJson   Json?
+  deletedAt      DateTime?
+  deletionStatus String?
+  anonymizedAt   DateTime?
+  legalHold      Boolean?  @default(false)
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
 
@@ -108,7 +108,7 @@ model Wallet {
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
 
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Restrict)
 
   @@unique([userId, chain])
   @@index([phoneNumber])
@@ -142,9 +142,10 @@ model Transaction {
   createdAt             DateTime @default(now())
   updatedAt             DateTime @updatedAt
 
-  user  User   @relation(fields: [userId], references: [id], onDelete: Cascade)
-  quote         Quote?         @relation(fields: [quoteId], references: [id])
-  ledgerEntries JournalEntry[]
+  user  User   @relation(fields: [userId], references: [id], onDelete: Restrict)
+  quote Quote? @relation(fields: [quoteId], references: [id])
+  idempotencyRequest PaymentIdempotency?
+  confirmation PaymentConfirmation?
 
   @@index([userId, createdAt])
   @@index([status])
@@ -203,6 +204,58 @@ model LedgerPosting {
   @@index([asset, createdAt])
 }
 
+model PaymentIdempotency {
+  id             String   @id @default(cuid())
+  userId         String
+  operation      String
+  key            String
+  fingerprint    String
+  state          String   @default("processing")
+  response       Json?
+  reservedTransactionId String   @unique
+  transactionId  String?  @unique
+  leaseExpiresAt DateTime
+  expiresAt      DateTime
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  transaction Transaction? @relation(fields: [transactionId], references: [id], onDelete: SetNull)
+
+  @@unique([userId, operation, key])
+  @@index([expiresAt])
+  @@index([state, leaseExpiresAt])
+}
+
+model PaymentConfirmation {
+  id             String   @id @default(cuid())
+  userId         String
+  nonce          String   @unique
+  reference      String
+  version        Int
+  summaryHash    String
+  amount         String
+  asset          String
+  destination    String
+  recipientLabel String?
+  routeType      String
+  state          String   @default("pending")
+  expiresAt      DateTime
+  authorizedAt   DateTime?
+  cancelledAt    DateTime?
+  transactionId  String?  @unique
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  transaction Transaction? @relation(fields: [transactionId], references: [id], onDelete: SetNull)
+
+  @@unique([userId, reference])
+  @@unique([userId, version])
+  @@index([userId, state, createdAt])
+  @@index([expiresAt])
+}
+
 model Contact {
   id              String   @id @default(cuid())
   ownerId         String
@@ -214,7 +267,7 @@ model Contact {
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
-  owner User @relation("ContactOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  owner User @relation("ContactOwner", fields: [ownerId], references: [id], onDelete: Restrict)
 
   @@unique([ownerId, phoneNumber])
 }
@@ -228,7 +281,7 @@ model Alias {
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Restrict)
 
   @@unique([userId, alias])
 }
@@ -252,8 +305,7 @@ model KycProfile {
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
 
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-  screeningResults SanctionsScreeningResult[]
+  user User @relation(fields: [userId], references: [id], onDelete: Restrict)
 
   @@index([status])
   @@index([sanctionsStatus])
@@ -333,7 +385,7 @@ model VoiceCommand {
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
 
-  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+  user User? @relation(fields: [userId], references: [id], onDelete: Restrict)
 
   @@index([phoneNumber])
   @@index([whatsappMessageId])
@@ -458,7 +510,7 @@ model Notification {
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
 
-  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+  user User? @relation(fields: [userId], references: [id], onDelete: Restrict)
 
   @@index([userId])
   @@index([status])
@@ -523,7 +575,7 @@ model Quote {
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
-  user         User?         @relation(fields: [userId], references: [id], onDelete: SetNull)
+  user         User?         @relation(fields: [userId], references: [id], onDelete: Restrict)
   transactions Transaction[]
 
   @@index([userId])
@@ -560,6 +612,24 @@ model RateLimitHit {
   resetAt   DateTime
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+model UserErasure {
+  id          String   @id @default(cuid())
+  userId      String
+  actorType   String   @default("system")
+  actorId     String?
+  reason      String
+  jurisdiction String? 
+  legalHold   Boolean  @default(false)
+  status      String   @default("completed")
+  executedAt  DateTime @default(now())
+  createdAt   DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@index([userId, executedAt])
+  @@index([status])
 }
 
 model SimMessage {

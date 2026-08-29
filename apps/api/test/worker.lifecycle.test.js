@@ -18,6 +18,8 @@ injectMock('common/prisma', { $disconnect: async () => {} });
 injectMock('utils/logger', { info: () => {}, error: () => {} });
 injectMock('jobs/index', { registerJobs: async () => ({ stop: async () => {} }) });
 injectMock('queues/queue.service', { closeQueues: async () => {} });
+const cancellations = [];
+injectMock('services/whatsapp.service', { cancelInFlightSends: (reason) => cancellations.push(reason) });
 
 const { startWorker } = require('../src/worker');
 
@@ -36,10 +38,18 @@ test('worker owns job startup and graceful resource shutdown', async () => {
     },
     closeQueueResources: async () => calls.push('close-queues'),
     disconnect: async () => calls.push('disconnect-db'),
+    createHealth: () => ({
+      beat: () => {},
+      markShuttingDown: () => calls.push('not-ready'),
+    }),
+    startHealthServer: async () => ({ close: async () => calls.push('close-health') }),
   });
   assert.deepEqual(calls, ['connect', 'jobs']);
   await runtime.shutdown('TEST');
-  assert.deepEqual(calls, ['connect', 'jobs', 'stop-jobs', 'close-queues', 'disconnect-db']);
+  assert.deepEqual(calls, [
+    'connect', 'jobs', 'not-ready', 'close-health', 'stop-jobs', 'close-queues', 'disconnect-db',
+  ]);
+  assert.deepEqual(cancellations, ['worker shutdown: TEST']);
   await runtime.shutdown('TEST_AGAIN');
   assert.equal(calls.filter((call) => call === 'stop-jobs').length, 1);
 });

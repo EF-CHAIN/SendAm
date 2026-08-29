@@ -38,6 +38,8 @@ export default function KycReview() {
     return () => {
       active = false;
     };
+    fetchKyc();
+    return () => { active = false; };
   }, [params]);
 
   const handleApprove = async (id) => {

@@ -64,6 +64,14 @@ export const handlers = [
     });
   }),
 
+  // Wallets
+  http.get('*/api/admin/wallets', () => {
+    return HttpResponse.json({
+      data: [],
+      pagination: { limit: 50, nextCursor: null, prevCursor: null, hasMore: false, total: 0 },
+    });
+  }),
+
   // KYC
   http.get('*/api/admin/kyc', () => {
     return HttpResponse.json({

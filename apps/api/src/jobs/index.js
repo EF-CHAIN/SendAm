@@ -12,6 +12,7 @@ const registerJobs = () => {
   const retentionSweep = startRetentionSweep();
   return {
     whatsappWorker,
+    processorNames: ['whatsapp-inbound'],
     stop: async () => {
       depositPoller.stop();
       auditPoller.stop();
