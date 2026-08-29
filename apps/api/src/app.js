@@ -17,6 +17,7 @@ const errorHandler = require('./middlewares/errorHandler');
 const notFound = require('./middlewares/notFound');
 const PostgresRateStore = require('./middlewares/postgresRateStore');
 const config = require('./config/env');
+const { describeNetworkProfile } = require('./config/networkProfiles');
 const logger = require('./utils/logger');
 const prisma = require('./common/prisma');
 const { correlationMiddleware } = require('./observability/context');
@@ -174,6 +175,14 @@ app.get('/health/live', (_req, res) => {
 
 app.get('/health/startup', (_req, res) => {
   res.status(startupComplete ? 200 : 503).json({ status: startupComplete ? 'ok' : 'starting' });
+});
+
+// Which Stellar network this instance is actually bound to (#284). Operators
+// need to be able to confirm a deployment is on the network they think it is
+// without reading its environment. Only public network identifiers are
+// exposed — no keys, endpoints with credentials, or secrets.
+app.get('/health/network', (_req, res) => {
+  res.status(200).json(describeNetworkProfile(config.stellar.networkProfile));
 });
 
 app.get(['/health', '/health/ready'], async (req, res) => {

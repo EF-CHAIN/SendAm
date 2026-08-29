@@ -98,13 +98,22 @@ model Wallet {
   trustlineError     String?
   trustlineUpdatedAt DateTime @default(now())
   network            String   @default("testnet")
+  // How the `network` value above came to be. Wallets created after #283
+  // record the configured network explicitly and are "verified". Rows that
+  // predate that change inherited the column default rather than being told
+  // which network they belong to, so they are migrated as "assumed" and are
+  // refused for mainnet operations until an operator verifies them.
+  networkProvenance  String   @default("verified")
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  @@unique([userId, chain])
+  // Network is part of wallet identity: the same user may hold one wallet per
+  // chain per network, and testnet material can never satisfy a mainnet lookup.
+  @@unique([userId, chain, network])
   @@index([phoneNumber])
+  @@index([network, chain])
   @@index([chain, createdAt])
   @@index([createdAt, id])
   @@index([fundingState, fundingUpdatedAt])
@@ -448,11 +457,22 @@ model Notification {
   failureMessage    String?
   retryable         Boolean   @default(false)
   retryCount        Int       @default(0)
+  // Outbox fields (#286). The row is written before the provider is called,
+  // so a crash between "Meta accepted" and "we recorded it" still leaves a
+  // durable record to reconcile against.
+  //
+  // idempotencyKey is stable for a given logical send, so a retry re-uses the
+  // existing row instead of creating a second one and sending twice.
+  idempotencyKey    String?   @unique
+  sendAttempts      Int       @default(0)
+  claimedAt         DateTime?
+  lastAttemptAt     DateTime?
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
 
   user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
 
+  @@index([status, claimedAt])
   @@index([userId])
   @@index([status])
   @@index([providerMessageId])
@@ -760,4 +780,35 @@ model Partner {
   adminUsers AdminUser[]
 
   @@index([status])
+}
+
+/// Durable inbox for provider webhook callbacks (#287).
+///
+/// The callback is persisted here before the request is acknowledged, so a
+/// transient database or processing failure can never silently discard
+/// delivery evidence that the provider believes it has handed over. Rows are
+/// drained asynchronously with retry, dead-lettering, and replay.
+model WebhookInboxEvent {
+  id            String    @id @default(cuid())
+  provider      String    @default("meta")
+  /// Kind of callback: "status" for delivery receipts today.
+  eventType     String
+  /// Stable identity for this exact callback item, used for idempotency.
+  /// Preserved per batch item so partial processing stays recoverable.
+  eventKey      String
+  /// The item as received, so it can be replayed verbatim.
+  payload       Json
+  /// pending | processing | processed | failed | dead_letter
+  status        String    @default("pending")
+  attempts      Int       @default(0)
+  lastError     String?
+  claimedAt     DateTime?
+  nextAttemptAt DateTime  @default(now())
+  processedAt   DateTime?
+  receivedAt    DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@unique([provider, eventKey])
+  @@index([status, nextAttemptAt])
+  @@index([status, receivedAt])
 }
