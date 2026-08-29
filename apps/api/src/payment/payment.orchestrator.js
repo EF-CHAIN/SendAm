@@ -2,7 +2,9 @@ const walletService = require('../wallet/wallet.service');
 const stellarAdapter = require('../wallet/stellar.adapter');
 const { createQuote, validateQuoteForExecution, QUOTE_STATUS } = require('../pricing/pricing.service');
 const { writeAuditLog } = require('../common/audit.service');
+const { appendEvent, EVENT_TYPES } = require('../common/event.service');
 const { enforceTransactionPolicy } = require('../compliance/compliance.service');
+const { assertAccountActive } = require('../compliance/account.service');
 const { markTransactionFailed } = require('./markFailed');
 const ledger = require('./ledger.service');
 const prisma = require('../common/prisma');
@@ -48,6 +50,7 @@ const executePayment = async ({
 }) => {
   const senderUser = sender;
   if (!senderUser) throw new Error('Sender not found.');
+  assertAccountActive(senderUser);
 
   if (destination && !stellarAdapter.validateAddress(String(destination).trim())) {
     throw new Error('Destination must be a valid Stellar address.');
@@ -219,6 +222,25 @@ const executePayment = async ({
       metadata: { rail, status: activeTransaction.status, ...memoMetadata },
     });
 
+    // Durable workflow event for event ledger (#318)
+    await appendEvent({
+      eventType: EVENT_TYPES.PAYMENT_SUBMITTED,
+      aggregateType: 'Transaction',
+      aggregateId: String(activeTransaction.id),
+      actorType: 'user',
+      actorId: String(senderUser.id),
+      payload: {
+        rail,
+        asset: effectiveAsset,
+        amount: normalizedAmount,
+        status: activeTransaction.status,
+        txHash: activeTransaction.txHash,
+        routeType: effectiveRouteType,
+        destinationCountry,
+        ...memoMetadata,
+      },
+    }).catch(() => {});
+
     // Return the pending transaction. Receipt is withheld until the
     // reconciler confirms ledger-backed finality.
     return { transaction: withIdAlias(activeTransaction), quote, receipt: null };
@@ -349,6 +371,21 @@ const executeRefund = async ({ transactionId, reason, amount, adminId }) => {
       entityId: String(originalTx.id),
       metadata: { refundTransactionId: updatedRefund.id, amount: String(refundAmount), reason },
     });
+
+    // Durable workflow event for event ledger (#318)
+    await appendEvent({
+      eventType: EVENT_TYPES.PAYMENT_REFUND_SETTLED,
+      aggregateType: 'Transaction',
+      aggregateId: String(originalTx.id),
+      actorType: 'administrator',
+      actorId: adminId,
+      payload: {
+        refundTransactionId: updatedRefund.id,
+        amount: String(refundAmount),
+        asset: originalTx.asset,
+        reason,
+      },
+    }).catch(() => {});
 
     return { amount: String(refundAmount), ...updatedRefund };
   } catch (error) {

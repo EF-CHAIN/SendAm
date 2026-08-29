@@ -132,3 +132,70 @@ export const rejectKyc = async (id) => {
   const { data } = await api.post(`/compliance/kyc/${id}/review`, { status: 'rejected' });
   return data;
 };
+
+// ── #318: Workflow Events & Ledger Integrity ──────────────────────────────
+export const getAdminWorkflowEvents = async (params = {}) => {
+  const { data } = await api.get('/admin/events', { params });
+  return data;
+};
+
+export const verifyAdminEventChain = async () => {
+  const { data } = await api.get('/admin/events/verify');
+  return data;
+};
+
+export const exportAdminWorkflowEvents = async (params = {}) => {
+  const { after, before, limit, ...filters } = params;
+  const response = await api.get('/admin/events/export', { params: filters, responseType: 'blob' });
+  triggerDownload(response.data, 'workflow-events-export.csv');
+  return response.data;
+};
+
+// ── #329: Compliance Evidence Export & Archive ───────────────────────────
+export const getUserEvidencePackage = async (userId) => {
+  const { data } = await api.get(`/admin/compliance/evidence/${userId}`);
+  return data;
+};
+
+export const downloadUserEvidencePackage = async (userId) => {
+  const response = await api.get(`/admin/compliance/evidence/${userId}/download`, { responseType: 'blob' });
+  triggerDownload(response.data, `evidence-${userId}-${Date.now()}.json`);
+  return response.data;
+};
+
+export const exportAdminKycEvidence = async (params = {}) => {
+  const { after, before, limit, ...filters } = params;
+  const response = await api.get('/admin/compliance/kyc-evidence/export', { params: filters, responseType: 'blob' });
+  triggerDownload(response.data, 'kyc-evidence-export.csv');
+  return response.data;
+};
+
+export const exportAdminAccountStatusHistory = async (params = {}) => {
+  const { after, before, limit, ...filters } = params;
+  const response = await api.get('/admin/compliance/account-status/export', { params: filters, responseType: 'blob' });
+  triggerDownload(response.data, 'account-status-export.csv');
+  return response.data;
+};
+
+// ── #330: Customer Onboarding Status (Admin View) ────────────────────────
+export const getUserOnboardingStatus = async (userId) => {
+  const { data } = await api.get(`/admin/users/${userId}/onboarding`);
+  return data;
+};
+
+// ── #332: Customer Account Deactivation / Reactivation ───────────────────
+export const deactivateUserAccount = async (userId, { reason, notes, force } = {}) => {
+  const { data } = await api.post(`/admin/users/${userId}/deactivate`, { reason, notes, force });
+  return data;
+};
+
+export const reactivateUserAccount = async (userId, { notes, approvedBy } = {}) => {
+  const { data } = await api.post(`/admin/users/${userId}/reactivate`, { notes, approvedBy });
+  return data;
+};
+
+export const getUserAccountStatusHistory = async (userId) => {
+  const { data } = await api.get(`/admin/users/${userId}/account-status`);
+  return data;
+};
+

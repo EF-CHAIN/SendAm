@@ -34,13 +34,19 @@ model User {
   notifications Notification[]
   quotes        Quote[]
   restSessions  RestSession[]
+  supportCases  SupportCase[]
 
   privacyRequests PrivacyRequest[]
   legalHolds     LegalHold[]
   anonymizedAt   DateTime?
+  deactivatedAt  DateTime?   // set when account is deactivated (#332)
+  deactivationReason String? // last deactivation reason code
+
+  accountStatusRecords AccountStatusRecord[]
 
   @@index([anonymizedAt])
   @@index([createdAt, id])
+  @@index([deactivatedAt])
 }
 
 model Sep10Challenge {
@@ -744,6 +750,55 @@ model SupportCaseSnapshot {
   case SupportCase @relation(fields: [caseId], references: [id], onDelete: Cascade)
 
   @@index([caseId, snapshotType])
+}
+
+// ─── Issue #318: Event sourcing / workflow event ledger ──────────────────────
+// Immutable, append-only domain event log for execution-critical workflows.
+// Each record is chained to the previous via HMAC so deletions and reorderings
+// are detectable. Events are never updated or deleted — new events supersede.
+//
+// `aggregateType` / `aggregateId` identify the domain object the event belongs
+// to (e.g. "Transaction"/"cuid", "Wallet"/"cuid", "User"/"cuid").
+// `payload` holds structured event data: who triggered it, what changed, why.
+model WorkflowEvent {
+  id            String   @id @default(cuid())
+  eventType     String   // e.g. payment.submitted, kyc.approved, account.deactivated
+  aggregateType String?  // Domain model name (Transaction, Wallet, User, KycProfile, …)
+  aggregateId   String?  // ID of the domain object
+  actorType     String   @default("system") // user | administrator | system
+  actorId       String?  // userId or adminId that triggered the event
+  payload       Json     @default("{}") // structured event data
+  previousHash  String?  @unique // chained reference for tamper-detection
+  hash          String?  @unique // HMAC over (previousHash + event fields)
+  createdAt     DateTime @default(now())
+
+  @@index([eventType, createdAt])
+  @@index([aggregateType, aggregateId])
+  @@index([actorType, actorId])
+  @@index([createdAt, id])
+}
+
+// ─── Issue #332: Account deactivation/reactivation ───────────────────────────
+// Records every deactivation and reactivation for a user account, along with
+// the reason, approving admin, and current state. Wallet and payment activity
+// is blocked while status = 'deactivated'. Reactivation requires admin approval
+// and writes a matching event to WorkflowEvent for the full audit trail.
+model AccountStatusRecord {
+  id          String   @id @default(cuid())
+  userId      String
+  status      String   // 'active' | 'deactivated'
+  reason      String   // structured reason code
+  notes       String?  // free-text detail
+  initiatedBy String   // admin user ID or 'system'
+  approvedBy  String?  // second-approval admin user ID (for reactivation)
+  approvedAt  DateTime?
+  effectiveAt DateTime @default(now())
+  createdAt   DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([status, createdAt])
 }
 
 // Multi-tenant / partner isolation marker for routing and authorization scoping.

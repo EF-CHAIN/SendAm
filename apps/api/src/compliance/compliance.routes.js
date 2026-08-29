@@ -15,6 +15,10 @@ router.post('/kyc/:id/review', requireAdmin('compliance.write'), controller.revi
 router.post('/kyc/:id/approve', requireAdmin('compliance.write'), controller.approveOverride);
 router.post('/pin', requireRestApiEnabled, requireRestSession, controller.setPin);
 
+// ── Onboarding status (#330) ────────────────────────────────────────────
+// Customer self-service: retrieve their own onboarding checkpoints and next step.
+router.get('/onboarding', requireRestApiEnabled, requireRestSession, controller.getOnboardingStatus);
+
 // Customer privacy lifecycle (self-service): export own data, request erasure.
 const privacyRouter = express.Router();
 privacyRouter.post('/export', requireRestApiEnabled, requireRestSession, privacyController.exportOwnData);
