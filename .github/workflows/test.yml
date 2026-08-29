@@ -110,7 +110,9 @@ jobs:
           node-version-file: .nvmrc
           cache: npm
       - run: npm ci
-      # Run admin dashboard tests
+      # Run admin dashboard tests, including automated accessibility (axe)
+      # scans of the critical admin workflows (navigation, tables, pagination,
+      # forms, status indicators) — see apps/admin/src/accessibility.test.jsx.
       - run: npm run test --workspace=apps/admin
       # Build both Vite frontends so a compile break in either app fails the
       # check and blocks the merge, exactly like a failing test.

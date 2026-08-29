@@ -17,6 +17,12 @@ export default defineConfig([
       globals: globals.browser,
       parserOptions: { ecmaFeatures: { jsx: true } },
     },
+    rules: {
+      // adminApi.js strips cursor/limit keys via rest destructuring
+      // (`const { after, before, limit, ...filters } = params`); the stripped
+      // siblings are intentionally never read.
+      'no-unused-vars': ['error', { ignoreRestSiblings: true }],
+    },
   },
   {
     // Vite config runs in Node, so it needs Node globals (e.g. __dirname).

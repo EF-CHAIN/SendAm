@@ -4,18 +4,27 @@ const prisma = require('../common/prisma');
 const config = require('../config/env');
 const scrypt = promisify(crypto.scrypt);
 const TTL_MS = config.admin.sessionTtlHours * 60 * 60 * 1000;
-const ROLE_PERMISSIONS = Object.freeze({
-  read_only: ['admin.read'],
-  compliance: ['admin.read', 'compliance.read', 'compliance.write'],
-  operations: ['admin.read', 'operations.write'],
-  administrator: ['*'],
-});
-const normalizeEmail = (email) => String(email || '').trim().toLowerCase();
-const tokenHash = (token) => crypto.createHash('sha256').update(String(token)).digest('hex');
-const hashPassword = async (password) => {
-  if (typeof password !== 'string' || password.length < 12) throw Object.assign(new Error('Password must be at least 12 characters'), { statusCode: 400 });
-  const salt = crypto.randomBytes(16); const derived = await scrypt(password, salt, 64);
-  return `scrypt$${salt.toString('base64url')}$${derived.toString('base64url')}`;
+const ADMIN_PERMISSIONS = [
+  'stats:read',
+  'users:read',
+  'wallets:read',
+  'transactions:read',
+  'kyc:read',
+  'audit:read',
+  'system:read',
+  'sensitive:reveal',
+];
+
+const sign = (body) =>
+  crypto.createHmac('sha256', JWT_SECRET).update(body).digest('base64url');
+
+// Constant-time string compare that tolerates length differences without
+// throwing (timingSafeEqual requires equal-length buffers).
+const safeEqual = (a, b) => {
+  const bufA = Buffer.from(String(a));
+  const bufB = Buffer.from(String(b));
+  if (bufA.length !== bufB.length) return false;
+  return crypto.timingSafeEqual(bufA, bufB);
 };
 const verifyPassword = async (candidate, encoded) => {
   if (typeof candidate !== 'string' || !encoded) return false;
@@ -25,15 +34,11 @@ const verifyPassword = async (candidate, encoded) => {
   const actual = await scrypt(candidate, Buffer.from(saltText, 'base64url'), expected.length);
   return crypto.timingSafeEqual(actual, expected);
 };
-const ensureRoles = () => prisma.$transaction(Object.entries(ROLE_PERMISSIONS).map(([name, permissions]) => prisma.adminRole.upsert({
-  where: { name }, create: { name, permissions, description: `${name.replace('_', ' ')} administrator role` }, update: { permissions },
-})));
-const bootstrapLegacyAdministrator = async (email, password) => {
-  if (!config.admin.password || !config.admin.bootstrapEmail || normalizeEmail(email) !== normalizeEmail(config.admin.bootstrapEmail)) return null;
-  const candidate = Buffer.from(String(password || '')); const legacy = Buffer.from(config.admin.password);
-  if (candidate.length !== legacy.length || !crypto.timingSafeEqual(candidate, legacy) || await prisma.adminUser.count() !== 0) return null;
-  const roles = await ensureRoles(); const role = roles.find((item) => item.name === 'administrator');
-  return prisma.adminUser.create({ data: { email: normalizeEmail(email), name: 'Bootstrap administrator', passwordHash: await hashPassword(password), roleId: role.id }, include: { role: true } });
+
+const createToken = () => {
+  const payload = { role: 'admin', permissions: ADMIN_PERMISSIONS, iat: Date.now(), exp: Date.now() + TTL_MS };
+  const body = Buffer.from(JSON.stringify(payload)).toString('base64url');
+  return `${body}.${sign(body)}`;
 };
 const authenticate = async (email, password) => {
   const normalized = normalizeEmail(email);
@@ -43,14 +48,14 @@ const authenticate = async (email, password) => {
   const token = crypto.randomBytes(32).toString('base64url');
   const session = await prisma.adminSession.create({ data: { adminId: admin.id, tokenHash: tokenHash(token), expiresAt: new Date(Date.now() + TTL_MS) } });
   await prisma.adminUser.update({ where: { id: admin.id }, data: { lastLoginAt: new Date() } });
-  return { token, session, admin };
+  return { token, session, admin, mustChangePassword: admin.mustChangePassword === true };
 };
-const verifyToken = async (token) => {
-  if (typeof token !== 'string' || token.length < 32) return null;
-  const session = await prisma.adminSession.findUnique({ where: { tokenHash: tokenHash(token) }, include: { admin: { include: { role: true } } } });
-  if (!session || session.revokedAt || session.expiresAt <= new Date() || session.admin.disabledAt) return null;
-  await prisma.adminSession.update({ where: { id: session.id }, data: { lastUsedAt: new Date() } });
-  return { id: session.admin.id, email: session.admin.email, name: session.admin.name, role: session.admin.role.name, permissions: session.admin.role.permissions, sessionId: session.id };
+
+module.exports = {
+  ADMIN_PERMISSIONS,
+  verifyPassword,
+  createToken,
+  verifyToken,
 };
 const hasPermission = (admin, permission) => Boolean(admin?.permissions?.includes('*') || admin?.permissions?.includes(permission));
 const createInvitation = async ({ email, name, roleName, createdById }) => {
@@ -68,4 +73,14 @@ const acceptInvitation = async (token, password) => prisma.$transaction(async (t
   await tx.adminInvitation.update({ where: { id: invitation.id }, data: { acceptedAt: new Date() } }); return admin;
 });
 const revokeSessions = (adminId, exceptSessionId) => prisma.adminSession.updateMany({ where: { adminId, revokedAt: null, ...(exceptSessionId ? { id: { not: exceptSessionId } } : {}) }, data: { revokedAt: new Date() } });
-module.exports = { ROLE_PERMISSIONS, hashPassword, verifyPassword, ensureRoles, authenticate, verifyToken, hasPermission, createInvitation, acceptInvitation, revokeSessions };
+const changeOwnPassword = async ({ adminId, currentPassword, newPassword, sessionId }) => prisma.$transaction(async (tx) => {
+  if (typeof newPassword !== 'string' || newPassword.length < 12) throw Object.assign(new Error('Password must be at least 12 characters'), { statusCode: 400 });
+  const admin = await tx.adminUser.findUnique({ where: { id: adminId } });
+  if (!admin || !await verifyPassword(currentPassword, admin.passwordHash)) throw Object.assign(new Error('Current password is incorrect'), { statusCode: 403 });
+  if (admin.mustChangePassword !== true && await verifyPassword(newPassword, admin.passwordHash)) throw Object.assign(new Error('New password must differ from the current password'), { statusCode: 400 });
+  const passwordHash = await hashPassword(newPassword);
+  await tx.adminUser.update({ where: { id: adminId }, data: { passwordHash, mustChangePassword: false, passwordChangedAt: new Date() } });
+  await tx.adminSession.updateMany({ where: { adminId, revokedAt: null, ...(sessionId ? { id: { not: sessionId } } : {}) }, data: { revokedAt: new Date() } });
+  return { id: admin.id, email: admin.email, name: admin.name };
+});
+module.exports = { ROLE_PERMISSIONS, hashPassword, verifyPassword, ensureRoles, authenticate, verifyToken, hasPermission, createInvitation, acceptInvitation, revokeSessions, changeOwnPassword };

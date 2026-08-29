@@ -34,7 +34,21 @@ export const adminLogin = async (email, password) => {
   if (token) {
     setToken(token);
   }
-  return token;
+  return data?.data || { token: null, mustChangePassword: false };
+};
+
+// The authenticated operator's identity + effective permissions, used by the
+// UI to enforce role-based access and to detect a pending password change.
+export const getAdminMe = async () => {
+  const { data } = await api.get('/admin/me');
+  return data?.data || null;
+};
+
+// Self-serve password rotation. Required first step after a bootstrap/temporary
+// credential; also revokes all other active sessions for the operator.
+export const changeAdminPassword = async ({ currentPassword, newPassword }) => {
+  const { data } = await api.post('/admin/password', { currentPassword, newPassword });
+  return data;
 };
 
 export const getAdminStats = async () => {
@@ -58,6 +72,12 @@ export const getAdminWallets = async (params = {}) => {
 
 export const getAdminTransactions = async (params = {}) => {
   const { data } = await api.get('/admin/transactions', { params });
+  return data;
+};
+
+// Single-transaction fetch for the drill-down detail page (#324).
+export const getAdminTransaction = async (id) => {
+  const { data } = await api.get(`/admin/transactions/${id}`);
   return data;
 };
 
@@ -85,14 +105,18 @@ const triggerDownload = (blob, filename) => {
 };
 
 export const exportAdminKyc = async (params = {}) => {
-  const { after, before, limit, ...filters } = params;
+  // Strip cursor/pagination params — exports always cover the full filtered set.
+  // eslint-disable-next-line no-unused-vars
+  const { after: _a, before: _b, limit: _l, ...filters } = params;
   const response = await api.get('/admin/kyc/export', { params: filters, responseType: 'blob' });
   triggerDownload(response.data, 'kyc-export.csv');
   return response.data;
 };
 
 export const exportAdminAuditLogs = async (params = {}) => {
-  const { after, before, limit, ...filters } = params;
+  // Strip cursor/pagination params — exports always cover the full filtered set.
+  // eslint-disable-next-line no-unused-vars
+  const { after: _a, before: _b, limit: _l, ...filters } = params;
   const response = await api.get('/admin/audit-logs/export', { params: filters, responseType: 'blob' });
   triggerDownload(response.data, 'audit-logs-export.csv');
   return response.data;
@@ -112,3 +136,70 @@ export const rejectKyc = async (id) => {
   const { data } = await api.post(`/compliance/kyc/${id}/review`, { status: 'rejected' });
   return data;
 };
+
+// ── #318: Workflow Events & Ledger Integrity ──────────────────────────────
+export const getAdminWorkflowEvents = async (params = {}) => {
+  const { data } = await api.get('/admin/events', { params });
+  return data;
+};
+
+export const verifyAdminEventChain = async () => {
+  const { data } = await api.get('/admin/events/verify');
+  return data;
+};
+
+export const exportAdminWorkflowEvents = async (params = {}) => {
+  const { after, before, limit, ...filters } = params;
+  const response = await api.get('/admin/events/export', { params: filters, responseType: 'blob' });
+  triggerDownload(response.data, 'workflow-events-export.csv');
+  return response.data;
+};
+
+// ── #329: Compliance Evidence Export & Archive ───────────────────────────
+export const getUserEvidencePackage = async (userId) => {
+  const { data } = await api.get(`/admin/compliance/evidence/${userId}`);
+  return data;
+};
+
+export const downloadUserEvidencePackage = async (userId) => {
+  const response = await api.get(`/admin/compliance/evidence/${userId}/download`, { responseType: 'blob' });
+  triggerDownload(response.data, `evidence-${userId}-${Date.now()}.json`);
+  return response.data;
+};
+
+export const exportAdminKycEvidence = async (params = {}) => {
+  const { after, before, limit, ...filters } = params;
+  const response = await api.get('/admin/compliance/kyc-evidence/export', { params: filters, responseType: 'blob' });
+  triggerDownload(response.data, 'kyc-evidence-export.csv');
+  return response.data;
+};
+
+export const exportAdminAccountStatusHistory = async (params = {}) => {
+  const { after, before, limit, ...filters } = params;
+  const response = await api.get('/admin/compliance/account-status/export', { params: filters, responseType: 'blob' });
+  triggerDownload(response.data, 'account-status-export.csv');
+  return response.data;
+};
+
+// ── #330: Customer Onboarding Status (Admin View) ────────────────────────
+export const getUserOnboardingStatus = async (userId) => {
+  const { data } = await api.get(`/admin/users/${userId}/onboarding`);
+  return data;
+};
+
+// ── #332: Customer Account Deactivation / Reactivation ───────────────────
+export const deactivateUserAccount = async (userId, { reason, notes, force } = {}) => {
+  const { data } = await api.post(`/admin/users/${userId}/deactivate`, { reason, notes, force });
+  return data;
+};
+
+export const reactivateUserAccount = async (userId, { notes, approvedBy } = {}) => {
+  const { data } = await api.post(`/admin/users/${userId}/reactivate`, { notes, approvedBy });
+  return data;
+};
+
+export const getUserAccountStatusHistory = async (userId) => {
+  const { data } = await api.get(`/admin/users/${userId}/account-status`);
+  return data;
+};
+

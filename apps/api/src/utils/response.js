@@ -16,9 +16,10 @@ const sendSuccess = (res, data, message = 'Success', statusCode = 200) => {
   }));
 };
 
-const sendError = (res, message = 'Error', statusCode = 400) => {
+const sendError = (res, message = 'Error', statusCode = 400, details) => {
   const error = new Error(message);
   if (statusCode) error.statusCode = statusCode;
+  if (details !== undefined) error.details = details;
   res.status(statusCode).json(errorEnvelope(error, { correlationId: correlationIdOf() }));
 };
 

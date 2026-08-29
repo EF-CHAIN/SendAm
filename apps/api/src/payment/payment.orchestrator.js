@@ -2,7 +2,9 @@ const walletService = require('../wallet/wallet.service');
 const stellarAdapter = require('../wallet/stellar.adapter');
 const { createQuote, validateQuoteForExecution, QUOTE_STATUS } = require('../pricing/pricing.service');
 const { writeAuditLog } = require('../common/audit.service');
+const { appendEvent, EVENT_TYPES } = require('../common/event.service');
 const { enforceTransactionPolicy } = require('../compliance/compliance.service');
+const { assertAccountActive } = require('../compliance/account.service');
 const { markTransactionFailed } = require('./markFailed');
 const ledger = require('./ledger.service');
 const prisma = require('../common/prisma');
@@ -41,13 +43,11 @@ const executePayment = async ({
   sourceCountry = 'NG',
   destinationCountry = 'NG',
   routeType,
-  quoteId,
-  idempotencyKey,
-  memo,
-  memoType = 'text',
+  transactionId,
 }) => {
   const senderUser = sender;
   if (!senderUser) throw new Error('Sender not found.');
+  assertAccountActive(senderUser);
 
   if (destination && !stellarAdapter.validateAddress(String(destination).trim())) {
     throw new Error('Destination must be a valid Stellar address.');
@@ -85,26 +85,54 @@ const executePayment = async ({
       destination,
       tx,
     });
-
-    // Idempotency short-circuit: an earlier attempt with this key already
-    // reserved a transaction. Return it (and its quote) without creating
-    // duplicates or re-consuming a quote.
-    if (idempotencyKey) {
-      const prior = await tx.transaction.findUnique({ where: { idempotencyKey } });
-      if (prior) {
-        const priorQuote = prior.quoteId ? await tx.quote.findUnique({ where: { id: prior.quoteId } }) : null;
-        return { compliance, quote: priorQuote, transaction: prior };
-      }
-    }
-
-    let quote;
-    if (quoteId) {
-      const existing = await tx.quote.findUnique({ where: { id: quoteId } });
-      await validateQuoteForExecution({ quote: existing, userId: senderUser.id, asset: effectiveAsset, amount: normalizedAmount });
-      // Safe to settle: claim the quote so a retry with the same id is rejected.
-      quote = await tx.quote.update({ where: { id: quoteId }, data: { status: QUOTE_STATUS.CONSUMED } });
-    } else {
-      quote = await createQuote({
+    const q = await createQuote({
+      userId: senderUser.id,
+      sourceCurrency: effectiveAsset,
+      targetCurrency: effectiveAsset,
+      sourceAmount: amount,
+      route: rail,
+      provider: rail,
+    });
+    const t = await tx.transaction.create({
+      data: {
+        ...(transactionId ? { id: transactionId } : {}),
+        userId: senderUser.id,
+        type: 'send',
+        amount: String(amount),
+        asset: effectiveAsset,
+        recipientPhoneNumber,
+        destination,
+        rail,
+        routeType: effectiveRouteType,
+        quoteId: q.id,
+        status: 'processing',
+        metadata: {
+          fee: calculateFee(amount),
+          userHiddenRail: true,
+          riskScore: comp.riskScore,
+        },
+      },
+    });
+    return { compliance: comp, quote: q, transaction: t };
+  }) : (async () => {
+    const comp = await enforceTransactionPolicy({
+      user: senderUser,
+      amount,
+      routeType: effectiveRouteType,
+      destinationCountry,
+      tx: prisma,
+    });
+    const q = await createQuote({
+      userId: senderUser.id,
+      sourceCurrency: effectiveAsset,
+      targetCurrency: effectiveAsset,
+      sourceAmount: amount,
+      route: rail,
+      provider: rail,
+    });
+    const t = await prisma.transaction.create({
+      data: {
+        ...(transactionId ? { id: transactionId } : {}),
         userId: senderUser.id,
         sourceCurrency: effectiveAsset,
         targetCurrency: effectiveAsset,
@@ -131,10 +159,20 @@ const executePayment = async ({
           quoteId: quote.id,
           idempotencyKey,
           status: 'processing',
+          fiatCurrency: compliance.policySnapshot.referenceCurrency,
+          fiatAmount: compliance.policySnapshot.convertedAmount,
           metadata: {
             fee: calculateFee(normalizedAmount, effectiveAsset),
             userHiddenRail: true,
             riskScore: compliance.riskScore,
+            policy: {
+              version: compliance.policySnapshot.policyVersion,
+              rate: compliance.policySnapshot.rate,
+              source: compliance.policySnapshot.source,
+              fetchedAt: compliance.policySnapshot.fetchedAt,
+              convertedAmount: compliance.policySnapshot.convertedAmount,
+              referenceCurrency: compliance.policySnapshot.referenceCurrency,
+            },
             ...memoMetadata,
           },
         },
@@ -205,6 +243,25 @@ const executePayment = async ({
       entityId: String(activeTransaction.id),
       metadata: { rail, status: activeTransaction.status, ...memoMetadata },
     });
+
+    // Durable workflow event for event ledger (#318)
+    await appendEvent({
+      eventType: EVENT_TYPES.PAYMENT_SUBMITTED,
+      aggregateType: 'Transaction',
+      aggregateId: String(activeTransaction.id),
+      actorType: 'user',
+      actorId: String(senderUser.id),
+      payload: {
+        rail,
+        asset: effectiveAsset,
+        amount: normalizedAmount,
+        status: activeTransaction.status,
+        txHash: activeTransaction.txHash,
+        routeType: effectiveRouteType,
+        destinationCountry,
+        ...memoMetadata,
+      },
+    }).catch(() => {});
 
     // Return the pending transaction. Receipt is withheld until the
     // reconciler confirms ledger-backed finality.
@@ -336,6 +393,21 @@ const executeRefund = async ({ transactionId, reason, amount, adminId }) => {
       entityId: String(originalTx.id),
       metadata: { refundTransactionId: updatedRefund.id, amount: String(refundAmount), reason },
     });
+
+    // Durable workflow event for event ledger (#318)
+    await appendEvent({
+      eventType: EVENT_TYPES.PAYMENT_REFUND_SETTLED,
+      aggregateType: 'Transaction',
+      aggregateId: String(originalTx.id),
+      actorType: 'administrator',
+      actorId: adminId,
+      payload: {
+        refundTransactionId: updatedRefund.id,
+        amount: String(refundAmount),
+        asset: originalTx.asset,
+        reason,
+      },
+    }).catch(() => {});
 
     return { amount: String(refundAmount), ...updatedRefund };
   } catch (error) {

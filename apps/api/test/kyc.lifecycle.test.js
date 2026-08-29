@@ -47,7 +47,18 @@ const provider = {
 };
 
 injectMock('common/prisma', prisma);
-injectMock('config/env', { compliance: { provider: 'smileid' } });
+injectMock('config/env', {
+  compliance: {
+    provider: 'smileid',
+    policyCurrency: 'NGN',
+    policyVersion: '1',
+    policyFxMaxAgeMs: 300000,
+    tierLimits: {
+      0: { daily: '0.00', single: '0.00' },
+      1: { daily: '50000.00', single: '20000.00' },
+    },
+  },
+});
 injectMock('utils/logger', { info: () => {}, error: () => {} });
 injectMock('compliance/smileId.provider', provider);
 

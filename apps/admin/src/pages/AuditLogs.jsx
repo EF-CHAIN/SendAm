@@ -1,5 +1,10 @@
 import { useState, useEffect } from 'react';
-import { getAdminAuditLogs, exportAdminAuditLogs } from '@/lib/adminApi';
+import { 
+  getAdminAuditLogs, 
+  exportAdminAuditLogs, 
+  verifyAdminEventChain, 
+  exportAdminWorkflowEvents 
+} from '@/lib/adminApi';
 import { useListQuery } from '@/lib/useListQuery';
 import DataTable from '@/components/DataTable';
 import Loader from '@shared/Loader';
@@ -13,14 +18,22 @@ export default function AuditLogs() {
   const [rows, setRows] = useState([]);
   const [pagination, setPagination] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [exporting, setExporting] = useState(false);
+  const [exportingAudit, setExportingAudit] = useState(false);
+  const [exportingEvents, setExportingEvents] = useState(false);
+  const [verifyingChain, setVerifyingChain] = useState(false);
+  const [chainResult, setChainResult] = useState(null);
   const [error, setError] = useState('');
   const [refreshKey, setRefreshKey] = useState(0);
 
   useEffect(() => {
-    setLoading(true);
-    getAdminAuditLogs(params)
-      .then((res) => {
+to    // Same fetch pattern as the other list pages (Users, Wallets,
+    // Transactions): loading is toggled inside the async fetch so the spinner
+    // shows on every refetch without calling setState synchronously in the
+    // effect body (react-hooks/set-state-in-effect).
+    const fetchLogs = async () => {
+      setLoading(true);
+      try {
+        const res = await getAdminAuditLogs(params);
         setRows(res.data || []);
         setPagination(res.pagination);
       })
@@ -28,15 +41,41 @@ export default function AuditLogs() {
       .finally(() => setLoading(false));
   }, [params, refreshKey]);
 
-  const handleExport = async () => {
-    setExporting(true);
+  const handleExportAudit = async () => {
+    setExportingAudit(true);
     setError('');
     try {
       await exportAdminAuditLogs(params);
     } catch (err) {
       setError(err.response?.data?.message || 'Failed to export audit logs');
     } finally {
-      setExporting(false);
+      setExportingAudit(false);
+    }
+  };
+
+  const handleExportEvents = async () => {
+    setExportingEvents(true);
+    setError('');
+    try {
+      await exportAdminWorkflowEvents(params);
+    } catch (err) {
+      setError(err.response?.data?.message || 'Failed to export workflow events');
+    } finally {
+      setExportingEvents(false);
+    }
+  };
+
+  const handleVerifyChain = async () => {
+    setVerifyingChain(true);
+    setError('');
+    setChainResult(null);
+    try {
+      const res = await verifyAdminEventChain();
+      setChainResult(res.data || res);
+    } catch (err) {
+      setError(err.response?.data?.message || 'Failed to verify event chain integrity');
+    } finally {
+      setVerifyingChain(false);
     }
   };
 
@@ -75,6 +114,24 @@ export default function AuditLogs() {
         </button>
       </div>
       </div>
+
+      {chainResult && (
+        <div className={`mb-4 p-4 rounded-xl border text-sm flex items-center justify-between ${
+          chainResult.valid ? 'bg-emerald-50 border-emerald-200 text-emerald-900' : 'bg-red-50 border-red-200 text-red-900'
+        }`}>
+          <div>
+            <span className="font-bold">
+              {chainResult.valid ? '✓ Event Chain Verified Tamper-Resistant' : '✗ Event Chain Verification Failed'}
+            </span>
+            <span className="ml-2 text-xs opacity-80">
+              ({chainResult.total ?? 0} events verified across cryptographic HMAC hash chain)
+            </span>
+          </div>
+          <button type="button" onClick={() => setChainResult(null)} className="text-xs font-semibold hover:underline">
+            Dismiss
+          </button>
+        </div>
+      )}
 
       <FilterBar
         fields={[

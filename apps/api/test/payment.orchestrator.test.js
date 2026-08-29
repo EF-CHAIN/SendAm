@@ -92,7 +92,19 @@ const baseInput = {
   asset: 'USDC',
 };
 
-const txRow   = { id: 'tx_1', userId: 1, type: 'send', amount: '100.0000000', asset: 'USDC', rail: 'stellar', status: 'processing', metadata: { fee: '1.00', riskScore: 10 } };
+const policySnapshot = {
+  referenceCurrency: 'NGN',
+  sourceAsset: 'USDC',
+  sourceAmount: '100.0000000',
+  rate: '1550.00',
+  convertedAmount: '155000.00',
+  source: 'exchangerate-api',
+  fetchedAt: '2026-08-28T09:00:00.000Z',
+  maxAgeMs: 300000,
+  policyVersion: '1',
+};
+
+const txRow   = { id: 'tx_1', userId: 1, type: 'send', amount: '100.0000000', asset: 'USDC', rail: 'stellar', status: 'processing', fiatCurrency: 'NGN', fiatAmount: '155000.00', metadata: { fee: '1.00', riskScore: 10, policy: { version: '1', rate: '1550.00', source: 'exchangerate-api', fetchedAt: '2026-08-28T09:00:00.000Z', convertedAmount: '155000.00', referenceCurrency: 'NGN' } } };
 const wallet  = { id: 'wallet_1', publicKey: dest, encryptedSecretKey: 'encrypted' };
 const submitOk = { txHash: 'abc123', explorerUrl: 'https://stellar.expert/abc123' };
 const pendingTx = { ...txRow, status: 'pending', txHash: 'abc123', explorerUrl: 'https://stellar.expert/abc123' };
@@ -101,7 +113,7 @@ const quote   = { id: 'quote_1', status: 'active' };
 
 const setUpHappyPath = () => {
   mocks.validateAddress.mock.mockImplementation(() => true);
-  mocks.enforceTransactionPolicy.mock.mockImplementation(() => ({ riskScore: 10 }));
+  mocks.enforceTransactionPolicy.mock.mockImplementation(() => ({ riskScore: 10, policySnapshot }));
   mocks.createQuote.mock.mockImplementation(() => quote);
   mocks.prismaTxCreate.mock.mockImplementation(() => txRow);
   mocks.createOrGetWallet.mock.mockImplementation(() => wallet);
@@ -196,6 +208,25 @@ test('executePayment: quote is persisted through the active transaction client (
   assert.equal(mocks.createQuote.mock.callCount(), 1);
   const passedTx = mocks.createQuote.mock.calls[0].arguments[0].tx;
   assert.equal(passedTx, txMock);
+});
+
+test('executePayment: stores the policy FX snapshot on the transaction', async () => {
+  resetMockCalls();
+  setUpHappyPath();
+
+  await executePayment(baseInput);
+
+  const created = mocks.prismaTxCreate.mock.calls[0].arguments[0].data;
+  assert.equal(created.fiatCurrency, 'NGN');
+  assert.equal(created.fiatAmount, '155000.00');
+  assert.deepEqual(created.metadata.policy, {
+    version: '1',
+    rate: '1550.00',
+    source: 'exchangerate-api',
+    fetchedAt: '2026-08-28T09:00:00.000Z',
+    convertedAmount: '155000.00',
+    referenceCurrency: 'NGN',
+  });
 });
 
 // ---------------------------------------------------------------------------

@@ -1,6 +1,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('path');
+const { convert } = require('../src/utils/money');
 
 const injectMock = (relativeFromSrc, factory) => {
   const abs = path.resolve(__dirname, '../src', `${relativeFromSrc}.js`);
@@ -33,18 +34,51 @@ const prismaMock = {
 };
 
 injectMock('common/prisma', () => prismaMock);
-injectMock('config/env', () => ({ 
-  compliance: { 
+injectMock('utils/logger', () => ({ info: () => {}, error: () => {} }));
+injectMock('compliance/smileId.provider', () => ({
+  submitVerification: async () => {},
+  verifyCallback: () => true,
+}));
+injectMock('config/env', () => ({
+  compliance: {
     provider: 'smileid',
-    screeningProvider: 'static',  // Use static provider for tests
-    screeningMaxAgeMs: 24 * 60 * 60 * 1000,
-    screeningMaxStalenessMs: 72 * 60 * 60 * 1000,
-  } 
+    policyCurrency: 'NGN',
+    policyVersion: '1',
+    policyFxMaxAgeMs: 300000,
+    tierLimits: {
+      0: { daily: '0.00', single: '0.00' },
+      1: { daily: '50000.00', single: '20000.00' },
+      2: { daily: '500000.00', single: '200000.00' },
+      3: { daily: '5000000.00', single: '1000000.00' },
+    },
+  },
+  pricing: {
+    exchangeRateApiKey: 'test-fx-key',
+    coinGeckoApiKey: 'test-cg-key',
+  },
 }));
 
-const { getOrCreateKycProfile, enforceTransactionPolicy, calculateRiskScore, screenSanctions } = require('../src/compliance/compliance.service');
+const {
+  getOrCreateKycProfile,
+  enforceTransactionPolicy,
+  calculateRiskScore,
+  POLICY_ERROR_CODES,
+} = require('../src/compliance/compliance.service');
 
-const user = { id: 'user_1', phoneNumber: '+1234567890', kycTier: 1, firstName: 'Test', lastName: 'User' };
+const user = { id: 'user_1', phoneNumber: '+1234567890', kycTier: 1 };
+const now = new Date('2026-08-28T09:00:00.000Z');
+
+const approvedProfile = (overrides = {}) => ({
+  id: 'profile_ok',
+  userId: user.id,
+  provider: 'smileid',
+  tier: 1,
+  status: 'approved',
+  sanctionsStatus: 'cleared',
+  custodyStatus: 'not_reviewed',
+  riskScore: 0,
+  ...overrides,
+});
 
 const resetPrisma = () => {
   prismaMock.kycProfile.findUnique = mockFindUnique;
@@ -53,6 +87,12 @@ const resetPrisma = () => {
   prismaMock.transaction.findMany = async () => [];
   prismaMock.sanctionsScreeningResult.create = async (input) => ({ id: 'screening_1', ...input.data });
   prismaMock.auditLog.create = async () => ({ id: 'audit_1' });
+};
+
+const usdcRate = async () => ({ rate: '1550.00', fetchedAt: now });
+const xlmRates = {
+  fetchCryptoUsdRate: async () => ({ rate: '0.20', fetchedAt: now }),
+  fetchFiatRate: async () => ({ rate: '1550.00', fetchedAt: now }),
 };
 
 test('getOrCreateKycProfile creates a profile when none exists', async () => {
@@ -69,6 +109,19 @@ test('getOrCreateKycProfile creates a profile when none exists', async () => {
 test('calculateRiskScore includes profile risk and cross-border risk', () => {
   const score = calculateRiskScore({ amount: '80000', routeType: 'cross_border', destinationCountry: 'US', profileRiskScore: 20 });
   assert.ok(score >= 80, 'score should reach manual review threshold');
+});
+
+test('calculateRiskScore amount bands use NGN, not settlement-asset units', () => {
+  assert.equal(calculateRiskScore({ amount: '50000.00', asset: 'NGN', routeType: 'domestic', destinationCountry: 'NG' }), 10);
+  assert.equal(calculateRiskScore({ amount: '50000.01', asset: 'NGN', routeType: 'domestic', destinationCountry: 'NG' }), 20);
+  assert.equal(calculateRiskScore({ amount: '100000.01', asset: 'NGN', routeType: 'domestic', destinationCountry: 'NG' }), 50);
+  const xlmNativeMisread = calculateRiskScore({
+    amount: convert({ amount: '50000.0000000', sourceAsset: 'XLM', targetAsset: 'NGN', rate: '0.50' }),
+    asset: 'NGN',
+    routeType: 'domestic',
+    destinationCountry: 'NG',
+  });
+  assert.equal(xlmNativeMisread, 10);
 });
 
 test('enforceTransactionPolicy rejects if KYC not approved', async () => {
@@ -102,17 +155,192 @@ test('enforceTransactionPolicy rejects review sanctions destination', async () =
   assert.equal(updated.sanctionsStatus, 'review');
 });
 
+test('fiat-routed NGN payments compare limits in NGN without FX', async () => {
+  resetPrisma();
+  prismaMock.kycProfile.findUnique = async () => approvedProfile();
+  prismaMock.kycProfile.update = async ({ where, data }) => ({ id: where.id, ...approvedProfile(), ...data });
 
-test('enforceTransactionPolicy totals only transactions in the requested asset', async () => {
+  const result = await enforceTransactionPolicy({
+    user,
+    amount: '15000.00',
+    asset: 'NGN',
+    routeType: 'domestic',
+    destinationCountry: 'NG',
+    now,
+  });
+  assert.equal(result.policySnapshot.source, 'identity');
+  assert.equal(result.policySnapshot.convertedAmount, '15000.00');
+  assert.equal(result.riskScore, 10);
+});
+
+test('economically equivalent USDC and XLM receive the same limit and risk treatment', async () => {
+  resetPrisma();
+  prismaMock.kycProfile.findUnique = async () => approvedProfile();
+  prismaMock.kycProfile.update = async ({ where, data }) => ({ id: where.id, ...approvedProfile(), ...data });
+
+  const usdc = await enforceTransactionPolicy({
+    user,
+    amount: '1.0000000',
+    asset: 'USDC',
+    routeType: 'domestic',
+    destinationCountry: 'NG',
+    now,
+    fetchFiatRate: usdcRate,
+  });
+  const xlm = await enforceTransactionPolicy({
+    user,
+    amount: '5.0000000',
+    asset: 'XLM',
+    routeType: 'domestic',
+    destinationCountry: 'NG',
+    now,
+    ...xlmRates,
+  });
+
+  assert.equal(usdc.policySnapshot.convertedAmount, '1550.00');
+  assert.equal(xlm.policySnapshot.convertedAmount, '1550.00');
+  assert.equal(usdc.riskScore, xlm.riskScore);
+});
+
+test('enforceTransactionPolicy aggregates daily totals across assets in NGN', async () => {
   resetPrisma();
   let where;
-  prismaMock.kycProfile.findUnique = async () => ({ id: 'profile_5', userId: user.id, provider: 'smileid', tier: 1, status: 'approved', sanctionsStatus: 'cleared', custodyStatus: 'not_reviewed' });
+  prismaMock.kycProfile.findUnique = async () => approvedProfile();
+  prismaMock.kycProfile.update = async ({ where: w, data }) => ({ id: w.id, ...approvedProfile(), ...data });
   prismaMock.transaction.findMany = async (query) => {
     where = query.where;
-    return [{ amount: '19999.0000000', asset: 'USDC' }];
+    return [{
+      amount: '19.3548387',
+      asset: 'USDC',
+      fiatAmount: '30000.00',
+      fiatCurrency: 'NGN',
+    }];
   };
 
-  await enforceTransactionPolicy({ user, amount: '1.0000000', asset: 'USDC', routeType: 'domestic', destinationCountry: 'NG' });
+  const allowed = await enforceTransactionPolicy({
+    user,
+    amount: '12.9032258',
+    asset: 'USDC',
+    routeType: 'domestic',
+    destinationCountry: 'NG',
+    now,
+    fetchFiatRate: usdcRate,
+  });
+  assert.equal(where.asset, undefined);
+  assert.equal(where.type, 'send');
+  assert.equal(allowed.policySnapshot.convertedAmount, '20000.00');
 
-  assert.equal(where.asset, 'USDC');
+  prismaMock.transaction.findMany = async () => [{
+    amount: '19.3548452',
+    asset: 'XLM',
+    fiatAmount: '30000.01',
+    fiatCurrency: 'NGN',
+  }];
+
+  await assert.rejects(
+    () => enforceTransactionPolicy({
+      user,
+      amount: '12.9032258',
+      asset: 'USDC',
+      routeType: 'domestic',
+      destinationCountry: 'NG',
+      now,
+      fetchFiatRate: usdcRate,
+    }),
+    { message: 'This payment exceeds your tier 1 daily limit.' },
+  );
+});
+
+test('single-limit boundary uses converted NGN cents', async () => {
+  resetPrisma();
+  prismaMock.kycProfile.findUnique = async () => approvedProfile();
+  prismaMock.kycProfile.update = async ({ where, data }) => ({ id: where.id, ...approvedProfile(), ...data });
+
+  const allowed = await enforceTransactionPolicy({
+    user,
+    amount: '12.9032258',
+    asset: 'USDC',
+    routeType: 'domestic',
+    destinationCountry: 'NG',
+    now,
+    fetchFiatRate: usdcRate,
+  });
+  assert.equal(allowed.policySnapshot.convertedAmount, '20000.00');
+
+  await assert.rejects(
+    () => enforceTransactionPolicy({
+      user,
+      amount: '12.9032323',
+      asset: 'USDC',
+      routeType: 'domestic',
+      destinationCountry: 'NG',
+      now,
+      fetchFiatRate: usdcRate,
+    }),
+    { message: 'This payment exceeds your tier 1 single transaction limit.' },
+  );
+});
+
+test('incomplete daily history fails closed instead of undercounting', async () => {
+  resetPrisma();
+  prismaMock.kycProfile.findUnique = async () => approvedProfile();
+  prismaMock.transaction.findMany = async () => [{
+    amount: '10.0000000',
+    asset: 'USDC',
+    fiatAmount: null,
+    fiatCurrency: null,
+  }];
+
+  await assert.rejects(
+    () => enforceTransactionPolicy({
+      user,
+      amount: '1.0000000',
+      asset: 'USDC',
+      routeType: 'domestic',
+      destinationCountry: 'NG',
+      now,
+      fetchFiatRate: usdcRate,
+    }),
+    (error) => {
+      assert.equal(error.code, POLICY_ERROR_CODES.DAILY_TOTAL_INCOMPLETE);
+      return true;
+    },
+  );
+});
+
+test('stale and unavailable FX fail closed before a send is approved', async () => {
+  resetPrisma();
+  prismaMock.kycProfile.findUnique = async () => approvedProfile();
+
+  await assert.rejects(
+    () => enforceTransactionPolicy({
+      user,
+      amount: '1.0000000',
+      asset: 'USDC',
+      routeType: 'domestic',
+      destinationCountry: 'NG',
+      now,
+      fetchFiatRate: async () => ({ rate: '1550.00', fetchedAt: new Date(now.getTime() - 300001) }),
+    }),
+    (error) => {
+      assert.equal(error.code, POLICY_ERROR_CODES.FX_STALE);
+      return true;
+    },
+  );
+
+  await assert.rejects(
+    () => enforceTransactionPolicy({
+      user,
+      amount: '1.0000000',
+      asset: 'USDC',
+      routeType: 'domestic',
+      destinationCountry: 'NG',
+      now,
+      fetchFiatRate: async () => null,
+    }),
+    (error) => {
+      assert.equal(error.code, POLICY_ERROR_CODES.FX_UNAVAILABLE);
+      return true;
+    },
+  );
 });
