@@ -1,9 +1,5 @@
-// Failure-path bookkeeping for executePayment. Marking the transaction row
-// 'failed' happens inside the orchestrator's catch — if THAT update also
-// rejects (database hiccup mid-incident), the bookkeeping error must not
-// replace the original payment error the caller needs to see. prisma is
-// injected so this stays unit-testable offline.
 const defaultLogger = require('../utils/logger');
+const { transitionPaymentState } = require('./payment.transitions');
 
 const normalizePaymentStatus = (status) => {
   const value = String(status ?? '').trim().toLowerCase();
@@ -11,9 +7,9 @@ const normalizePaymentStatus = (status) => {
     processing: 'pending',
     pending: 'pending',
     submitted: 'pending',
-    success: 'settled',
-    settled: 'settled',
-    completed: 'settled',
+    success: 'success',
+    settled: 'success',
+    completed: 'success',
     failed: 'failed',
     rejected: 'failed',
     expired: 'failed',
@@ -21,7 +17,7 @@ const normalizePaymentStatus = (status) => {
     canceled: 'cancelled',
     superseded: 'cancelled',
     reversed: 'reversed',
-    resolved: 'settled',
+    resolved: 'success',
     in_progress: 'pending',
   };
   return aliases[value] || value || 'pending';
@@ -40,15 +36,16 @@ const updateTransactionLifecycle = async ({
   try {
     const normalized = normalizePaymentStatus(status);
     const eventTime = new Date().toISOString();
-    await prisma.transaction.update({
-      where: { id: transactionId },
-      data: {
-        status: normalized,
-        metadata: {
-          ...metadata,
-          [timestampField]: eventTime,
-          ...(reason ? { [reasonField]: reason } : {}),
-        },
+    await transitionPaymentState({
+      db: prisma,
+      transactionId,
+      toState: normalized,
+      actor: { type: 'system', id: 'system' },
+      reason: reason || null,
+      metadata: {
+        ...metadata,
+        [timestampField]: eventTime,
+        ...(reason ? { [reasonField]: reason } : {}),
       },
     });
   } catch (updateError) {
@@ -58,12 +55,14 @@ const updateTransactionLifecycle = async ({
 
 const markTransactionFailed = async ({ prisma, transactionId, metadata, error, logger = defaultLogger }) => {
   try {
-    await prisma.transaction.update({
-      where: { id: transactionId },
-      data: {
-        status: 'failed',
-        metadata: { ...metadata, error: error instanceof Error ? error.message : String(error || 'unknown') },
-      },
+    const errMsg = error instanceof Error ? error.message : String(error || 'unknown');
+    await transitionPaymentState({
+      db: prisma,
+      transactionId,
+      toState: 'failed',
+      actor: { type: 'system', id: 'orchestrator' },
+      reason: errMsg,
+      metadata: { ...metadata, error: errMsg },
     });
   } catch (updateError) {
     logger.error(
