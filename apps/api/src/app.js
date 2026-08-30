@@ -18,6 +18,7 @@ const errorHandler = require('./middlewares/errorHandler');
 const notFound = require('./middlewares/notFound');
 const PostgresRateStore = require('./middlewares/postgresRateStore');
 const config = require('./config/env');
+const { describeNetworkProfile } = require('./config/networkProfiles');
 const logger = require('./utils/logger');
 const prisma = require('./common/prisma');
 const { correlationMiddleware } = require('./observability/context');
@@ -178,14 +179,12 @@ app.get('/health/startup', (_req, res) => {
   res.status(startupComplete ? 200 : 503).json({ status: startupComplete ? 'ok' : 'starting' });
 });
 
-// Per-dependency status for operators (#316). Separate from /health/ready on
-// purpose: readiness answers "should this instance take traffic" and must stay
-// cheap and collapsed for the load balancer, while this one names every
-// dependency, reports latency, and is allowed to be slower because a human is
-// reading it.
-app.get('/health/dependencies', async (_req, res) => {
-  const report = await checkAll();
-  res.status(httpStatusFor(report.status)).json(report);
+// Which Stellar network this instance is actually bound to (#284). Operators
+// need to be able to confirm a deployment is on the network they think it is
+// without reading its environment. Only public network identifiers are
+// exposed — no keys, endpoints with credentials, or secrets.
+app.get('/health/network', (_req, res) => {
+  res.status(200).json(describeNetworkProfile(config.stellar.networkProfile));
 });
 
 app.get(['/health', '/health/ready'], async (req, res) => {

@@ -10,6 +10,7 @@ const ledger = require('./ledger.service');
 const prisma = require('../common/prisma');
 const { withIdAlias } = require('../common/records');
 const { assertValidAmount, percentage } = require('../utils/money');
+const config = require('../config/env');
 
 const RAIL = 'stellar';
 const NATIVE_ASSET = 'XLM';
@@ -306,21 +307,25 @@ const executeRefund = async ({ transactionId, reason, amount, adminId }) => {
     throw new Error(`Refund amount exceeds the maximum refundable amount of ${maxRefundable} ${originalTx.asset}. Already refunded: ${alreadyRefunded}`);
   }
 
-  const senderWallet = await prisma.wallet.findUnique({ where: { userId_chain: { userId: originalTx.userId, chain: RAIL } } });
+  const senderWallet = await prisma.wallet.findUnique({
+    where: { userId_chain_network: { userId: originalTx.userId, chain: RAIL, network: config.stellar.network } },
+  });
   if (!senderWallet) throw new Error('Sender wallet not found. Cannot return funds.');
 
   let recipientWallet;
   if (originalTx.recipientPhoneNumber) {
     const recipientUser = await prisma.user.findFirst({ where: { phoneNumber: originalTx.recipientPhoneNumber } });
     if (recipientUser) {
-      recipientWallet = await prisma.wallet.findUnique({ where: { userId_chain: { userId: recipientUser.id, chain: RAIL } } });
+      recipientWallet = await prisma.wallet.findUnique({
+        where: { userId_chain_network: { userId: recipientUser.id, chain: RAIL, network: config.stellar.network } },
+      });
       if (!recipientWallet) {
-        recipientWallet = await prisma.wallet.findFirst({ where: { userId: recipientUser.id } });
+        recipientWallet = await prisma.wallet.findFirst({ where: { userId: recipientUser.id, network: config.stellar.network } });
       }
     }
   }
   if (!recipientWallet && originalTx.destination) {
-    recipientWallet = await prisma.wallet.findFirst({ where: { publicKey: originalTx.destination } });
+    recipientWallet = await prisma.wallet.findFirst({ where: { publicKey: originalTx.destination, network: config.stellar.network } });
   }
   if (!recipientWallet) {
     throw new Error('Recipient wallet is not managed on this platform. Reversals from external addresses are impossible.');

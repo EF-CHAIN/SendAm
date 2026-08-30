@@ -155,7 +155,13 @@ describe('walletService.balancesForUser', () => {
     await walletService.balancesForUser({ phoneNumber: '+2348000000000' });
 
     assert.equal(calls.length, 1);
-    assert.deepEqual(calls[0].where, { phoneNumber: '+2348000000000', chain: 'stellar' });
+    // Scoped to the active network (#283): a balance lookup must never return
+    // wallets belonging to a different network.
+    assert.deepEqual(calls[0].where, {
+      phoneNumber: '+2348000000000',
+      chain: 'stellar',
+      network: 'testnet',
+    });
   });
 });
 

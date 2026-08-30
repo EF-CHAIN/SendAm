@@ -30,7 +30,7 @@ const prisma = require('../common/prisma');
 const { sendTextMessage } = require('../services/whatsapp.service');
 const { getExchangeRate } = require('../pricing/pricing.service');
 const logger = require('../utils/logger');
-const { setGauge } = require('../observability/metrics');
+const config = require('../config/env');
 
 // ---------------------------------------------------------------------------
 // Notification text — "You received 20 USDC (~₦31,000)"
@@ -489,9 +489,14 @@ const runDepositSweep = async (deps) => {
 
   let wallets;
   try {
+    // Scoped to this process's network (#283): polling a testnet wallet
+    // against mainnet Horizon (or the reverse) reads the wrong ledger and can
+    // credit a deposit that never happened on the network the user is on.
     wallets = await prismaClient.wallet.findMany({
-      where: { chain: 'stellar', publicKey: { not: null } },
-      select: { id: true, userId: true, publicKey: true, phoneNumber: true, paymentCursor: true },
+      where: { chain: 'stellar', publicKey: { not: null }, network: config.stellar.network },
+      select: {
+        id: true, userId: true, publicKey: true, phoneNumber: true, paymentCursor: true, network: true,
+      },
     });
   } catch (err) {
     logger.error(`Deposit poller: failed to load wallets: ${err.message}`);

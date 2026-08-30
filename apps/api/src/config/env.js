@@ -1,6 +1,28 @@
 require('dotenv').config();
 
+const { resolveNetworkProfile } = require('./networkProfiles');
+
 const env = process.env.NODE_ENV || 'development';
+
+// Resolve the Stellar network as one coherent profile rather than trusting the
+// raw string. Problems are collected rather than thrown here so that
+// validateEnv can report every configuration fault in a single startup
+// failure; nothing downstream should read `stellar` before that check runs.
+const rawStellarNetwork = process.env.STELLAR_NETWORK || 'testnet';
+const stellarHorizonUrls = (process.env.HORIZON_URLS || '')
+  .split(',')
+  .map((u) => u.trim())
+  .filter(Boolean);
+const stellarAllowMainnet = String(process.env.STELLAR_ALLOW_MAINNET || '').toLowerCase() === 'true';
+
+const { profile: stellarProfile, problems: stellarNetworkProblems } = resolveNetworkProfile({
+  network: rawStellarNetwork,
+  horizonUrl: process.env.STELLAR_HORIZON_URL || null,
+  horizonUrls: stellarHorizonUrls,
+  usdcIssuer: process.env.STELLAR_USDC_ISSUER || null,
+  allowMainnet: stellarAllowMainnet,
+  enableFriendbot: String(process.env.STELLAR_ENABLE_FRIENDBOT || '').toLowerCase() === 'true',
+});
 
 module.exports = {
   port: process.env.PORT || 3002,
@@ -125,19 +147,34 @@ module.exports = {
     r2SecretAccessKey: process.env.CLOUDDFLARE_R2_SECRET_ACCESS_KEY,
   },
   stellar: {
-    network: process.env.STELLAR_NETWORK || 'testnet',
-    horizonUrl: process.env.STELLAR_HORIZON_URL || 'https://horizon-testnet.stellar.org',
-    fundingAccountPublicKey: process.env.STELLAR_FUNDING_ACCOUNT_PUBLIC_KEY || '',
-    // Circle's official Testnet USDC issuer, so multi-asset balance lookups
-    // work out of the box in dev; override for mainnet or a custom issuer.
-    usdcIssuer: process.env.STELLAR_USDC_ISSUER || 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5',
-    thresholds: {
-      baseFeeWarningThreshold: Number(process.env.STELLAR_BASE_FEE_WARNING_THRESHOLD || 200),
-      baseFeeCriticalThreshold: Number(process.env.STELLAR_BASE_FEE_CRITICAL_THRESHOLD || 250),
-      fundingBalanceWarningThreshold: Number(process.env.STELLAR_FUNDING_BALANCE_WARNING_THRESHOLD || 20),
-      fundingBalanceCriticalThreshold: Number(process.env.STELLAR_FUNDING_BALANCE_CRITICAL_THRESHOLD || 10),
-      reserveWarningThreshold: Number(process.env.STELLAR_RESERVE_WARNING_THRESHOLD || 0.7),
-      reserveCriticalThreshold: Number(process.env.STELLAR_RESERVE_CRITICAL_THRESHOLD || 0.85),
+    // Canonical id when the network resolved; otherwise the raw value, so the
+    // startup error can quote back what was actually configured.
+    network: stellarProfile ? stellarProfile.id : rawStellarNetwork,
+    rawNetwork: rawStellarNetwork,
+    networkProfile: stellarProfile,
+    networkProblems: stellarNetworkProblems,
+    networkPassphrase: stellarProfile ? stellarProfile.passphrase : null,
+    allowMainnet: stellarAllowMainnet,
+    horizonUrl: process.env.STELLAR_HORIZON_URL
+      || (stellarProfile ? stellarProfile.defaultHorizonUrl : 'https://horizon-testnet.stellar.org'),
+    horizonUrls: stellarHorizonUrls,
+    horizonTimeoutMs: Number(process.env.HORIZON_TIMEOUT_MS || 10000),
+    horizonCircuitThreshold: Number(process.env.HORIZON_CIRCUIT_THRESHOLD || 3),
+    horizonCircuitCooldownMs: Number(process.env.HORIZON_CIRCUIT_COOLDOWN_MS || 30000),
+    usdcIssuer: process.env.STELLAR_USDC_ISSUER
+      || (stellarProfile ? stellarProfile.usdcIssuer : null),
+    explorerBaseUrl: stellarProfile ? stellarProfile.explorerBaseUrl : null,
+    supportsFriendbot: stellarProfile ? stellarProfile.supportsFriendbot : false,
+    // Fail closed: an unresolved network is never treated as mainnet, so a
+    // typo can no longer activate real-funds behaviour. Previously any value
+    // other than the literal 'testnet' selected the public network.
+    isMainnet: stellarProfile ? stellarProfile.isMainnet : false,
+    auth: {
+      signingKey: process.env.STELLAR_AUTH_SIGNING_KEY,
+      homeDomain: process.env.STELLAR_HOME_DOMAIN,
+      webAuthDomain: process.env.STELLAR_WEB_AUTH_DOMAIN,
+      challengeTtlSeconds: Number(process.env.STELLAR_AUTH_CHALLENGE_TTL_SECONDS || 300),
+      sessionTtlMinutes: Number(process.env.REST_SESSION_TTL_MINUTES || 15),
     },
   },
   pricing: {
