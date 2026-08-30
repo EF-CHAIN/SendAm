@@ -1,11 +1,15 @@
 # Operator Recovery Playbook
 
-> **Closes #322**
+> **Closes #322, #227**
 >
 > This runbook covers the most common production failure modes for SendAm.
 > Operators should follow each section top-to-bottom. All recovery actions
 > must be attributed in the audit log (`admin.incident.*` events) and
 > reviewed in a post-incident write-up within 48 hours of resolution.
+>
+> Every critical alert links to a tested runbook with an owner and a
+> last-exercised date — see the [Runbook Registry](incidents/RUNBOOK-REGISTRY.md)
+> and the tabletop drill records under `docs/incidents/drills/`.
 
 ---
 
@@ -23,6 +27,8 @@
 10. [Communication Templates](#10-communication-templates)
 11. [Post-Incident Review](#11-post-incident-review)
 12. [Drill & Update Schedule](#12-drill--update-schedule)
+13. [Key Management Incident Response](#13-key-management-incident-response)
+14. [Runbook Registry](#14-runbook-registry)
 
 ---
 
@@ -187,6 +193,44 @@ On-call engineer  →  Engineering lead  →  CTO / Head of Product
 3. Review the rate-limit configuration in `src/services/rateLimit.service.js`
    and adjust thresholds in env if warranted.
 
+### 4d. Duplicate payment detected
+
+**Symptoms:** A customer reports being charged twice; `GET /api/admin/ledger/discrepancies` shows an imbalance; two transactions share the same `providerReference`.
+
+> ⚠️ **P0 — treat as potential money loss until confirmed otherwise.**
+
+**Steps:**
+1. **Contain immediately** — do not retry any stuck payments until
+   idempotency keys are reconciled. Retrying a batch without reconciliation
+   is the most common cause of duplicate payments.
+2. Identify the duplicate via the ledger discrepancies endpoint:
+   ```
+   GET /api/admin/ledger/discrepancies
+   ```
+   Look for two transactions sharing the same `providerReference` or
+   `idempotencyKey`.
+3. Freeze the affected transaction(s) to prevent further settlement:
+   ```
+   POST /api/admin/transactions/:id/freeze
+   Body: { "reason": "Duplicate payment detected — operator hold" }
+   ```
+4. Confirm which transaction is the legitimate one by checking the
+   `providerReference` against the Stellar ledger (Horizon) and the original
+   customer intent.
+5. Initiate a refund for the duplicate:
+   ```
+   POST /api/admin/transactions/:id/refund
+   Body: { "reason": "Duplicate payment — operator-initiated refund" }
+   ```
+6. Notify the affected customer via WhatsApp using the notification system
+   (do not send manual messages). Use the §10 user-facing template.
+7. Record the incident:
+   ```
+   action: admin.incident.duplicate_payment_resolved
+   ```
+8. Review the root cause — typically a retry without idempotency-key
+   reconciliation. Confirm the retry path in §4a step 4 is followed.
+
 ---
 
 ## 5. Auth Incident Response
@@ -254,6 +298,44 @@ On-call engineer  →  Engineering lead  →  CTO / Head of Product
    deployment environment and restart the API.
 4. Do **not** disable signature verification to restore service — this would
    open the webhook to unauthenticated payloads.
+
+### 5d. Credential compromise suspected
+
+**Symptoms:** Unusual activity in audit logs; service-account or API-key
+credentials used without authorization; `ADMIN_PASSWORD`, `JWT_SECRET`, or a
+provider secret suspected of exposure.
+
+> ⚠️ **P0 — treat as potential data breach until confirmed otherwise.**
+
+**Steps:**
+1. **Contain immediately** — revoke all sessions for the affected account:
+   ```
+   POST /api/admin/administrators/:id/revoke-sessions
+   ```
+2. Disable the affected account(s):
+   ```
+   POST /api/admin/administrators/:id/disable
+   ```
+3. For service accounts or API keys, rotate the credential immediately:
+   - `ADMIN_PASSWORD`: update the env var and restart the API.
+   - `JWT_SECRET`: rotate and restart the API — all sessions will be invalidated.
+   - `WHATSAPP_APP_SECRET`: update in the Meta dashboard and the deployment env.
+   - `ENCRYPTION_KEY`: **do not rotate mid-incident** — see §13.
+4. Review audit logs for the compromised credential:
+   ```
+   GET /api/admin/audit-logs?actorId=<admin-id>
+   ```
+   Or, for service accounts, search application logs for the affected key.
+5. Export audit logs for legal evidence if needed:
+   ```
+   GET /api/admin/audit-logs/export
+   ```
+6. Notify compliance and, if financial data was accessed or modified,
+   initiate regulatory notification review using the §10 template.
+7. Record the incident:
+   ```
+   action: admin.incident.credential_compromise_resolved
+   ```
 
 ---
 
@@ -502,17 +584,109 @@ Post-incident reviews are stored in `docs/incidents/YYYY-MM-DD-<slug>.md`.
 
 ## 12. Drill & Update Schedule
 
-| Activity | Frequency | Owner |
-|----------|-----------|-------|
-| Walkthrough of this runbook | Quarterly | Engineering lead |
-| Restore drill (DB backup restore) | Monthly (automated via CI) | Engineering lead |
-| KYC escalation drill | Semi-annual | Compliance officer |
-| Auth compromise drill | Semi-annual | Security lead |
-| Runbook review & update | After every P0/P1 | Incident owner |
+| Activity | Frequency | Owner | Last run |
+|----------|-----------|-------|----------|
+| Walkthrough of this runbook | Quarterly | Engineering lead | 2026-08-29 |
+| Restore drill (DB backup restore) | Monthly (automated via CI) | Engineering lead | 2026-08-29 |
+| KYC escalation drill | Semi-annual | Compliance officer | 2026-08-29 |
+| Auth compromise drill | Semi-annual | Security lead | 2026-08-29 |
+| Payment outage tabletop | Quarterly | Payments lead | 2026-08-29 |
+| Key-management tabletop | Quarterly | Security lead | 2026-08-29 |
+| Queue failure tabletop | Semi-annual | Engineering lead | 2026-08-29 |
+| Provider outage tabletop | Semi-annual | Provider owner | 2026-08-29 |
+| Credential compromise tabletop | Semi-annual | Security lead | 2026-08-29 |
+| Runbook review & update | After every P0/P1 | Incident owner | — |
 
 Drill results are recorded in `docs/incidents/drills/` and reviewed at the
 next engineering all-hands.
 
 ---
 
-*Last reviewed: 2026-08-29. Policy version: ops-runbook-v1.*
+## 13. Key Management Incident Response
+
+### 13a. Key material compromise suspected
+
+**Symptoms:** `crypto_decrypt_failed` events; `ENCRYPTION_KEY`, `JWT_SECRET`,
+`WHATSAPP_APP_SECRET`, or `ADMIN_PASSWORD` suspected of exposure; unusual
+decryption or signing activity in logs.
+
+> ⚠️ **P0 — treat as potential key compromise until confirmed otherwise.**
+
+**Steps:**
+1. **Do not** rotate `ENCRYPTION_KEY` until the root cause is known — a
+   rotation without migration leaves existing encrypted keys unreadable.
+2. Page engineering lead and compliance immediately.
+3. Identify affected wallets and their `keyVersion`:
+   ```sql
+   SELECT id, userId, chain, keyVersion, createdAt
+   FROM "Wallet"
+   WHERE "encryptedSecretKey" IS NOT NULL;
+   ```
+4. Check whether `ENCRYPTION_KEY` env var matches the `keyVersion` stored on
+   the wallet rows.
+5. If a key rotation was recently deployed, run the key rotation migration
+   script to re-encrypt under the new key:
+   ```bash
+   node apps/api/scripts/rotate-wallet-keys.js --dry-run
+   node apps/api/scripts/rotate-wallet-keys.js
+   ```
+6. If keys are genuinely lost (no backup), escalate to CTO immediately —
+   funds may require Stellar multisig recovery.
+7. For non-wallet key material (`JWT_SECRET`, `WHATSAPP_APP_SECRET`,
+   `ADMIN_PASSWORD`), rotate the credential and restart the API. See §5d.
+8. Record the incident:
+   ```
+   action: admin.incident.key_compromise_resolved
+   ```
+
+### 13b. Key rotation without migration
+
+**Symptoms:** After a deploy, `crypto_decrypt_failed` events spike; payments
+fail with 500; wallet rows reference a `keyVersion` that no longer matches
+`ENCRYPTION_KEY`.
+
+**Steps:**
+1. Confirm the `keyVersion` on wallet rows vs. the current `ENCRYPTION_KEY`.
+2. If a rotation was deployed without running the migration, run the rotation
+   script to re-encrypt under the new key:
+   ```bash
+   node apps/api/scripts/rotate-wallet-keys.js --dry-run
+   node apps/api/scripts/rotate-wallet-keys.js
+   ```
+3. If the migration script is unavailable or fails, roll back the deploy to
+   the previous `ENCRYPTION_KEY` value (see §9) and re-run the migration
+   offline.
+4. Verify decryption succeeds on a sample of wallets before resuming
+   financial traffic.
+
+### 13c. Provider API key rotation
+
+**Symptoms:** Provider calls fail with 401/403; `provider_auth_failed` logs.
+
+**Steps:**
+1. Identify the affected provider (Stellar, Smile ID, WhatsApp/Meta, etc.).
+2. Check the provider dashboard for key rotation or expiry notices.
+3. Update the corresponding env var (`STELLAR_*`, `SMILE_ID_*`,
+   `WHATSAPP_APP_SECRET`, etc.) and restart the API.
+4. Verify a test call succeeds before resuming traffic.
+5. Record the incident:
+   ```
+   action: admin.incident.provider_key_rotated
+   ```
+
+---
+
+## 14. Runbook Registry
+
+Every critical alert links to a tested runbook with an owner and a
+last-exercised date. The registry is maintained at
+[`docs/incidents/RUNBOOK-REGISTRY.md`](incidents/RUNBOOK-REGISTRY.md).
+
+Tabletop drill records are stored under `docs/incidents/drills/` and are
+reviewed at the next engineering all-hands. After each drill, update the
+`last-exercised` date in the registry and record follow-up actions in the
+drill record.
+
+---
+
+*Last reviewed: 2026-08-29. Policy version: ops-runbook-v2.*
