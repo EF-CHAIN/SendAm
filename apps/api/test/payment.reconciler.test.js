@@ -1,13 +1,5 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-<<<<<<< HEAD
-const {
-  reconcileStaleTransactions,
-  listLedgerDiscrepancies,
-  listStuckPayments,
-  operatorResolveStuckPayment,
-} = require('../src/payment/payment.reconciler');
-=======
 const path = require('path');
 
 // ---------------------------------------------------------------------------
@@ -27,8 +19,12 @@ injectMock('wallet/stellar.adapter', () => ({
   getTransactionUrl: (hash) => `https://stellar.expert/explorer/testnet/tx/${hash}`,
 }));
 
-const { reconcileStaleTransactions } = require('../src/payment/payment.reconciler');
->>>>>>> upstream/main
+const {
+  reconcileStaleTransactions,
+  listLedgerDiscrepancies,
+  listStuckPayments,
+  operatorResolveStuckPayment,
+} = require('../src/payment/payment.reconciler');
 
 // ---------------------------------------------------------------------------
 // Helpers

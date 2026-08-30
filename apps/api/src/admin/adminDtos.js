@@ -1,3 +1,5 @@
+const { normalizePaymentStatus } = require('../payment/markFailed');
+
 const mask = (value, { head = 0, tail = 4 } = {}) => {
   if (!value) return null;
   const text = String(value);
@@ -41,7 +43,7 @@ const transactionDto = (transaction) => ({
   asset: transaction.asset,
   rail: transaction.rail,
   routeType: transaction.routeType,
-  status: transaction.status,
+  status: normalizePaymentStatus(transaction.status),
   destination: mask(transaction.destination, { head: 5, tail: 4 }),
   recipient: mask(transaction.recipientPhoneNumber),
   transactionHash: mask(transaction.txHash, { head: 6, tail: 6 }),
