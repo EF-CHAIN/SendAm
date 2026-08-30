@@ -1,0 +1,36 @@
+name: Configure production WhatsApp webhook
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: Type CONFIGURE_WHATSAPP_PRODUCTION to update Meta
+        required: true
+        type: string
+
+concurrency:
+  group: production-whatsapp-webhook
+  cancel-in-progress: false
+
+jobs:
+  configure:
+    if: inputs.confirmation == 'CONFIGURE_WHATSAPP_PRODUCTION'
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - name: Configure and verify Meta webhook
+        run: npm run whatsapp:webhook:configure --workspace=apps/api
+        env:
+          WHATSAPP_CALLBACK_URL: ${{ vars.WHATSAPP_CALLBACK_URL }}
+          WHATSAPP_BUSINESS_ACCOUNT_ID: ${{ vars.WHATSAPP_BUSINESS_ACCOUNT_ID }}
+          META_GRAPH_API_VERSION: ${{ vars.META_GRAPH_API_VERSION }}
+          WHATSAPP_VERIFY_TOKEN: ${{ secrets.WHATSAPP_VERIFY_TOKEN }}
+          WHATSAPP_APP_SECRET: ${{ secrets.WHATSAPP_APP_SECRET }}
+          WHATSAPP_TOKEN: ${{ secrets.WHATSAPP_TOKEN }}

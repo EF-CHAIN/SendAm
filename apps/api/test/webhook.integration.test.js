@@ -62,22 +62,44 @@ const prismaMock = {
     count: async () => 0,
     findMany: async () => [],
   },
+  wallet: {
+    findUnique: async () => null,
+    create: async ({ data }) => ({ id: `wallet_${Math.random().toString(36).slice(2, 9)}`, ...data }),
+    update: async ({ where, data }) => ({ id: where.id, ...data }),
+    findMany: async () => [],
+  },
   alias: { findUnique: async () => null },
   processedMessage: {
     _seen: new Set(),
+    _status: new Map(),
     create: async ({ data }) => {
       if (prismaMock.processedMessage._seen.has(data.messageId)) {
         throw Object.assign(new Error('Unique constraint'), { code: 'P2002' });
       }
       prismaMock.processedMessage._seen.add(data.messageId);
+      prismaMock.processedMessage._status.set(data.messageId, data.status);
       return data;
+    },
+    findUnique: async ({ where }) => ({
+      messageId: where.messageId,
+      status: prismaMock.processedMessage._status.get(where.messageId),
+    }),
+    update: async ({ where, data }) => {
+      prismaMock.processedMessage._status.set(where.messageId, data.status);
+      return { messageId: where.messageId, ...data };
+    },
+    updateMany: async ({ where, data }) => {
+      if (where.status && prismaMock.processedMessage._status.get(where.messageId) !== where.status) return { count: 0 };
+      prismaMock.processedMessage._status.set(where.messageId, data.status);
+      return { count: 1 };
     },
   },
   rateLimitHit: {
     findUnique: async () => null,
     upsert: async ({ create }) => ({ ...create, resetAt: new Date(Date.now() + 60_000) }),
   },
-  transaction: { findMany: async () => [] },
+  transaction: { findMany: async () => [], findFirst: async () => null },
+  wallet: { findUnique: async () => null, create: async ({ data }) => ({ publicKey: 'G' + 'A'.repeat(55), ...data }) },
   kycProfile: {
     findUnique: async ({ where }) => {
       if (where.userId) return { id: 'kyc_1', userId: where.userId, tier: 1, status: 'approved', riskScore: 10 };
@@ -130,8 +152,12 @@ injectMock('services/policyClient', {
 });
 
 // --- Compliance (local fallback, no external policy call) ------------------
+let complianceEnforcementCalls = 0;
 injectMock('compliance/compliance.service', {
-  enforceTransactionPolicy: async () => ({ riskScore: 10 }),
+  enforceTransactionPolicy: async () => {
+    complianceEnforcementCalls += 1;
+    return { riskScore: 10 };
+  },
 });
 
 // --- Payment orchestrator (only this boundary is faked) -------------------
@@ -285,7 +311,9 @@ const resetState = () => {
   sentMessages.length = 0;
   paymentResults.length = 0;
   pendingClaimResults.length = 0;
+  complianceEnforcementCalls = 0;
   prismaMock.processedMessage._seen.clear();
+  prismaMock.processedMessage._status.clear();
 };
 
 // ---------------------------------------------------------------------------
@@ -298,7 +326,7 @@ test('full happy path: webhook POST -> parse -> confirmation -> PIN -> receipt',
   await setup();
   try {
     const phone = '+2348000000001';
-    const dest = 'GCXQJ7E6C6TQX7GVV3T6HX3Q7H3P6G6X7Q7J7E6C6TQX7GVV3T6HX3Q7';
+    const dest = 'G' + 'A'.repeat(55);
 
     seedUser(phone);
 
@@ -317,6 +345,11 @@ test('full happy path: webhook POST -> parse -> confirmation -> PIN -> receipt',
     assert.ok(sentMessages[1].body.includes('Payment success'), 'receipt sent');
     assert.ok(sentMessages[1].body.includes('tx_1'), 'transaction id in receipt');
     assert.equal(paymentResults.length, 1, 'payment executed exactly once');
+    assert.equal(
+      complianceEnforcementCalls,
+      0,
+      'WhatsApp delegates compliance enforcement to the payment orchestrator'
+    );
   } finally {
     await teardown();
   }
@@ -363,7 +396,7 @@ test('two rapid PIN replies produce exactly one payment (atomic claim)', async (
   await setup();
   try {
     const phone = '+2348000000003';
-    const dest = 'GCXQJ7E6C6TQX7GVV3T6HX3Q7H3P6G6X7Q7J7E6C6TQX7GVV3T6HX3Q7';
+    const dest = 'G' + 'A'.repeat(55);
 
     seedUser(phone);
 

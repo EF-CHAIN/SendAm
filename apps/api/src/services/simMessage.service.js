@@ -1,4 +1,5 @@
 const prisma = require('../common/prisma');
+const { canonicalizePhoneNumber } = require('../utils/validators');
 
 /**
  * Data-access layer for the `SimMessage` table (see docs/CHAT-SIM.md). The
@@ -8,17 +9,17 @@ const prisma = require('../common/prisma');
  */
 
 const appendMessage = ({ phoneNumber, direction, text }) =>
-  prisma.simMessage.create({ data: { phoneNumber, direction, text } });
+  prisma.simMessage.create({ data: { phoneNumber: canonicalizePhoneNumber(phoneNumber), direction, text } });
 
 const listMessages = (phoneNumber) =>
   prisma.simMessage.findMany({
-    where: { phoneNumber },
+    where: { phoneNumber: canonicalizePhoneNumber(phoneNumber) },
     orderBy: { createdAt: 'asc' },
   });
 
 const listMessagesSince = (phoneNumber, since) =>
   prisma.simMessage.findMany({
-    where: { phoneNumber, createdAt: { gt: new Date(since) } },
+    where: { phoneNumber: canonicalizePhoneNumber(phoneNumber), createdAt: { gt: new Date(since) } },
     orderBy: { createdAt: 'asc' },
   });
 

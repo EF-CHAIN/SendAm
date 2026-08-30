@@ -1,27 +1,236 @@
-const { sendSuccess, sendError, sendPaginated } = require('../utils/response');
-const { verifyPassword, createToken } = require('../services/adminAuth.service');
+const { sendSuccess, sendError, sendCursorPaginated } = require('../utils/response');
+const { authenticate, createInvitation, acceptInvitation, revokeSessions, hashPassword, changeOwnPassword } = require('../services/adminAuth.service');
+const { writeAuditLog } = require('../common/audit.service');
+const { appendEvent, EVENT_TYPES, queryEvents, verifyEventChain: verifyEventChainService } = require('../common/event.service');
+const { deactivateAccount, reactivateAccount, getAccountStatusHistory, DEACTIVATION_REASONS } = require('../compliance/account.service');
+const { getOnboardingStatus } = require('../compliance/onboarding.service');
+const { buildUserEvidencePackage, exportWorkflowEventsCsv, exportKycEvidenceCsv, exportAccountStatusHistoryCsv } = require('../compliance/evidence.service');
 const prisma = require('../common/prisma');
 const { withIdAliases } = require('../common/records');
+const { parseLimit, cursorQuery, MAX_EXPORT_ROWS } = require('../utils/cursorPagination');
+const { listStuckPayments, operatorResolveStuckPayment, listLedgerDiscrepancies } = require('../payment/payment.reconciler');
+const { getWalletActivitySummary } = require('../services/wallet-activity-summary.service');
+const walletService = require('../wallet/wallet.service');
+const { getRotationStatus, rotateSecret: performSecretRotation, evaluateRotationHealth, SECRET_CATEGORIES } = require('../services/secret-rotation.service');
+const { writeAuditLog } = require('../common/audit.service');
+const { userDto, walletDto, transactionDto, kycProfileDto } = require('../admin/adminDtos');
 
-// Parse ?page and ?limit into safe bounds so list endpoints can never be asked
-// to load the entire collection at once. Defaults to 50/page, capped at 100.
-const parsePagination = (query) => {
-  const page = Math.max(1, parseInt(query.page, 10) || 1);
-  const limit = Math.min(100, Math.max(1, parseInt(query.limit, 10) || 50));
-  return { page, limit, skip: (page - 1) * limit };
+// Build an inclusive [gte, lte] range from `from`/`to` query params. Tolerant of
+// bare dates ("2024-01-01") and full ISO timestamps; invalid input is ignored
+// so a bad filter never returns a hard error.
+const  parseDateRange = (query, field = 'createdAt') => {
+  const { from, to, [field]: fieldRange } = query;
+  const start = from || (fieldRange ? fieldRange.split(',')[0] : null);
+  const end = to || (fieldRange ? fieldRange.split(',')[1] : null);
+  const range = {};
+  if (start) {
+    const d = new Date(start);
+    if (!Number.isNaN(d.getTime())) range.gte = d;
+  }
+  if (end) {
+    const d = new Date(end);
+    if (!Number.isNaN(d.getTime())) range.lte = d;
+  }
+  return Object.keys(range).length ? { [field]: range } : {};
+};
+
+// Turn a free-text identifier into an OR across the common lookup columns.
+const identifierWhere = (value, fields) => {
+  if (!value) return {};
+  const trimmed = String(value).trim();
+  if (!trimmed) return {};
+  return {
+    OR: fields.map((f) => ({ [f]: { equals: trimmed } })),
+  };
+};
+
+const userWhere = (query) => {
+  const where = {};
+  if (query.phone) where.phoneNumber = { contains: query.phone, mode: 'insensitive' };
+  Object.assign(where, parseDateRange(query, 'createdAt'));
+  return where;
+};
+
+const walletWhere = (query) => {
+  const where = {};
+  if (query.chain) where.chain = { equals: query.chain };
+  if (query.fundingState) where.fundingState = { equals: query.fundingState };
+  Object.assign(where, parseDateRange(query, 'createdAt'));
+  if (query.phone) {
+    where.OR = [
+      { phoneNumber: { contains: query.phone, mode: 'insensitive' } },
+      { user: { phoneNumber: { contains: query.phone, mode: 'insensitive' } } },
+    ];
+  }
+  return where;
+};
+
+const transactionWhere = (query) => {
+  const where = {};
+  if (query.status) where.status = { equals: query.status };
+  if (query.asset) where.asset = { equals: query.asset };
+  if (query.rail) where.rail = { equals: query.rail };
+  Object.assign(where, parseDateRange(query, 'createdAt'));
+  if (query.userId) where.userId = { equals: query.userId };
+  if (query.phone) where.user = { phoneNumber: { contains: query.phone, mode: 'insensitive' } };
+  Object.assign(where, identifierWhere(query.identifier, ['id', 'txHash', 'providerTransactionId']));
+  return where;
+};
+
+const kycWhere = (query) => {
+  const where = {};
+  if (query.status) where.status = { equals: query.status };
+  if (query.country) where.country = { equals: query.country };
+  Object.assign(where, parseDateRange(query, 'updatedAt'));
+  if (query.phone) where.user = { phoneNumber: { contains: query.phone, mode: 'insensitive' } };
+  return where;
+};
+
+const auditWhere = (query) => {
+  const where = {};
+  if (query.action) where.action = { equals: query.action };
+  if (query.actorType) where.actorType = { equals: query.actorType };
+  if (query.actorId) where.actorId = { equals: query.actorId };
+  if (query.entityType) where.entityType = { equals: query.entityType };
+  Object.assign(where, parseDateRange(query, 'createdAt'));
+  Object.assign(where, identifierWhere(query.identifier, ['id', 'entityId']));
+  return where;
+};
+
+// Minimal RFC-4180-ish CSV serializer for exports.
+const toCsv = (rows, columns) => {
+  const escape = (value) => {
+    if (value === null || value === undefined) return '';
+    const str = String(value);
+    return /[",\n]/.test(str) ? `"${str.replace(/"/g, '""')}"` : str;
+  };
+  const header = columns.map((c) => escape(c.header)).join(',');
+  const body = rows
+    .map((row) => columns.map((c) => escape(typeof c.accessor === 'function' ? c.accessor(row) : row[c.accessor])).join(','))
+    .join('\n');
+  return `${header}\n${body}\n`;
 };
 
 const login = async (req, res, next) => {
   try {
-    const { password } = req.body || {};
-    if (!verifyPassword(password)) {
+    const { email, password } = req.body || {};
+    const result = await authenticate(email, password);
+    if (!result) {
+      await writeAuditLog({ actorType: 'anonymous', action: 'admin.login.denied', metadata: { email: String(email || '').toLowerCase() }, req });
       return sendError(res, 'Invalid credentials', 401);
     }
-    const token = createToken();
-    return sendSuccess(res, { token }, 'Login successful');
+    await writeAuditLog({ actorType: 'administrator', actorId: result.admin.id, action: 'admin.login.succeeded', entityType: 'AdminSession', entityId: result.session.id, req });
+    return sendSuccess(res, { token: result.token, mustChangePassword: result.mustChangePassword === true, administrator: { id: result.admin.id, email: result.admin.email, name: result.admin.name, role: result.admin.role.name } }, 'Login successful');
   } catch (error) {
     next(error);
   }
+};
+
+const acceptInvite = async (req, res, next) => {
+  try {
+    const admin = await acceptInvitation(req.body?.token, req.body?.password);
+    await writeAuditLog({ actorType: 'administrator', actorId: admin.id, action: 'admin.invitation.accepted', entityType: 'AdminUser', entityId: admin.id, req });
+    return sendSuccess(res, null, 'Account created', 201);
+  } catch (error) { if (error.statusCode) return sendError(res, error.message, error.statusCode); return next(error); }
+};
+
+const listAdministrators = async (_req, res, next) => {
+  try {
+    const admins = await prisma.adminUser.findMany({ select: { id: true, email: true, name: true, disabledAt: true, lastLoginAt: true, createdAt: true, role: { select: { name: true, permissions: true } } }, orderBy: { createdAt: 'asc' } });
+    return sendSuccess(res, admins);
+  } catch (error) { return next(error); }
+};
+
+const inviteAdministrator = async (req, res, next) => {
+  try {
+    const { invitation, token } = await createInvitation({ email: req.body?.email, name: req.body?.name, roleName: req.body?.role, createdById: req.admin.id });
+    await writeAuditLog({ actorType: 'administrator', actorId: req.admin.id, action: 'admin.invitation.created', entityType: 'AdminInvitation', entityId: invitation.id, metadata: { email: invitation.email }, req });
+    return sendSuccess(res, { invitationId: invitation.id, token, expiresAt: invitation.expiresAt }, 'Invitation created', 201);
+  } catch (error) { if (error.statusCode) return sendError(res, error.message, error.statusCode); return next(error); }
+};
+
+const enabledAdministratorCount = () => prisma.adminUser.count({ where: { disabledAt: null, role: { name: 'administrator' } } });
+const updateAdministratorRole = async (req, res, next) => {
+  try {
+    const target = await prisma.adminUser.findUnique({ where: { id: req.params.id }, include: { role: true } });
+    const role = await prisma.adminRole.findUnique({ where: { name: req.body?.role } });
+    if (!target || !role) return sendError(res, 'Administrator or role not found', 404);
+    if (target.role.name === 'administrator' && role.name !== 'administrator' && await enabledAdministratorCount() <= 1) return sendError(res, 'Cannot remove the last enabled administrator', 409);
+    await prisma.adminUser.update({ where: { id: target.id }, data: { roleId: role.id } });
+    await revokeSessions(target.id);
+    await writeAuditLog({ actorType: 'administrator', actorId: req.admin.id, action: 'admin.role.changed', entityType: 'AdminUser', entityId: target.id, metadata: { from: target.role.name, to: role.name }, req });
+    return sendSuccess(res, null, 'Role updated; active sessions revoked');
+  } catch (error) { return next(error); }
+};
+
+const disableAdministrator = async (req, res, next) => {
+  try {
+    const target = await prisma.adminUser.findUnique({ where: { id: req.params.id }, include: { role: true } });
+    if (!target) return sendError(res, 'Administrator not found', 404);
+    if (target.role.name === 'administrator' && !target.disabledAt && await enabledAdministratorCount() <= 1) return sendError(res, 'Cannot disable the last enabled administrator', 409);
+    await prisma.adminUser.update({ where: { id: target.id }, data: { disabledAt: new Date() } }); await revokeSessions(target.id);
+    await writeAuditLog({ actorType: 'administrator', actorId: req.admin.id, action: 'admin.account.disabled', entityType: 'AdminUser', entityId: target.id, req });
+    return sendSuccess(res, null, 'Administrator disabled');
+  } catch (error) { return next(error); }
+};
+
+const resetCredential = async (req, res, next) => {
+  try {
+    const passwordHash = await hashPassword(req.body?.password);
+    const target = await prisma.adminUser.update({ where: { id: req.params.id }, data: { passwordHash, passwordChangedAt: new Date() } }); await revokeSessions(target.id);
+    await writeAuditLog({ actorType: 'administrator', actorId: req.admin.id, action: 'admin.credential.reset', entityType: 'AdminUser', entityId: target.id, req });
+    return sendSuccess(res, null, 'Credential reset; active sessions revoked');
+  } catch (error) { if (error.statusCode) return sendError(res, error.message, error.statusCode); return next(error); }
+};
+
+const revokeAdministratorSessions = async (req, res, next) => {
+  try {
+    await revokeSessions(req.params.id);
+    await writeAuditLog({ actorType: 'administrator', actorId: req.admin.id, action: 'admin.sessions.revoked', entityType: 'AdminUser', entityId: req.params.id, req });
+    return sendSuccess(res, null, 'Sessions revoked');
+  } catch (error) { return next(error); }
+};
+
+const logout = async (req, res, next) => {
+  try {
+    await prisma.adminSession.update({ where: { id: req.admin.sessionId }, data: { revokedAt: new Date() } });
+    await writeAuditLog({ actorType: 'administrator', actorId: req.admin.id, action: 'admin.session.revoked', entityType: 'AdminSession', entityId: req.admin.sessionId, req });
+    return sendSuccess(res, null, 'Logged out');
+  } catch (error) { return next(error); }
+};
+
+// Allows an operator to rotate to a private password (or change it later), the
+// required first step after a bootstrap/temporary credential. All other active
+// sessions are revoked so a leaked shared token cannot continue to act, and the
+// change itself is attributed to the operator.
+const changePassword = async (req, res, next) => {
+  try {
+    const { currentPassword, newPassword } = req.body || {};
+    const admin = await changeOwnPassword({
+      adminId: req.admin.id,
+      currentPassword,
+      newPassword,
+      sessionId: req.admin.sessionId,
+    });
+    await writeAuditLog({ actorType: 'administrator', actorId: admin.id, action: 'admin.password.changed', entityType: 'AdminUser', entityId: admin.id, req });
+    return sendSuccess(res, null, 'Password changed');
+  } catch (error) {
+    if (error.statusCode) return sendError(res, error.message, error.statusCode, { code: 'PASSWORD_CHANGE_FAILED' });
+    return next(error);
+  }
+};
+
+const me = async (req, res, next) => {
+  try {
+    return sendSuccess(res, {
+      id: req.admin.id,
+      email: req.admin.email,
+      name: req.admin.name,
+      role: req.admin.role,
+      permissions: req.admin.permissions,
+      mustChangePassword: req.admin.mustChangePassword === true,
+    });
+  } catch (error) { return next(error); }
 };
 
 const getStats = async (req, res, next) => {
@@ -66,17 +275,20 @@ const getUsers = async (req, res, next) => {
     const { page, limit, skip } = parsePagination(req.query);
     const [users, total] = await Promise.all([
       prisma.user.findMany({
-        include: { wallets: { select: { chain: true, publicKey: true, network: true, createdAt: true } } },
+        select: {
+          id: true, phoneNumber: true, whatsappName: true, kycTier: true, createdAt: true,
+          wallets: { select: { chain: true, publicKey: true, network: true, funded: true } },
+        },
         orderBy: { createdAt: 'desc' },
-        skip,
-        take: limit,
+        sortField: 'createdAt',
+        include: { wallets: { select: { chain: true, publicKey: true, network: true, createdAt: true } } },
+        limit,
+        after: req.query.after,
+        before: req.query.before,
       }),
-      prisma.user.count(),
+      prisma.user.count({ where }),
     ]);
-    sendPaginated(res, withIdAliases(users.map((user) => ({
-      ...user,
-      pinHash: undefined,
-    }))), { page, limit, total });
+    sendPaginated(res, withIdAliases(users.map(userDto)), { page, limit, total });
   } catch (error) {
     next(error);
   }
@@ -87,18 +299,20 @@ const getWallets = async (req, res, next) => {
     const { page, limit, skip } = parsePagination(req.query);
     const [wallets, total] = await Promise.all([
       prisma.wallet.findMany({
-        include: { user: { select: { phoneNumber: true, whatsappName: true } } },
+        select: {
+          id: true, chain: true, publicKey: true, funded: true, network: true, createdAt: true,
+          user: { select: { id: true, phoneNumber: true } },
+        },
         orderBy: { createdAt: 'desc' },
-        skip,
-        take: limit,
+        sortField: 'createdAt',
+        include: { user: { select: { phoneNumber: true, whatsappName: true } } },
+        limit,
+        after: req.query.after,
+        before: req.query.before,
       }),
-      prisma.wallet.count(),
+      prisma.wallet.count({ where }),
     ]);
-    sendPaginated(res, withIdAliases(wallets.map((wallet) => ({
-      ...wallet,
-      encryptedSecretKey: undefined,
-      userId: wallet.user,
-    }))), { page, limit, total });
+    sendPaginated(res, withIdAliases(wallets.map(walletDto)), { page, limit, total });
   } catch (error) {
     next(error);
   }
@@ -109,47 +323,120 @@ const getTransactions = async (req, res, next) => {
     const { page, limit, skip } = parsePagination(req.query);
     const [transactions, total] = await Promise.all([
       prisma.transaction.findMany({
-        include: { user: { select: { phoneNumber: true } } },
+        select: {
+          id: true, type: true, amount: true, asset: true, rail: true, routeType: true,
+          status: true, destination: true, recipientPhoneNumber: true, txHash: true,
+          createdAt: true, updatedAt: true,
+          user: { select: { id: true, phoneNumber: true } },
+        },
         orderBy: { createdAt: 'desc' },
-        skip,
-        take: limit,
+        sortField: 'createdAt',
+        limit,
+        after: req.query.after,
+        before: req.query.before,
       }),
-      prisma.transaction.count(),
+      prisma.auditLog.count({ where }),
     ]);
-    sendPaginated(res, withIdAliases(transactions.map((transaction) => ({
-      ...transaction,
-      userId: transaction.user,
-    }))), { page, limit, total });
+    sendPaginated(res, withIdAliases(transactions.map(transactionDto)), { page, limit, total });
   } catch (error) {
     next(error);
   }
 };
 
-const getKycProfiles = async (_req, res, next) => {
+// Sensitive exports: authorized (route-level requireAdmin), bounded so a single
+// request can never dump the whole table, and always recorded to the audit log.
+const exportKyc = async (req, res, next) => {
   try {
+    const where = kycWhere(req.query);
     const profiles = await prisma.kycProfile.findMany({
-      include: { user: { select: { phoneNumber: true, whatsappName: true } } },
+      select: {
+        id: true, tier: true, status: true, country: true, riskScore: true,
+        sanctionsStatus: true, sanctionsScreenedAt: true, custodyStatus: true,
+        custodyReviewedAt: true, lastScreenedAt: true, createdAt: true, updatedAt: true,
+        user: { select: { id: true, phoneNumber: true } },
+      },
       orderBy: { updatedAt: 'desc' },
+      take: MAX_EXPORT_ROWS,
     });
-    sendSuccess(res, withIdAliases(profiles.map((profile) => ({
-      ...profile,
-      userId: profile.user,
-    }))));
+    sendSuccess(res, withIdAliases(profiles.map(kycProfileDto)));
   } catch (error) {
     next(error);
   }
 };
 
-const getAuditLogs = async (_req, res, next) => {
+// Full identifiers are available only through an explicit, permission-gated,
+// single-record action. The response expires quickly and every reveal is
+// recorded. Secrets and raw provider metadata are never revealable.
+const revealSensitiveFields = async (req, res, next) => {
   try {
-    const logs = await prisma.auditLog.findMany({
-      orderBy: { createdAt: 'desc' },
-      take: 200,
+    const { resource, id } = req.params;
+    const queries = {
+      user: () => prisma.user.findUnique({ where: { id }, select: { phoneNumber: true, whatsappName: true } }),
+      wallet: () => prisma.wallet.findUnique({ where: { id }, select: { publicKey: true, phoneNumber: true } }),
+      transaction: () => prisma.transaction.findUnique({
+        where: { id },
+        select: { destination: true, recipientPhoneNumber: true, txHash: true, providerTransactionId: true },
+      }),
+      kyc: () => prisma.kycProfile.findUnique({
+        where: { id },
+        select: { providerReference: true, deniedReason: true },
+      }),
+    };
+    if (!queries[resource]) return sendError(res, 'Unsupported reveal resource', 400);
+    const fields = await queries[resource]();
+    if (!fields) return sendError(res, 'Record not found', 404);
+
+    await writeAuditLog({
+      actorType: 'admin',
+      actorId: req.admin?.role,
+      action: 'admin.sensitive.revealed',
+      entityType: resource,
+      entityId: id,
+      metadata: { fields: Object.keys(fields) },
+      req,
     });
-    sendSuccess(res, withIdAliases(logs));
+
+    return sendSuccess(res, {
+      resource,
+      id,
+      fields,
+      validUntil: new Date(Date.now() + 60_000).toISOString(),
+    }, 'Sensitive fields revealed for this response only');
   } catch (error) {
     next(error);
   }
+};
+
+const exportAuditLogs = async (req, res, next) => {
+  try {
+    const where = auditWhere(req.query);
+    const logs = await prisma.auditLog.findMany({
+      where,
+      orderBy: { createdAt: 'desc' },
+      take: MAX_EXPORT_ROWS,
+    });
+    await writeAuditLog({
+      actorType: 'administrator',
+      actorId: req.admin.id,
+      action: 'admin.audit.export',
+      entityType: 'AuditLog',
+      metadata: { filters: req.query, rows: logs.length, capped: logs.length >= MAX_EXPORT_ROWS },
+      req,
+    });
+    const csv = toCsv(logs, [
+      { header: 'id', accessor: 'id' },
+      { header: 'actorType', accessor: 'actorType' },
+      { header: 'actorId', accessor: 'actorId' },
+      { header: 'action', accessor: 'action' },
+      { header: 'entityType', accessor: 'entityType' },
+      { header: 'entityId', accessor: 'entityId' },
+      { header: 'ipAddress', accessor: 'ipAddress' },
+      { header: 'createdAt', accessor: (r) => r.createdAt?.toISOString?.() || r.createdAt },
+    ]);
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename="audit-logs-export.csv"');
+    return res.status(200).send(csv);
+  } catch (error) { return next(error); }
 };
 
 const getSystemHealth = async (_req, res, next) => {
@@ -157,7 +444,7 @@ const getSystemHealth = async (_req, res, next) => {
     sendSuccess(res, {
       api: 'ok',
       database: 'ok',
-      queues: process.env.REDIS_URL || process.env.UPSTASH_REDIS_URL ? 'redis-configured' : 'inline-dev-mode',
+      queues: process.env.REDIS_URL || process.env.UPSTASH_REDIS_URL ? 'redis-configured' : 'unavailable',
       settlementRail: 'stellar',
       custodyModel: 'direct',
       timestamp: new Date().toISOString(),
@@ -167,13 +454,430 @@ const getSystemHealth = async (_req, res, next) => {
   }
 };
 
+const refundTransaction = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const { reason, amount } = req.body;
+    const adminId = req.admin ? req.admin.id : 'system';
+
+    const { executeRefund } = require('../payment/payment.orchestrator');
+
+    const refund = await executeRefund({
+      transactionId: id,
+      reason,
+      amount,
+      adminId,
+    });
+
+    return sendSuccess(res, { refund }, 'Refund executed successfully');
+  } catch (error) {
+    next(error);
+  }
+};
+const getStuckPayments = async (req, res, next) => {
+  try {
+    const staleAgeMs = req.query.staleAgeMs ? Number(req.query.staleAgeMs) : undefined;
+    const maxTransactions = req.query.limit ? parseLimit(req.query.limit) : undefined;
+    const payments = await listStuckPayments({ prisma, staleAgeMs, maxTransactions });
+    return sendSuccess(res, payments);
+  } catch (error) {
+    next(error);
+  }
+};
+
+const actOnStuckPayment = (action) => async (req, res, next) => {
+  try {
+    const transaction = await operatorResolveStuckPayment({
+      prisma,
+      transactionId: req.params.id,
+      action,
+      reason: req.body?.reason,
+      adminId: req.admin?.id || 'system',
+    });
+    return sendSuccess(res, { transaction }, 'Stuck payment updated');
+  } catch (error) {
+    next(error);
+  }
+};
+
+const getLedgerDiscrepancies = async (req, res, next) => {
+  try {
+    const report = await listLedgerDiscrepancies({ prisma, maxEntries: req.query.limit ? parseLimit(req.query.limit) : undefined });
+    return sendSuccess(res, report);
+  } catch (error) {
+    next(error);
+  }
+};
+
+const getWalletSummary = async (req, res, next) => {
+  try {
+    const summary = await getWalletActivitySummary({
+      userId: req.query.userId,
+      phoneNumber: req.query.phone,
+      windowDays: req.query.windowDays,
+      requestingAdminId: req.admin?.id || 'system',
+    });
+    return sendSuccess(res, summary);
+  } catch (error) {
+    if (error.statusCode) return sendError(res, error.message, error.statusCode);
+    return next(error);
+  }
+};
+
+const recoverWallet = async (req, res, next) => {
+  try {
+    const result = await walletService.recoverWallet({
+      walletId: req.params.id,
+      adminId: req.admin?.id || 'system',
+    });
+    return sendSuccess(res, { wallet: result }, 'Wallet recovery initiated');
+  } catch (error) {
+    if (error.statusCode) return sendError(res, error.message, error.statusCode);
+    return next(error);
+  }
+};
+
+const getSecretRotationStatus = async (req, res, next) => {
+  try {
+    const status = await getRotationStatus();
+    return sendSuccess(res, status);
+  } catch (error) {
+    next(error);
+  }
+};
+
+const rotateSecret = async (req, res, next) => {
+  try {
+    const category = req.body?.category;
+    if (!category || !SECRET_CATEGORIES[category]) {
+      return sendError(res, `Invalid secret category. Supported: ${Object.keys(SECRET_CATEGORIES).join(', ')}`, 400);
+    }
+    const result = await performSecretRotation({
+      category,
+      newValue: req.body?.newValue,
+      rotatedBy: req.admin?.id || 'system',
+    });
+    return sendSuccess(res, result, 'Secret rotation completed', 201);
+  } catch (error) {
+    if (error.statusCode) return sendError(res, error.message, error.statusCode);
+    return next(error);
+  }
+};
+
+const verifyAuditLogs = async (req, res, next) => {
+  try {
+    const { verifyAuditLogIntegrity } = require('../common/audit.service');
+    const result = await verifyAuditLogIntegrity();
+
+    await writeAuditLog({
+      actorType: 'administrator',
+      actorId: req.admin.id,
+      action: 'admin.audit.verify',
+      entityType: 'System',
+      metadata: { valid: result.valid, errorCount: result.errors.length },
+      req,
+    });
+
+    if (!result.valid) {
+      return sendError(res, 'Audit log integrity verification failed', 409, { errors: result.errors });
+    }
+
+    return sendSuccess(res, { valid: true }, 'Audit log integrity verified successfully');
+  } catch (error) {
+    next(error);
+  }
+};
+
+// ── Issue #318: Workflow event ledger ────────────────────────────────────────
+
+const getWorkflowEvents = async (req, res, next) => {
+  try {
+    const limit = parseLimit(req.query.limit);
+    const result = await queryEvents({
+      eventType: req.query.eventType,
+      actorType: req.query.actorType,
+      actorId: req.query.actorId,
+      aggregateType: req.query.aggregateType,
+      from: req.query.from,
+      to: req.query.to,
+      limit,
+      after: req.query.after,
+    });
+    return sendSuccess(res, { items: result.items, nextCursor: result.nextCursor });
+  } catch (error) {
+    next(error);
+  }
+};
+
+const verifyEventChain = async (req, res, next) => {
+  try {
+    const result = await verifyEventChainService();
+    await writeAuditLog({
+      actorType: 'administrator',
+      actorId: req.admin.id,
+      action: 'admin.events.verify',
+      entityType: 'WorkflowEvent',
+      metadata: { valid: result.valid, errorCount: result.errors.length, total: result.total },
+      req,
+    });
+    if (!result.valid) {
+      return sendError(res, 'Event chain integrity verification failed', 409, { errors: result.errors });
+    }
+    return sendSuccess(res, { valid: true, total: result.total }, 'Event chain verified successfully');
+  } catch (error) {
+    next(error);
+  }
+};
+
+const exportWorkflowEvents = async (req, res, next) => {
+  try {
+    const csv = await exportWorkflowEventsCsv({
+      filters: req.query,
+      actingAdminId: req.admin.id,
+      req,
+    });
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename="workflow-events-export.csv"');
+    return res.status(200).send(csv);
+  } catch (error) {
+    next(error);
+  }
+};
+
+// ── Issue #329: Compliance evidence exports ──────────────────────────────────
+
+const getUserEvidencePackage = async (req, res, next) => {
+  try {
+    const pkg = await buildUserEvidencePackage({
+      userId: req.params.userId,
+      actingAdminId: req.admin.id,
+      req,
+    });
+    return sendSuccess(res, pkg);
+  } catch (error) {
+    if (error.statusCode) return sendError(res, error.message, error.statusCode);
+    next(error);
+  }
+};
+
+const downloadUserEvidencePackage = async (req, res, next) => {
+  try {
+    const pkg = await buildUserEvidencePackage({
+      userId: req.params.userId,
+      actingAdminId: req.admin.id,
+      req,
+    });
+    const filename = `evidence-${req.params.userId}-${Date.now()}.json`;
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    return res.status(200).send(JSON.stringify(pkg, null, 2));
+  } catch (error) {
+    if (error.statusCode) return sendError(res, error.message, error.statusCode);
+    next(error);
+  }
+};
+
+const exportKycEvidence = async (req, res, next) => {
+  try {
+    const csv = await exportKycEvidenceCsv({
+      filters: req.query,
+      actingAdminId: req.admin.id,
+      req,
+    });
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename="kyc-evidence-export.csv"');
+    return res.status(200).send(csv);
+  } catch (error) {
+    next(error);
+  }
+};
+
+const exportAccountStatusHistory = async (req, res, next) => {
+  try {
+    const csv = await exportAccountStatusHistoryCsv({
+      filters: req.query,
+      actingAdminId: req.admin.id,
+      req,
+    });
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename="account-status-export.csv"');
+    return res.status(200).send(csv);
+  } catch (error) {
+    next(error);
+  }
+};
+
+// ── Issue #330: Onboarding status (admin view) ───────────────────────────────
+
+const getUserOnboardingStatus = async (req, res, next) => {
+  try {
+    const status = await getOnboardingStatus(req.params.userId);
+    return sendSuccess(res, status);
+  } catch (error) {
+    if (error.statusCode) return sendError(res, error.message, error.statusCode);
+    next(error);
+  }
+};
+
+// ── Issue #332: Account deactivation / reactivation ─────────────────────────
+
+const deactivateUserAccount = async (req, res, next) => {
+  try {
+    const { reason, notes, force } = req.body || {};
+
+    if (!reason) {
+      return sendError(
+        res,
+        `Deactivation reason is required. Valid reasons: ${[...Object.values(DEACTIVATION_REASONS)].join(', ')}`,
+        400,
+      );
+    }
+
+    const { user, record } = await deactivateAccount({
+      userId: req.params.userId,
+      reason,
+      notes,
+      adminId: req.admin.id,
+      force: Boolean(force),
+      req,
+    });
+
+    return sendSuccess(
+      res,
+      { userId: user.id, deactivatedAt: user.deactivatedAt, reason, recordId: record.id },
+      'Account deactivated',
+    );
+  } catch (error) {
+    if (error.statusCode) return sendError(res, error.message, error.statusCode);
+    next(error);
+  }
+};
+
+const reactivateUserAccount = async (req, res, next) => {
+  try {
+    const { notes, approvedBy } = req.body || {};
+
+    const { user, record } = await reactivateAccount({
+      userId: req.params.userId,
+      notes,
+      adminId: req.admin.id,
+      approvedBy,
+      req,
+    });
+
+    return sendSuccess(
+      res,
+      { userId: user.id, deactivatedAt: null, recordId: record.id, approvedBy: record.approvedBy },
+      'Account reactivated',
+    );
+  } catch (error) {
+    if (error.statusCode) return sendError(res, error.message, error.statusCode);
+    next(error);
+  }
+};
+
+const getUserAccountStatusHistory = async (req, res, next) => {
+  try {
+    const history = await getAccountStatusHistory(req.params.userId);
+    return sendSuccess(res, history);
+  } catch (error) {
+    next(error);
+  }
+};
+
+const { buildStatementData, exportStatementCsv, exportStatementPdf } = require('../wallet/statement.service');
+
+const getUserStatement = async (req, res, next) => {
+  try {
+    const { startDate, endDate, asset, format = 'json' } = req.query;
+    const userId = req.params.userId;
+
+    if (format === 'csv') {
+      const { csv, statementId } = await exportStatementCsv({
+        userId,
+        startDate,
+        endDate,
+        asset,
+        actingActor: { type: 'administrator', id: req.admin.id },
+        req,
+      });
+      res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+      res.setHeader('Content-Disposition', `attachment; filename="statement-${userId}-${statementId}.csv"`);
+      return res.status(200).send(csv);
+    }
+
+    if (format === 'pdf') {
+      const { pdfBuffer, statementId } = await exportStatementPdf({
+        userId,
+        startDate,
+        endDate,
+        asset,
+        actingActor: { type: 'administrator', id: req.admin.id },
+        req,
+      });
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', `attachment; filename="statement-${userId}-${statementId}.pdf"`);
+      return res.status(200).send(pdfBuffer);
+    }
+
+    const statement = await buildStatementData({
+      userId,
+      startDate,
+      endDate,
+      asset,
+    });
+
+    return sendSuccess(res, statement, 'Customer account statement generated');
+  } catch (error) {
+    if (error.statusCode) return sendError(res, error.message, error.statusCode);
+    next(error);
+  }
+};
+
 module.exports = {
   login,
+  acceptInvite,
+  logout,
+  changePassword,
+  me,
+  listAdministrators,
+  inviteAdministrator,
+  updateAdministratorRole,
+  disableAdministrator,
+  resetCredential,
+  revokeAdministratorSessions,
   getStats,
   getUsers,
   getWallets,
+  getTransaction,
   getTransactions,
   getKycProfiles,
   getAuditLogs,
+  exportKyc,
+  exportAuditLogs,
   getSystemHealth,
+  refundTransaction,
+  getStuckPayments,
+  retryStuckPayment: actOnStuckPayment('retry'),
+  markStuckPaymentResolved: actOnStuckPayment('mark_resolved'),
+  escalateStuckPayment: actOnStuckPayment('escalate'),
+  getLedgerDiscrepancies,
+  verifyAuditLogs,
+  getWalletSummary,
+  recoverWallet,
+  getSecretRotationStatus,
+  rotateSecret,
+  revealSensitiveFields,
+  getWorkflowEvents,
+  verifyEventChain,
+  exportWorkflowEvents,
+  getUserEvidencePackage,
+  downloadUserEvidencePackage,
+  exportKycEvidence,
+  exportAccountStatusHistory,
+  getUserOnboardingStatus,
+  deactivateUserAccount,
+  reactivateUserAccount,
+  getUserAccountStatusHistory,
+  getUserStatement,
 };

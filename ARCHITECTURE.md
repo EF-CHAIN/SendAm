@@ -45,17 +45,26 @@ in one adapter, `apps/api/src/wallet/stellar.adapter.js`:
 {
   chain,                                  // 'stellar'
   createWallet(),                         // -> { publicKey, secretKey }
-  getBalance(publicKey),                  // -> native-asset balance
+  getBalance(publicKey),                  // -> native XLM balance
+  getBalances(publicKey),                 // -> [{ asset, value }] for XLM + USDC
   submitPayment({ secretKey, destination, amount, asset }),
-  resolveAsset(assetCode),
+  establishTrustline({ secretKey, assetCode }),  // changeTrust — built, idempotent
+  resolveAsset(assetCode),               // 'XLM' or 'USDC' -> SDK Asset
   validateAddress(address),
-  fundTestnetAccount(publicKey),          // testnet-only convenience
+  fundTestnetAccount(publicKey),         // testnet-only convenience
 }
 ```
 
 `wallet.service.js` is the only module that talks to the adapter; product
 code never imports the Stellar SDK directly. Destinations are Stellar
 `G...` StrKey addresses, validated before any payment is prepared.
+
+The adapter supports XLM (native) and USDC: `resolveAsset('USDC')` maps to
+the issuer configured in `STELLAR_USDC_ISSUER`, `getBalances()` returns per-asset
+rows, and `establishTrustline()` opens the `changeTrust` operation.
+`wallet.service.js` automatically opens the USDC trustline at wallet creation so
+wallets can receive USDC from day one. `resolveAsset()` is the seam for any
+further anchor-issued assets.
 
 An earlier iteration ran a second chain (Lisk) behind a chain-registry
 abstraction, with rail selection deciding which network settled a payment.

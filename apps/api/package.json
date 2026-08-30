@@ -5,16 +5,22 @@
   "main": "src/server.js",
   "scripts": {
     "start": "node src/server.js",
+    "start:worker": "node src/worker.js",
     "dev": "nodemon src/server.js",
+    "dev:worker": "nodemon src/worker.js",
     "lint": "eslint .",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "prisma:deploy": "prisma migrate deploy",
-    "test": "node --test"
+    "db:validate": "node scripts/validate-production-db.js",
+    "db:provision": "prisma migrate deploy && node scripts/validate-production-db.js",
+    "whatsapp:webhook:configure": "node scripts/configure-whatsapp-webhook.js",
+    "test": "node --test",
+    "db:verify-restore": "node scripts/verify-restore-drill.js"
   },
   "dependencies": {
     "@prisma/adapter-pg": "^7.8.0",
-    "@prisma/client": "^7.8.0",
+    "@prisma/client": "^7.10.0",
     "@stellar/stellar-sdk": "^12.0.0",
     "axios": "^1.6.8",
     "bullmq": "^5.79.3",
@@ -24,6 +30,7 @@
     "express-rate-limit": "^7.2.0",
     "helmet": "^7.1.0",
     "ioredis": "^5.11.1",
+    "libphonenumber-js": "^1.11.4",
     "morgan": "^1.10.0",
     "pg": "^8.22.0"
   },
@@ -32,6 +39,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.28.0",
+    "effect": "^3.20.0",
     "eslint": "^9.28.0",
     "globals": "^16.0.0",
     "nodemon": "^3.1.0",

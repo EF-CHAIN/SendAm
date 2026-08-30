@@ -1,17 +1,62 @@
-// Lightweight request validators shared across surfaces.
-// Stellar address validation lives in stellar.service (StrKey-based) so this
-// module stays free of SDK concerns; import isValidPublicKey from there.
+const { parsePhoneNumberWithError } = require('libphonenumber-js');
 
-const isValidPhoneNumber = (phone) => {
-  return typeof phone === 'string' && phone.trim().length > 5;
+const DEFAULT_REGION = process.env.DEFAULT_PHONE_REGION || 'NG';
+
+const canonicalizePhoneNumber = (phone, defaultRegion = DEFAULT_REGION) => {
+  if (typeof phone !== 'string' || !phone.trim()) {
+    throw new Error('Invalid phone number: Must be a non-empty string');
+  }
+
+  const raw = phone.trim();
+
+  // Try parsing raw directly first
+  try {
+    const parsed = parsePhoneNumberWithError(raw, defaultRegion);
+    if (parsed && parsed.isValid()) {
+      return parsed.number;
+    }
+  } catch (_err) {
+    // Fall through to retry with leading + if missing
+  }
+
+  // If missing leading + (e.g. "2348000000001"), retry with leading +
+  if (!raw.startsWith('+')) {
+    try {
+      const parsed = parsePhoneNumberWithError(`+${raw}`, defaultRegion);
+      if (parsed && parsed.isValid()) {
+        return parsed.number;
+      }
+    } catch (_err) {
+      // Fall through
+    }
+  }
+
+  throw new Error(`Invalid or unsupported phone number: "${phone}"`);
 };
 
-const isValidAmount = (amount) => {
-  const parsed = Number(amount);
-  return Number.isFinite(parsed) && parsed > 0;
+const isValidPhoneNumber = (phone, defaultRegion = DEFAULT_REGION) => {
+  try {
+    canonicalizePhoneNumber(phone, defaultRegion);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+const { assertValidAmount } = require('./money');
+
+const isValidAmount = (amount, asset = 'XLM') => {
+  try {
+    assertValidAmount(amount, asset);
+    return true;
+  } catch (_error) {
+    return false;
+  }
 };
 
 module.exports = {
+  canonicalizePhoneNumber,
   isValidPhoneNumber,
   isValidAmount,
 };
+

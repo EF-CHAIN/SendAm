@@ -1,0 +1,48 @@
+name: Scheduled Provider Contract Tests
+
+on:
+  schedule:
+    # Run daily at 06:00 UTC
+    - cron: '0 6 * * *'
+  workflow_dispatch:
+
+jobs:
+  provider-contract-tests:
+    name: Credentialed provider contract test suite
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - run: npm ci
+
+      - name: Run Credentialed Provider Contract Tests
+        working-directory: apps/api
+        env:
+          REQUIRE_CONTRACT_SECRETS: 'true'
+          SMILE_ID_API_KEY: ${{ secrets.SMILE_ID_API_KEY }}
+          SMILE_ID_PARTNER_ID: ${{ secrets.SMILE_ID_PARTNER_ID }}
+          EXCHANGE_RATE_API_KEY: ${{ secrets.EXCHANGE_RATE_API_KEY }}
+          WHATSAPP_APP_SECRET: ${{ secrets.WHATSAPP_APP_SECRET }}
+        run: |
+          node --test test/contract/*.test.js > contract_test_output.log 2>&1 || {
+            cat contract_test_output.log
+            exit 1
+          }
+          cat contract_test_output.log
+
+      - name: Publish Redacted Result Summary
+        if: always()
+        run: |
+          echo "## 🛡️ Credentialed Provider Contract Test Results" >> $GITHUB_STEP_SUMMARY
+          echo "Scheduled contract verification for Smile ID, ExchangeRate pricing, Stellar testnet, and Meta webhook." >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          # Redact any secrets or PII before writing to step summary
+          cat apps/api/contract_test_output.log | \
+            sed -E 's/(api[_-]?key|secret|token|password)[=:]["'\''']?[^"'\'' \t&]+/REDACTED/g' | \
+            sed -E 's/Bearer [A-Za-z0-9._-]+/Bearer REDACTED/g' >> $GITHUB_STEP_SUMMARY || true
+          echo '```' >> $GITHUB_STEP_SUMMARY

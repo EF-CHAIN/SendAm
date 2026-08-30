@@ -23,4 +23,10 @@ export default defineConfig([
     files: ['vite.config.js'],
     languageOptions: { globals: globals.node },
   },
+  {
+    // Tests run under Vitest/jsdom (browser globals) but some also touch
+    // Node APIs directly (e.g. process.cwd() to resolve a fixture path).
+    files: ['**/*.test.{js,jsx}', 'src/test/**/*.js'],
+    languageOptions: { globals: { ...globals.browser, ...globals.node } },
+  },
 ])

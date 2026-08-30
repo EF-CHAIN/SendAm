@@ -30,11 +30,59 @@ model User {
   voiceCommands VoiceCommand[]
   notifications Notification[]
   quotes        Quote[]
+  restSessions  RestSession[]
+  supportCases  SupportCase[]
+
+  privacyRequests PrivacyRequest[]
+  legalHolds     LegalHold[]
+  anonymizedAt   DateTime?
+  deactivatedAt  DateTime?   // set when account is deactivated (#332)
+  deactivationReason String? // last deactivation reason code
+
+  accountStatusRecords AccountStatusRecord[]
+  messagingConsentRecords MessagingConsentRecord[]
+
+  @@index([anonymizedAt])
+  @@index([createdAt, id])
+  @@index([deactivatedAt])
+}
+
+model Sep10Challenge {
+  id            String    @id @default(cuid())
+  account       String
+  challengeHash String    @unique
+  expiresAt     DateTime
+  consumedAt    DateTime?
+  createdAt     DateTime  @default(now())
+
+  @@index([account, createdAt])
+  @@index([expiresAt])
+}
+
+model RestSession {
+  id         String    @id @default(cuid())
+  userId     String
+  account    String
+  tokenHash  String    @unique
+  expiresAt  DateTime
+  revokedAt  DateTime?
+  createdAt  DateTime  @default(now())
+  lastUsedAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, expiresAt])
+  @@index([expiresAt])
 }
 
 // One row per user per chain — direct custody. `encryptedSecretKey` holds
 // the chain's private key, AES-256-GCM encrypted (see crypto.service.js).
 // Never store or return the plaintext secret key outside wallet.service.js.
+//
+// `paymentCursor` is the Horizon paging token advanced by the deposit poller
+// (jobs/deposits.jobs.js). A null value means the wallet has never been
+// polled; the first poll initialises it to the latest cursor without
+// notifying so old history is never replayed.
 model Wallet {
   id                 String   @id @default(cuid())
   userId             String
@@ -42,24 +90,50 @@ model Wallet {
   phoneNumber        String?
   publicKey          String?
   encryptedSecretKey String?
+  keyVersion         String?  @default("v1")
+  paymentCursor      String?
   funded             Boolean  @default(false)
+  fundingState       String   @default("pending")
+  fundingAttempts    Int      @default(0)
+  fundingError       String?
+  fundingUpdatedAt   DateTime @default(now())
+  trustlineState     String   @default("pending")
+  trustlineAttempts  Int      @default(0)
+  trustlineError     String?
+  trustlineUpdatedAt DateTime @default(now())
   network            String   @default("testnet")
+  // How the `network` value above came to be. Wallets created after #283
+  // record the configured network explicitly and are "verified". Rows that
+  // predate that change inherited the column default rather than being told
+  // which network they belong to, so they are migrated as "assumed" and are
+  // refused for mainnet operations until an operator verifies them.
+  networkProvenance  String   @default("verified")
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
 
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Restrict)
 
-  @@unique([userId, chain])
+  // Network is part of wallet identity: the same user may hold one wallet per
+  // chain per network, and testnet material can never satisfy a mainnet lookup.
+  @@unique([userId, chain, network])
   @@index([phoneNumber])
+  @@index([network, chain])
+  @@index([chain, createdAt])
+  @@index([createdAt, id])
+  @@index([fundingState, fundingUpdatedAt])
+  @@index([trustlineState, trustlineUpdatedAt])
 }
 
 model Transaction {
   id                    String   @id @default(cuid())
   userId                String
+  idempotencyKey        String?  @unique
   type                  String
+  /// Canonical decimal string validated by src/utils/money.js; never serialize monetary values as floats.
   amount                String
   asset                 String   @default("USDC")
   fiatCurrency          String?
+  /// Canonical decimal string for configured fiat currencies.
   fiatAmount            String?
   rail                  String   @default("unknown")
   routeType             String   @default("unknown")
@@ -74,12 +148,118 @@ model Transaction {
   createdAt             DateTime @default(now())
   updatedAt             DateTime @updatedAt
 
-  user  User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user  User   @relation(fields: [userId], references: [id], onDelete: Restrict)
   quote Quote? @relation(fields: [quoteId], references: [id])
+  idempotencyRequest PaymentIdempotency?
+  confirmation PaymentConfirmation?
 
   @@index([userId, createdAt])
   @@index([status])
   @@index([rail])
+  @@index([asset, createdAt])
+  @@index([status, createdAt])
+  @@index([createdAt, id])
+  @@index([txHash])
+  @@index([providerTransactionId])
+}
+
+model LedgerAccount {
+  id        String   @id @default(cuid())
+  key       String   @unique
+  type      String
+  asset     String
+  userId    String?
+  createdAt DateTime @default(now())
+
+  postings LedgerPosting[]
+
+  @@index([type, asset])
+  @@index([userId])
+}
+
+model JournalEntry {
+  id            String   @id @default(cuid())
+  eventType     String
+  transactionId String?
+  externalRef   String?
+  metadata      Json     @default("{}")
+  createdAt     DateTime @default(now())
+
+  transaction Transaction?    @relation(fields: [transactionId], references: [id], onDelete: SetNull)
+  postings    LedgerPosting[]
+
+  @@index([eventType, createdAt])
+  @@index([transactionId])
+  @@index([externalRef])
+}
+
+model LedgerPosting {
+  id             String   @id @default(cuid())
+  journalEntryId String
+  accountId      String
+  asset           String
+  /// Signed canonical decimal string. The sum of postings per journal entry and asset must be zero.
+  amount          String
+  createdAt       DateTime @default(now())
+
+  journalEntry JournalEntry  @relation(fields: [journalEntryId], references: [id], onDelete: Restrict)
+  account      LedgerAccount @relation(fields: [accountId], references: [id], onDelete: Restrict)
+
+  @@index([journalEntryId])
+  @@index([accountId])
+  @@index([asset, createdAt])
+}
+
+model PaymentIdempotency {
+  id             String   @id @default(cuid())
+  userId         String
+  operation      String
+  key            String
+  fingerprint    String
+  state          String   @default("processing")
+  response       Json?
+  reservedTransactionId String   @unique
+  transactionId  String?  @unique
+  leaseExpiresAt DateTime
+  expiresAt      DateTime
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  transaction Transaction? @relation(fields: [transactionId], references: [id], onDelete: SetNull)
+
+  @@unique([userId, operation, key])
+  @@index([expiresAt])
+  @@index([state, leaseExpiresAt])
+}
+
+model PaymentConfirmation {
+  id             String   @id @default(cuid())
+  userId         String
+  nonce          String   @unique
+  reference      String
+  version        Int
+  summaryHash    String
+  amount         String
+  asset          String
+  destination    String
+  recipientLabel String?
+  routeType      String
+  state          String   @default("pending")
+  expiresAt      DateTime
+  authorizedAt   DateTime?
+  cancelledAt    DateTime?
+  transactionId  String?  @unique
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  transaction Transaction? @relation(fields: [transactionId], references: [id], onDelete: SetNull)
+
+  @@unique([userId, reference])
+  @@unique([userId, version])
+  @@index([userId, state, createdAt])
+  @@index([expiresAt])
 }
 
 model Contact {
@@ -93,7 +273,7 @@ model Contact {
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
-  owner User @relation("ContactOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  owner User @relation("ContactOwner", fields: [ownerId], references: [id], onDelete: Restrict)
 
   @@unique([ownerId, phoneNumber])
 }
@@ -107,7 +287,7 @@ model Alias {
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Restrict)
 
   @@unique([userId, alias])
 }
@@ -121,14 +301,80 @@ model KycProfile {
   status            String    @default("not_started")
   country           String?
   riskScore         Int       @default(0)
+  sanctionsStatus   String    @default("not_screened")
+  sanctionsScreenedAt DateTime?
+  custodyStatus     String    @default("not_reviewed")
+  custodyReviewedAt DateTime?
+  deniedReason      String?
   lastScreenedAt    DateTime?
   metadata          Json      @default("{}")
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
 
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Restrict)
 
   @@index([status])
+  @@index([sanctionsStatus])
+  @@index([custodyStatus])
+  @@index([status, updatedAt, id])
+  @@index([updatedAt, id])
+}
+
+// Auditable sanctions/PEP screening results per subject (customer, beneficial owner, recipient)
+// Links to KycProfile for traceability and periodic re-screening workflows.
+model SanctionsScreeningResult {
+  id            String   @id @default(cuid())
+  profileId     String
+  subjectId     String   // e.g., "customer:userId", "recipient:phoneNumber"
+  subjectType   String   // "customer" | "beneficial_owner" | "recipient"
+  provider      String   // screening provider name (e.g., "static", "complyadvantage")
+  listVersion   String   // provider list version/date
+  status        String   // "cleared" | "review" | "blocked" | "error"
+  reason        String   // human-readable reason for the status
+  matches       Json     @default("[]") // structured match evidence from provider
+  screenedAt    DateTime @default(now())
+  decisionOwner String?  // who resolved a "review" case (null = pending)
+  resolvedAt    DateTime?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  profile KycProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  @@index([profileId, screenedAt])
+  @@index([subjectId, screenedAt])
+  @@index([status, screenedAt])
+  @@index([provider, listVersion])
+}
+
+// Durable inbox for idempotent KYC callback processing. The unique provider
+// event key makes provider retries safe across processes and deployments.
+model KycWebhookEvent {
+  id              String   @id @default(cuid())
+  provider        String
+  providerEventId String
+  profileId       String?
+  resultCode      String?
+  receivedAt      DateTime @default(now())
+
+  @@unique([provider, providerEventId])
+  @@index([profileId])
+  @@index([receivedAt])
+}
+
+// Maker-checker approval record for high-impact KYC overrides.
+model KycApproval {
+  id              String   @id @default(cuid())
+  profileId       String
+  proposedChanges Json
+  requestedBy     String
+  status          String   @default("pending") // pending | approved | rejected | superseded
+  approvedBy      String?
+  decidedAt       DateTime?
+  createdAt       DateTime @default(now())
+
+  @@index([profileId])
+  @@index([status])
+  @@index([requestedBy])
 }
 
 model VoiceCommand {
@@ -145,7 +391,7 @@ model VoiceCommand {
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
 
-  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+  user User? @relation(fields: [userId], references: [id], onDelete: Restrict)
 
   @@index([phoneNumber])
   @@index([whatsappMessageId])
@@ -163,29 +409,153 @@ model AuditLog {
   metadata   Json     @default("{}")
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
+  previousHash String? @unique
+  hash         String? @unique
 
   @@index([actorType])
   @@index([action])
   @@index([createdAt])
+  @@index([createdAt, id])
+  @@index([action, createdAt])
+  @@index([actorType, createdAt])
+  @@index([entityType, createdAt])
+  @@index([entityId, createdAt])
+  @@index([actorId, createdAt])
 }
 
+model AdminUser {
+  id                String    @id @default(cuid())
+  email             String    @unique
+  name              String
+  passwordHash      String
+  roleId            String
+  partnerId         String?   // Tenant/partner isolation for multi-tenant deployments
+  disabledAt        DateTime?
+  // Set when an administrator was provisioned from the legacy shared
+  // ADMIN_PASSWORD bootstrap (or any other temporary credential). The account
+  // is blocked from admin work until the operator rotates to a private password
+  // via POST /api/admin/password. This is what makes "shared credentials
+  // cannot authenticate after migration" hold for the bootstrap admin too.
+  mustChangePassword Boolean   @default(false)
+  passwordChangedAt DateTime   @default(now())
+  lastLoginAt       DateTime?
+  createdAt         DateTime   @default(now())
+  updatedAt         DateTime   @updatedAt
+
+  role    AdminRole    @relation(fields: [roleId], references: [id])
+  partner Partner?     @relation(fields: [partnerId], references: [id], onDelete: SetNull)
+  sessions    AdminSession[]
+  invitations AdminInvitation[] @relation("InvitationCreator")
+
+  @@index([roleId])
+  @@index([disabledAt])
+  @@index([partnerId])
+}
+
+model AdminSession {
+  id         String    @id @default(cuid())
+  adminId    String
+  tokenHash  String    @unique
+  expiresAt  DateTime
+  revokedAt  DateTime?
+  lastUsedAt DateTime  @default(now())
+  createdAt  DateTime  @default(now())
+
+  admin AdminUser @relation(fields: [adminId], references: [id], onDelete: Cascade)
+
+  @@index([adminId, expiresAt])
+  @@index([expiresAt])
+}
+
+model AdminInvitation {
+  id          String    @id @default(cuid())
+  email       String
+  name        String
+  roleId      String
+  tokenHash   String    @unique
+  createdById String
+  expiresAt   DateTime
+  acceptedAt  DateTime?
+  revokedAt   DateTime?
+  createdAt   DateTime  @default(now())
+
+  role      AdminRole @relation(fields: [roleId], references: [id])
+  createdBy AdminUser @relation("InvitationCreator", fields: [createdById], references: [id])
+
+  @@index([email, expiresAt])
+}
+
+// Outbound message + delivery lifecycle. `status` walks queued -> sent ->
+// delivered -> read, or terminates at failed. `providerMessageId` is Meta's
+// wamid, set once the Cloud API accepts the send — it is how later status
+// webhooks (see WhatsappStatusEvent) are correlated back to this row.
+// `referenceType`/`referenceId` link a notification to the domain object it
+// reports on (e.g. "transaction"/<Transaction.id>, "voiceCommand"/<id>) so
+// financial messages can be traced from the internal event that triggered
+// them through to the provider's delivery state.
 model Notification {
-  id                String   @id @default(cuid())
+  id                String    @id @default(cuid())
   userId            String?
-  channel           String   @default("whatsapp")
+  channel           String    @default("whatsapp")
   type              String
   recipient         String
   body              String
-  status            String   @default("queued")
+  status            String    @default("queued")
   providerMessageId String?
   error             String?
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
+  referenceType     String?
+  referenceId       String?
+  sentAt            DateTime?
+  deliveredAt       DateTime?
+  readAt            DateTime?
+  failedAt          DateTime?
+  lastStatusAt      DateTime?
+  failureCode       String?
+  failureMessage    String?
+  retryable         Boolean   @default(false)
+  retryCount        Int       @default(0)
+  // Outbox fields (#286). The row is written before the provider is called,
+  // so a crash between "Meta accepted" and "we recorded it" still leaves a
+  // durable record to reconcile against.
+  //
+  // idempotencyKey is stable for a given logical send, so a retry re-uses the
+  // existing row instead of creating a second one and sending twice.
+  idempotencyKey    String?   @unique
+  sendAttempts      Int       @default(0)
+  claimedAt         DateTime?
+  lastAttemptAt     DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
 
-  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+  user User? @relation(fields: [userId], references: [id], onDelete: Restrict)
 
+  @@index([status, claimedAt])
   @@index([userId])
   @@index([status])
+  @@index([providerMessageId])
+  @@index([referenceType, referenceId])
+}
+
+// Durable, append-only audit trail of every WhatsApp status callback Meta
+// delivers (sent/delivered/read/failed). The unique key makes exact-duplicate
+// redeliveries a no-op (Prisma P2002), the same idempotency pattern
+// KycWebhookEvent and ProcessedMessage use elsewhere in this schema. Keeping
+// every event (not just the latest) lets us detect out-of-order delivery by
+// comparing `statusTimestamp`s instead of trusting arrival order.
+model WhatsappStatusEvent {
+  id                String   @id @default(cuid())
+  providerMessageId String
+  status            String
+  statusTimestamp   DateTime
+  recipientId       String?
+  errorCode         String?
+  errorTitle        String?
+  errorMessage      String?
+  receivedAt        DateTime @default(now())
+
+  @@unique([providerMessageId, status, statusTimestamp])
+  @@index([providerMessageId])
+  @@index([receivedAt])
 }
 
 model Quote {
@@ -193,22 +563,42 @@ model Quote {
   userId         String?
   sourceCurrency String
   targetCurrency String
+  /// Canonical decimal string in sourceCurrency precision.
   sourceAmount   String
+  /// Canonical decimal string in targetCurrency precision.
   targetAmount   String?
-  rate           Float?
+  /// Decimal string exchange rate; do not use Float for quote math.
+  rate           String?
+  sourceTimestamp DateTime?
+  spread         String   @default("0")
+  feePolicyVersion String @default("standard-v1")
+  /// Canonical decimal string in sourceCurrency precision.
   fee            String?
   provider       String?
+  providerResponse Json?
   route          String?
+  /// Lifecycle state of the quote. `active` quotes can be submitted; `consumed`
+  /// quotes have already settled a payment; `expired`/`replaced`/`orphaned`
+  /// quotes must be rejected at execution. See pricing.service.js.
+  status         String   @default("active")
+  /// Client-supplied idempotency key. Reusing it returns the existing active
+  /// quote instead of creating a duplicate on retry.
+  idempotencyKey String?  @unique
+  /// Set when this quote supersedes an earlier one via requote().
+  replacedById   String?
+  replacedBy     Quote?   @relation("QuoteReplacement", fields: [replacedById], references: [id])
+  replaces       Quote[]  @relation("QuoteReplacement")
   expiresAt      DateTime
   metadata       Json     @default("{}")
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
-  user         User?         @relation(fields: [userId], references: [id], onDelete: SetNull)
+  user         User?         @relation(fields: [userId], references: [id], onDelete: Restrict)
   transactions Transaction[]
 
   @@index([userId])
   @@index([expiresAt])
+  @@index([status])
 }
 
 model AdminRole {
@@ -218,12 +608,33 @@ model AdminRole {
   description String?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+  users       AdminUser[]
+  invitations AdminInvitation[]
 }
 
 model ProcessedMessage {
-  id        String   @id @default(cuid())
-  messageId String   @unique
-  createdAt DateTime @default(now())
+  id        String    @id @default(cuid())
+  messageId String    @unique
+  status    String    @default("completed")
+  lastError String?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @default(now()) @updatedAt
+
+  @@index([status, updatedAt])
+}
+
+model SecretRotation {
+  id          String    @id @default(cuid())
+  category    String
+  hash        String
+  rotatedBy   String
+  rotatedAt   DateTime  @default(now())
+  expiresAt   DateTime
+  createdAt   DateTime  @default(now())
+
+  @@index([category, rotatedAt])
+  @@index([expiresAt])
+  @@index([category, expiresAt])
 }
 
 model RateLimitHit {
@@ -235,6 +646,24 @@ model RateLimitHit {
   updatedAt DateTime @updatedAt
 }
 
+model UserErasure {
+  id          String   @id @default(cuid())
+  userId      String
+  actorType   String   @default("system")
+  actorId     String?
+  reason      String
+  jurisdiction String? 
+  legalHold   Boolean  @default(false)
+  status      String   @default("completed")
+  executedAt  DateTime @default(now())
+  createdAt   DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@index([userId, executedAt])
+  @@index([status])
+}
+
 model SimMessage {
   id          String   @id @default(cuid())
   phoneNumber String
@@ -243,4 +672,281 @@ model SimMessage {
   createdAt   DateTime @default(now())
 
   @@index([phoneNumber, createdAt])
+}
+
+// Privacy request (export or erasure) raised by a customer or an operator.
+// Authorized export is fulfilled directly; erasure requires approval and is
+// blocked while a legal hold is active. `result` holds a redacted summary
+// (counts + provider task statuses) — never the customer's personal data.
+model PrivacyRequest {
+  id            String   @id @default(cuid())
+  userId        String
+  type          String   // 'export' | 'erasure'
+  status        String   @default("pending") // pending|approved|denied|in_progress|completed|failed
+  reason        String?
+  requestedBy   String?  // admin id, or 'self' for customer-initiated
+  approvedBy    String?
+  approvedAt    DateTime?
+  completedAt   DateTime?
+  result        Json?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  user  User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tasks PrivacyProviderTask[]
+
+  @@index([userId, status])
+  @@index([status])
+  @@index([type])
+}
+
+// Operator-asserted legal hold that suspends erasure for a user. Indefinite
+// unless `expiresAt` is set. Used to satisfy AML/retention obligations.
+model LegalHold {
+  id         String    @id @default(cuid())
+  userId     String
+  reason     String
+  heldBy     String
+  expiresAt  DateTime? // null = indefinite
+  createdAt  DateTime  @default(now())
+  releasedAt DateTime?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+// One row per external provider a request must propagate to (KYC, messaging,
+// voice/media, monitoring). Failures are recorded with `lastError` and can be
+// retried via the admin retry endpoint.
+model PrivacyProviderTask {
+  id              String   @id @default(cuid())
+  privacyRequestId String
+  provider        String   // smileid | whatsapp | voice | monitoring
+  status          String   @default("pending") // pending | success | skipped | failed
+  attempts        Int      @default(0)
+  lastError       String?
+  startedAt       DateTime?
+  completedAt     DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  privacyRequest PrivacyRequest @relation(fields: [privacyRequestId], references: [id], onDelete: Cascade)
+
+  @@index([privacyRequestId, status])
+  @@index([provider])
+}
+
+// Durable deposit outbox for idempotent deposit alert notifications (#158).
+// Atomic transaction writes this record alongside paymentCursor in Wallet.
+model DepositOutboxRecord {
+  id                String    @id @default(cuid())
+  stellarPaymentId  String    @unique
+  walletId          String
+  userId            String?
+  phoneNumber       String
+  amount            String
+  asset             String
+  fiatRate          Float?
+  message           String
+  status            String    @default("pending") // pending | delivered | failed | dead_letter
+  attempts          Int       @default(0)
+  maxAttempts       Int       @default(5)
+  lastError         String?
+  providerMessageId String?
+  deliveredAt       DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  @@index([status, createdAt])
+  @@index([walletId])
+  @@index([stellarPaymentId])
+}
+
+// Reconciliation checkpoint for transaction state alignment across wallet, ledger, and database.
+// Tracks mismatches and reconciliation jobs for operator review and manual correction.
+model ReconciliationCheckpoint {
+  id                String   @id @default(cuid())
+  transactionId     String
+  walletId          String?
+  checkpointType    String   // 'wallet_ledger' | 'ledger_database' | 'full_cycle'
+  status            String   @default("pending") // pending | in_progress | success | mismatch | failed
+  walletBalance     String?  // Decimal string of wallet balance at checkpoint
+  ledgerBalance     String?  // Decimal string of ledger balance at checkpoint
+  databaseBalance   String?  // Decimal string of database balance at checkpoint
+  mismatchDetails   Json     @default("{}")
+  evidence          Json     @default("{}") // Checkpoint evidence and audit trail
+  resolvedBy        String?  // Admin ID who resolved the mismatch
+  resolvedAt        DateTime?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  transaction Transaction @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+
+  @@index([transactionId, checkpointType])
+  @@index([status, createdAt])
+  @@index([walletId])
+}
+
+// Support case for tracking disputed payments, KYC issues, and error investigations.
+// Provides structured case lifecycle and full audit trail of operator actions.
+model SupportCase {
+  id                 String   @id @default(cuid())
+  caseNumber         String   @unique // Human-readable case ID (e.g., CASE-001, auto-generated)
+  userId             String?
+  status             String   @default("open") // open | in_progress | resolved | closed
+  priority           String   @default("normal") // low | normal | high | critical
+  category           String   // payment_dispute | kyc_issue | error_investigation | account_access | other
+  title              String
+  description        String
+  transactionId      String?
+  walletId           String?
+  linkedCases        String[] @default([])  // Array of related case IDs
+  assignedTo         String?  // Admin user ID
+  resolution         String?
+  resolvedBy         String?  // Admin user ID
+  resolvedAt         DateTime?
+  closedAt           DateTime?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  user      User?                @relation(fields: [userId], references: [id], onDelete: SetNull)
+  comments  SupportCaseComment[]
+  snapshots SupportCaseSnapshot[]
+
+  @@index([userId, status])
+  @@index([status, createdAt])
+  @@index([priority, status])
+  @@index([assignedTo])
+}
+
+// Immutable audit trail for support case actions and decisions.
+model SupportCaseComment {
+  id           String   @id @default(cuid())
+  caseId       String
+  authorType   String   // 'admin' | 'system' | 'customer'
+  authorId     String?
+  actionType   String   // 'comment' | 'status_change' | 'assignment' | 'escalation'
+  body         String?
+  metadata     Json     @default("{}")
+  createdAt    DateTime @default(now())
+
+  case SupportCase @relation(fields: [caseId], references: [id], onDelete: Cascade)
+
+  @@index([caseId, createdAt])
+  @@index([authorType])
+}
+
+// Point-in-time snapshot of customer, wallet, and transaction context at case creation.
+// Enables historical audit and prevents data loss if related records are modified.
+model SupportCaseSnapshot {
+  id           String   @id @default(cuid())
+  caseId       String
+  snapshotType String   // 'creation' | 'escalation' | 'resolution'
+  userData     Json     // User profile at snapshot time
+  walletData   Json?    // Wallet state at snapshot time
+  transactionData Json? // Transaction details at snapshot time
+  context      Json     @default("{}")
+  createdAt    DateTime @default(now())
+
+  case SupportCase @relation(fields: [caseId], references: [id], onDelete: Cascade)
+
+  @@index([caseId, snapshotType])
+}
+
+// ─── Issue #318: Event sourcing / workflow event ledger ──────────────────────
+// Immutable, append-only domain event log for execution-critical workflows.
+// Each record is chained to the previous via HMAC so deletions and reorderings
+// are detectable. Events are never updated or deleted — new events supersede.
+//
+// `aggregateType` / `aggregateId` identify the domain object the event belongs
+// to (e.g. "Transaction"/"cuid", "Wallet"/"cuid", "User"/"cuid").
+// `payload` holds structured event data: who triggered it, what changed, why.
+model WorkflowEvent {
+  id            String   @id @default(cuid())
+  eventType     String   // e.g. payment.submitted, kyc.approved, account.deactivated
+  aggregateType String?  // Domain model name (Transaction, Wallet, User, KycProfile, …)
+  aggregateId   String?  // ID of the domain object
+  actorType     String   @default("system") // user | administrator | system
+  actorId       String?  // userId or adminId that triggered the event
+  payload       Json     @default("{}") // structured event data
+  previousHash  String?  @unique // chained reference for tamper-detection
+  hash          String?  @unique // HMAC over (previousHash + event fields)
+  createdAt     DateTime @default(now())
+
+  @@index([eventType, createdAt])
+  @@index([aggregateType, aggregateId])
+  @@index([actorType, actorId])
+  @@index([createdAt, id])
+}
+
+// ─── Issue #332: Account deactivation/reactivation ───────────────────────────
+// Records every deactivation and reactivation for a user account, along with
+// the reason, approving admin, and current state. Wallet and payment activity
+// is blocked while status = 'deactivated'. Reactivation requires admin approval
+// and writes a matching event to WorkflowEvent for the full audit trail.
+model AccountStatusRecord {
+  id          String   @id @default(cuid())
+  userId      String
+  status      String   // 'active' | 'deactivated'
+  reason      String   // structured reason code
+  notes       String?  // free-text detail
+  initiatedBy String   // admin user ID or 'system'
+  approvedBy  String?  // second-approval admin user ID (for reactivation)
+  approvedAt  DateTime?
+  effectiveAt DateTime @default(now())
+  createdAt   DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([status, createdAt])
+}
+
+// Multi-tenant / partner isolation marker for routing and authorization scoping.
+// Allows future onboarding of partners while enforcing data isolation server-side.
+model Partner {
+  id            String   @id @default(cuid())
+  name          String   @unique
+  externalId    String?  @unique // Partner's own identifier
+  status        String   @default("active") // active | suspended | archived
+  config        Json     @default("{}") // Partner-specific configuration
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  adminUsers AdminUser[]
+
+  @@index([status])
+}
+
+/// Durable inbox for provider webhook callbacks (#287).
+///
+/// The callback is persisted here before the request is acknowledged, so a
+/// transient database or processing failure can never silently discard
+/// delivery evidence that the provider believes it has handed over. Rows are
+/// drained asynchronously with retry, dead-lettering, and replay.
+model WebhookInboxEvent {
+  id            String    @id @default(cuid())
+  provider      String    @default("meta")
+  /// Kind of callback: "status" for delivery receipts today.
+  eventType     String
+  /// Stable identity for this exact callback item, used for idempotency.
+  /// Preserved per batch item so partial processing stays recoverable.
+  eventKey      String
+  /// The item as received, so it can be replayed verbatim.
+  payload       Json
+  /// pending | processing | processed | failed | dead_letter
+  status        String    @default("pending")
+  attempts      Int       @default(0)
+  lastError     String?
+  claimedAt     DateTime?
+  nextAttemptAt DateTime  @default(now())
+  processedAt   DateTime?
+  receivedAt    DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@unique([provider, eventKey])
+  @@index([status, nextAttemptAt])
+  @@index([status, receivedAt])
 }

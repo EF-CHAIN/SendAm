@@ -24,6 +24,9 @@ export default function Navbar() {
           <a href="#faq" className="text-sm font-medium text-slate-600 transition-colors hover:text-primary">
             FAQ
           </a>
+          <Link to="/onboarding" className="text-sm font-medium text-slate-600 transition-colors hover:text-primary">
+            Onboarding
+          </Link>
         </div>
         <a
           href={whatsappUrl('create wallet')}

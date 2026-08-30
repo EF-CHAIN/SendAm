@@ -1,0 +1,36 @@
+name: Provision production database
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: Type PROVISION_PRODUCTION to apply forward migrations
+        required: true
+        type: string
+
+concurrency:
+  group: production-database-migrations
+  cancel-in-progress: false
+
+jobs:
+  provision:
+    if: inputs.confirmation == 'PROVISION_PRODUCTION'
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - name: Generate Prisma client
+        run: npm run prisma:generate --workspace=apps/api
+        env:
+          DATABASE_URL: ${{ secrets.PRODUCTION_DATABASE_URL }}
+      - name: Apply migrations and validate PostgreSQL
+        run: npm run db:provision --workspace=apps/api
+        env:
+          NODE_ENV: production
+          DATABASE_URL: ${{ secrets.PRODUCTION_DATABASE_URL }}

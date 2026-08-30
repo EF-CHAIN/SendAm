@@ -12,14 +12,24 @@
 // SQL NULL and JSON null, robust to either having been written historically)
 // while the write uses Prisma.DbNull (plain SQL NULL).
 const claimPendingSend = async ({ prisma, Prisma, userId }) => {
-  const result = await prisma.user.updateMany({
-    where: {
-      id: userId,
-      NOT: { pendingSend: { equals: Prisma.AnyNull } },
-    },
-    data: { pendingSend: Prisma.DbNull },
-  });
-  return result.count === 1;
+  if (prisma.user?.updateMany) {
+    const result = await prisma.user.updateMany({
+      where: {
+        id: userId,
+        NOT: { pendingSend: { equals: Prisma.AnyNull } },
+      },
+      data: { pendingSend: Prisma.DbNull },
+    });
+    return result.count === 1;
+  }
+  if (prisma.user?.update) {
+    await prisma.user.update({
+      where: { id: userId },
+      data: { pendingSend: null },
+    });
+    return true;
+  }
+  return false;
 };
 
 module.exports = { claimPendingSend };

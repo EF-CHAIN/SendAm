@@ -32,6 +32,7 @@ if (!HAS_DB) {
   // -------------------------------------------------------------------------
 
   const { PrismaClient } = require('@prisma/client');
+  const { PrismaPg } = require('@prisma/adapter-pg');
 
   // Import the internals we want to exercise.  The seed module exports nothing
   // by default (it calls seed() on load), so we re-export the helpers for
@@ -44,7 +45,9 @@ if (!HAS_DB) {
   let prisma;
 
   before(async () => {
-    prisma = new PrismaClient();
+    prisma = new PrismaClient({
+      adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL }),
+    });
     // Clean up any leftover seed rows from a previous interrupted test run.
     await cleanSeedRows(prisma);
   });
