@@ -9,19 +9,21 @@ const PAYMENT_STATUSES = [
   'cancelled',
   'resolved',
   'escalated',
+  'reversed',
 ];
 
 // Matrix defining allowed state transitions.
 // Keys are current status; values are allowed next statuses.
 const PAYMENT_TRANSITIONS = {
-  processing: ['pending', 'success', 'failed', 'cancelled'],
-  pending:    ['success', 'failed', 'expired', 'escalated', 'resolved', 'cancelled', 'processing'],
-  escalated:  ['processing', 'resolved', 'failed', 'success'],
+  processing: ['pending', 'success', 'failed', 'cancelled', 'reversed'],
+  pending:    ['success', 'failed', 'expired', 'escalated', 'resolved', 'cancelled', 'processing', 'reversed'],
+  escalated:  ['processing', 'resolved', 'failed', 'success', 'reversed'],
   failed:     ['processing'],
   expired:    ['processing'],
   cancelled:  [], // Terminal state
-  success:    [], // Terminal state
+  success:    ['reversed'], // Reversal
   resolved:   [], // Terminal state
+  reversed:   [], // Terminal state
 };
 
 class PaymentTransitionError extends Error {

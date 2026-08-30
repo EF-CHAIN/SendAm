@@ -169,38 +169,42 @@ groups:
         annotations:
           summary: SendAm jobs are running inline instead of durably queued (Redis unavailable)
 
-      # ── Dependency health (#316) ──────────────────────────────────────────
-      # Fires on the dependency being down rather than on a log line, so a
-      # silent process (crashed, wedged, or never scraped) is still caught by
-      # the absent() rule below.
-      - alert: SendAmCriticalDependencyDown
-        expr: sendam_dependency_up{criticality="critical"} == 0
-        for: 2m
-        labels:
-          severity: critical
-          service: sendam-api
-        annotations:
-          summary: SendAm critical dependency {{ $labels.dependency }} is unreachable
-          runbook_url: https://github.com/EF-CHAIN/SendAm/blob/main/docs/OBSERVABILITY.md#dependency-health
-
-      - alert: SendAmImportantDependencyDown
-        expr: sendam_dependency_up{criticality="important"} == 0
+      - alert: SendAmQueueBacklogWarning
+        expr: sum by (queue) (sendam_queue_backlog_size) > 50
         for: 5m
         labels:
           severity: warning
-          service: sendam-api
+          service: sendam-worker
         annotations:
-          summary: SendAm dependency {{ $labels.dependency }} is unreachable; customer messaging may be affected
-          runbook_url: https://github.com/EF-CHAIN/SendAm/blob/main/docs/OBSERVABILITY.md#dependency-health
+          summary: SendAm queue {{ $labels.queue }} backlog exceeds 50 jobs
+          runbook_url: https://github.com/EF-CHAIN/SendAm/blob/main/docs/OBSERVABILITY.md#queue-backlog
 
-      # A dependency that stops being reported is not healthy — it is unknown,
-      # which for alerting purposes must be treated as down.
-      - alert: SendAmDependencyHealthMissing
-        expr: absent(sendam_dependency_up)
-        for: 10m
+      - alert: SendAmQueueBacklogCritical
+        expr: sum by (queue) (sendam_queue_backlog_size) > 200
+        for: 2m
+        labels:
+          severity: critical
+          service: sendam-worker
+        annotations:
+          summary: SendAm queue {{ $labels.queue }} backlog exceeds critical threshold (200 jobs)
+          runbook_url: https://github.com/EF-CHAIN/SendAm/blob/main/docs/OBSERVABILITY.md#queue-backlog
+
+      - alert: SendAmQueueJobLagHigh
+        expr: sum by (queue) (sendam_queue_lag_seconds) > 300
+        for: 5m
         labels:
           severity: warning
-          service: sendam-api
+          service: sendam-worker
         annotations:
-          summary: SendAm dependency health has not reported for 10m
-          runbook_url: https://github.com/EF-CHAIN/SendAm/blob/main/docs/OBSERVABILITY.md#dependency-health
+          summary: SendAm queue {{ $labels.queue }} oldest job processing lag exceeds 5 minutes
+          runbook_url: https://github.com/EF-CHAIN/SendAm/blob/main/docs/OBSERVABILITY.md#queue-lag
+
+      - alert: SendAmDeadLetterQueueGrowing
+        expr: sum(increase(sendam_dlq_moves_total[5m])) > 0
+        for: 0m
+        labels:
+          severity: critical
+          service: sendam-worker
+        annotations:
+          summary: SendAm dead-letter queue is receiving failed poison message jobs
+          runbook_url: https://github.com/EF-CHAIN/SendAm/blob/main/docs/OBSERVABILITY.md#dead-letter-queue

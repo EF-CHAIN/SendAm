@@ -202,56 +202,22 @@ unprotected endpoint, and point `ERROR_MONITOR_WEBHOOK_URL` to a healthy
 fallback receiver. Validate `/health`, financial reconciliation, and alert
 routing after rollback.
 
-## Dependency health
+### Queue backlog
 
-`GET /health/dependencies` reports every critical dependency separately —
-Postgres, Redis, Stellar Horizon, and the WhatsApp Graph API — with a status,
-a latency, and the threshold that latency is judged against.
+Fires when `sendam_queue_backlog_size` exceeds warning (50) or critical (200) thresholds.
+1. Check worker process health (`pm2 status`, `kubectl get pods -l app=sendam-worker`).
+2. Scale worker concurrency via `WORKER_CONCURRENCY` or add worker replicas.
+3. Verify downstream API/blockchain latency (Stellar Horizon, Meta WhatsApp webhook).
 
-It is deliberately not the same endpoint as `/health/ready`. Readiness answers
-one question for the load balancer ("should this instance take traffic") and
-must stay cheap and collapsed; it checks Postgres and Redis together and says
-only ok or degraded, which means it cannot tell an operator *which*
-dependency broke and never looks at Horizon or the messaging provider at all.
-Those can be down for hours while readiness stays green and customers receive
-nothing.
+### Queue lag
 
-### Reading the report
+Fires when `sendam_queue_lag_seconds` exceeds 300s (5 minutes).
+1. Inspect oldest pending job timestamp to identify stuck processors or blocking I/O calls.
+2. Check Redis connection latency with `redis-cli --latency`.
+3. Restart worker instances if deadlock or unhandled promise rejection is detected.
 
-| Field | Meaning |
-| --- | --- |
-| `status` | `healthy`, `degraded`, or `unhealthy` for the platform |
-| `dependencies[].status` | per-dependency verdict |
-| `dependencies[].latencyMs` | measured round trip |
-| `dependencies[].thresholdMs` | above this, the dependency is `degraded` rather than `healthy` |
-| `dependencies[].criticality` | `critical`, `important`, or `optional` |
+### Dead-letter queue (DLQ)
 
-A dependency that answers slowly is reported as `degraded` rather than
-healthy. A check that only reports up/down hides the most common real failure
-— a provider that is technically reachable and too slow to be useful — until
-it crosses into a timeout.
-
-The aggregate is decided by criticality, not by counting: one dead critical
-dependency is an outage even when everything else is fine, and a dead optional
-one is not an outage however many there are.
-
-The endpoint returns 503 only when a critical dependency is unreachable.
-`degraded` stays 200 on purpose — returning 503 would make a load balancer
-pull a node that is merely slow, turning partial degradation into a full
-outage.
-
-### Alerting
-
-Each check sets `sendam_dependency_up{dependency,criticality}` and increments
-`sendam_dependency_checks_total`. Alert rules live in
-`observability/prometheus-rules.yml`:
-
-- `SendAmCriticalDependencyDown` — critical dependency unreachable for 2m
-- `SendAmImportantDependencyDown` — messaging provider unreachable for 5m
-- `SendAmDependencyHealthMissing` — no report at all for 10m, which is a
-  different failure from "reported unhealthy" and needs to page separately
-
-Alerts are raised as metrics and structured logs rather than by paging from
-the application, so thresholds can be tuned and a flapping dependency
-suppressed in the alert manager without a deploy or a change to the check that
-detects it.
+Fires on `SendAmDeadLetterQueueGrowing` when repeated job failures move to the dead-letter queue.
+1. Inspect DLQ messages with `node apps/api/scripts/whatsapp-dlq.js inspect`.
+2. Fix underlying provider errors before replaying: `node apps/api/scripts/whatsapp-dlq.js replay`.

@@ -62,6 +62,7 @@ const txMock = {
 
 injectMock('wallet/stellar.adapter',        () => ({ validateAddress: mocks.validateAddress }));
 injectMock('compliance/compliance.service', () => ({ enforceTransactionPolicy: mocks.enforceTransactionPolicy }));
+injectMock('config/env',                    () => ({ stellar: { network: 'testnet' } }));
 injectMock('pricing/pricing.service',       () => ({
   createQuote: mocks.createQuote,
   validateQuoteForExecution: mocks.validateQuoteForExecution,
