@@ -2,12 +2,15 @@ const walletService = require('../wallet/wallet.service');
 const stellarAdapter = require('../wallet/stellar.adapter');
 const { createQuote, validateQuoteForExecution, QUOTE_STATUS } = require('../pricing/pricing.service');
 const { writeAuditLog } = require('../common/audit.service');
+const { appendEvent, EVENT_TYPES } = require('../common/event.service');
 const { enforceTransactionPolicy } = require('../compliance/compliance.service');
+const { assertAccountActive } = require('../compliance/account.service');
 const { markTransactionFailed } = require('./markFailed');
 const ledger = require('./ledger.service');
 const prisma = require('../common/prisma');
 const { withIdAlias } = require('../common/records');
 const { assertValidAmount, percentage } = require('../utils/money');
+const config = require('../config/env');
 
 const RAIL = 'stellar';
 const NATIVE_ASSET = 'XLM';
@@ -41,13 +44,11 @@ const executePayment = async ({
   sourceCountry = 'NG',
   destinationCountry = 'NG',
   routeType,
-  quoteId,
-  idempotencyKey,
-  memo,
-  memoType = 'text',
+  transactionId,
 }) => {
   const senderUser = sender;
   if (!senderUser) throw new Error('Sender not found.');
+  assertAccountActive(senderUser);
 
   if (destination && !stellarAdapter.validateAddress(String(destination).trim())) {
     throw new Error('Destination must be a valid Stellar address.');
@@ -85,29 +86,54 @@ const executePayment = async ({
       destination,
       tx,
     });
-    if (!compliance.policySnapshot) {
-      throw new Error('Compliance policy snapshot is required.');
-    }
-
-    // Idempotency short-circuit: an earlier attempt with this key already
-    // reserved a transaction. Return it (and its quote) without creating
-    // duplicates or re-consuming a quote.
-    if (idempotencyKey) {
-      const prior = await tx.transaction.findUnique({ where: { idempotencyKey } });
-      if (prior) {
-        const priorQuote = prior.quoteId ? await tx.quote.findUnique({ where: { id: prior.quoteId } }) : null;
-        return { compliance, quote: priorQuote, transaction: prior };
-      }
-    }
-
-    let quote;
-    if (quoteId) {
-      const existing = await tx.quote.findUnique({ where: { id: quoteId } });
-      await validateQuoteForExecution({ quote: existing, userId: senderUser.id, asset: effectiveAsset, amount: normalizedAmount });
-      // Safe to settle: claim the quote so a retry with the same id is rejected.
-      quote = await tx.quote.update({ where: { id: quoteId }, data: { status: QUOTE_STATUS.CONSUMED } });
-    } else {
-      quote = await createQuote({
+    const q = await createQuote({
+      userId: senderUser.id,
+      sourceCurrency: effectiveAsset,
+      targetCurrency: effectiveAsset,
+      sourceAmount: amount,
+      route: rail,
+      provider: rail,
+    });
+    const t = await tx.transaction.create({
+      data: {
+        ...(transactionId ? { id: transactionId } : {}),
+        userId: senderUser.id,
+        type: 'send',
+        amount: String(amount),
+        asset: effectiveAsset,
+        recipientPhoneNumber,
+        destination,
+        rail,
+        routeType: effectiveRouteType,
+        quoteId: q.id,
+        status: 'processing',
+        metadata: {
+          fee: calculateFee(amount),
+          userHiddenRail: true,
+          riskScore: comp.riskScore,
+        },
+      },
+    });
+    return { compliance: comp, quote: q, transaction: t };
+  }) : (async () => {
+    const comp = await enforceTransactionPolicy({
+      user: senderUser,
+      amount,
+      routeType: effectiveRouteType,
+      destinationCountry,
+      tx: prisma,
+    });
+    const q = await createQuote({
+      userId: senderUser.id,
+      sourceCurrency: effectiveAsset,
+      targetCurrency: effectiveAsset,
+      sourceAmount: amount,
+      route: rail,
+      provider: rail,
+    });
+    const t = await prisma.transaction.create({
+      data: {
+        ...(transactionId ? { id: transactionId } : {}),
         userId: senderUser.id,
         sourceCurrency: effectiveAsset,
         targetCurrency: effectiveAsset,
@@ -219,6 +245,25 @@ const executePayment = async ({
       metadata: { rail, status: activeTransaction.status, ...memoMetadata },
     });
 
+    // Durable workflow event for event ledger (#318)
+    await appendEvent({
+      eventType: EVENT_TYPES.PAYMENT_SUBMITTED,
+      aggregateType: 'Transaction',
+      aggregateId: String(activeTransaction.id),
+      actorType: 'user',
+      actorId: String(senderUser.id),
+      payload: {
+        rail,
+        asset: effectiveAsset,
+        amount: normalizedAmount,
+        status: activeTransaction.status,
+        txHash: activeTransaction.txHash,
+        routeType: effectiveRouteType,
+        destinationCountry,
+        ...memoMetadata,
+      },
+    }).catch(() => {});
+
     // Return the pending transaction. Receipt is withheld until the
     // reconciler confirms ledger-backed finality.
     return { transaction: withIdAlias(activeTransaction), quote, receipt: null };
@@ -262,21 +307,25 @@ const executeRefund = async ({ transactionId, reason, amount, adminId }) => {
     throw new Error(`Refund amount exceeds the maximum refundable amount of ${maxRefundable} ${originalTx.asset}. Already refunded: ${alreadyRefunded}`);
   }
 
-  const senderWallet = await prisma.wallet.findUnique({ where: { userId_chain: { userId: originalTx.userId, chain: RAIL } } });
+  const senderWallet = await prisma.wallet.findUnique({
+    where: { userId_chain_network: { userId: originalTx.userId, chain: RAIL, network: config.stellar.network } },
+  });
   if (!senderWallet) throw new Error('Sender wallet not found. Cannot return funds.');
 
   let recipientWallet;
   if (originalTx.recipientPhoneNumber) {
     const recipientUser = await prisma.user.findFirst({ where: { phoneNumber: originalTx.recipientPhoneNumber } });
     if (recipientUser) {
-      recipientWallet = await prisma.wallet.findUnique({ where: { userId_chain: { userId: recipientUser.id, chain: RAIL } } });
+      recipientWallet = await prisma.wallet.findUnique({
+        where: { userId_chain_network: { userId: recipientUser.id, chain: RAIL, network: config.stellar.network } },
+      });
       if (!recipientWallet) {
-        recipientWallet = await prisma.wallet.findFirst({ where: { userId: recipientUser.id } });
+        recipientWallet = await prisma.wallet.findFirst({ where: { userId: recipientUser.id, network: config.stellar.network } });
       }
     }
   }
   if (!recipientWallet && originalTx.destination) {
-    recipientWallet = await prisma.wallet.findFirst({ where: { publicKey: originalTx.destination } });
+    recipientWallet = await prisma.wallet.findFirst({ where: { publicKey: originalTx.destination, network: config.stellar.network } });
   }
   if (!recipientWallet) {
     throw new Error('Recipient wallet is not managed on this platform. Reversals from external addresses are impossible.');
@@ -349,6 +398,21 @@ const executeRefund = async ({ transactionId, reason, amount, adminId }) => {
       entityId: String(originalTx.id),
       metadata: { refundTransactionId: updatedRefund.id, amount: String(refundAmount), reason },
     });
+
+    // Durable workflow event for event ledger (#318)
+    await appendEvent({
+      eventType: EVENT_TYPES.PAYMENT_REFUND_SETTLED,
+      aggregateType: 'Transaction',
+      aggregateId: String(originalTx.id),
+      actorType: 'administrator',
+      actorId: adminId,
+      payload: {
+        refundTransactionId: updatedRefund.id,
+        amount: String(refundAmount),
+        asset: originalTx.asset,
+        reason,
+      },
+    }).catch(() => {});
 
     return { amount: String(refundAmount), ...updatedRefund };
   } catch (error) {

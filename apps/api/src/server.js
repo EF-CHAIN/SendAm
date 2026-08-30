@@ -5,6 +5,7 @@ const http = require('http');
 const https = require('https');
 const app = require('./app');
 const config = require('./config/env');
+const { describeNetworkProfile } = require('./config/networkProfiles');
 const connectDB = require('./config/db');
 const { validateEnv } = require('./config/validateEnv');
 const prisma = require('./common/prisma');
@@ -58,7 +59,13 @@ const startServer = async () => {
 
   server.listen(config.port, () => {
     app.markStartupComplete();
-    logger.info('api_started', { environment: config.env, port: config.port });
+    logger.info('api_started', {
+      environment: config.env,
+      port: config.port,
+      // Name the network at startup so a misdirected deployment is obvious in
+      // the first log line rather than after a transaction is signed.
+      ...describeNetworkProfile(config.stellar.networkProfile),
+    });
   });
 
   // Graceful shutdown: stop accepting new connections, let in-flight requests

@@ -28,3 +28,9 @@ const requirePermission = (permission, options = {}) => async (req, res, next) =
 const requireAdmin = (permission = 'admin.read') => [authenticateAdmin, requirePermission(permission)];
 requireAdmin.authenticate = authenticateAdmin; requireAdmin.permission = requirePermission;
 module.exports = requireAdmin;
+module.exports.requirePermission = (permission) => (req, res, next) => {
+  if (!req.admin?.permissions?.includes(permission)) {
+    return sendError(res, 'Forbidden', 403);
+  }
+  next();
+};

@@ -12,11 +12,13 @@ const pricingRoutes = require('./pricing/pricing.routes');
 const simRoutes = require('./routes/sim.routes');
 const authRoutes = require('./routes/auth.routes');
 const receiptRoutes = require('./routes/receipt.routes');
+const retentionRoutes = require('./routes/retention.routes');
 
 const errorHandler = require('./middlewares/errorHandler');
 const notFound = require('./middlewares/notFound');
 const PostgresRateStore = require('./middlewares/postgresRateStore');
 const config = require('./config/env');
+const { describeNetworkProfile } = require('./config/networkProfiles');
 const logger = require('./utils/logger');
 const prisma = require('./common/prisma');
 const { correlationMiddleware } = require('./observability/context');
@@ -24,6 +26,7 @@ const { requestMetrics, metricsHandler, increment } = require('./observability/m
 const { AppError } = require('./errors');
 const { getContext } = require('./observability/context');
 const { pingRedis } = require('./queues/queue.service');
+const { checkAll, httpStatusFor } = require('./observability/dependencies');
 
 const app = express();
 let startupComplete = false;
@@ -176,6 +179,14 @@ app.get('/health/startup', (_req, res) => {
   res.status(startupComplete ? 200 : 503).json({ status: startupComplete ? 'ok' : 'starting' });
 });
 
+// Which Stellar network this instance is actually bound to (#284). Operators
+// need to be able to confirm a deployment is on the network they think it is
+// without reading its environment. Only public network identifiers are
+// exposed — no keys, endpoints with credentials, or secrets.
+app.get('/health/network', (_req, res) => {
+  res.status(200).json(describeNetworkProfile(config.stellar.networkProfile));
+});
+
 app.get(['/health', '/health/ready'], async (req, res) => {
   const correlationId = getContext().correlationId || null;
   try {
@@ -216,6 +227,7 @@ if (config.features.walletRestApi) {
 }
 
 app.use('/api/admin', adminRoutes);
+app.use('/api/admin/retention', retentionRoutes);
 app.use('/api/compliance', complianceRoutes);
 app.use('/api/pricing', pricingRoutes);
 

@@ -8,25 +8,16 @@ const { errorEnvelope } = require('../errors/envelope');
 // and `_next` arguments must be declared even though they are unused here —
 // removing them would demote this to a regular middleware and break error
 // propagation.
-const errorHandler = (err, req, res, _next) => {
-  const normalized = normalizeError(err);
-  const correlationId = getContext().correlationId || null;
+const errorHandler = (err, _req, res, _next) => {
+  logger.error(err.stack);
 
-  const status = err.type === 'entity.too:large' ? 413 : err.code === 'ETIMEDOUT' ? 504 : normalized.statusCode;
-  normalized.statusCode = status;
+  const statusCode = err.statusCode || (res.statusCode === 200 ? 500 : res.statusCode);
 
-  logger.error('http_request_exception', {
-    error: err,
-    code: normalized.code,
-    statusCode: status,
-    method: req.method,
-    path: req.path,
-  });
-  captureException(err, {
-    source: 'http',
-    code: normalized.code,
-    method: req.method,
-    path: req.path,
+  res.status(statusCode).json({
+    success: false,
+    message: err.message || 'Server Error',
+    errors: err.errors || undefined,
+    stack: process.env.NODE_ENV === 'production' ? null : err.stack,
   });
 
   if (correlationId && !res.get('x-correlation-id')) {

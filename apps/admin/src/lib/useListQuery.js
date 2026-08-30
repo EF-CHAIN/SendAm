@@ -7,11 +7,15 @@ import { useSearchParams } from 'react-router-dom';
 export function useListQuery(filterKeys = []) {
   const [searchParams, setSearchParams] = useSearchParams();
 
+  // Capture the serialised query string as a primitive so the dependency array
+  // only contains a simple expression (required by react-hooks/exhaustive-deps).
+  const searchString = searchParams.toString();
+
   // Stable across renders so the fetch effect doesn't loop: identity only
   // changes when the serialised query string changes.
   const queryString = searchParams.toString();
   const params = useMemo(() => {
-    const entries = Object.fromEntries(searchParams.entries());
+    const entries = Object.fromEntries(new URLSearchParams(searchString).entries());
     const result = {};
     for (const key of ['after', 'before', 'limit', ...filterKeys]) {
       if (entries[key]) result[key] = entries[key];

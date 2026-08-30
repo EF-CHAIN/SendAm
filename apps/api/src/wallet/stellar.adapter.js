@@ -112,6 +112,8 @@ const getTransactionUrl = (txHash) => {
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+const BASE_RESERVE_XLM = 1;
+const BASE_RESERVE_PER_ENTRY = 0.5;
 const FUNDING_MAX_ATTEMPTS = 3;
 const NATIVE_BASE_RESERVE = Number(process.env.STELLAR_BASE_RESERVE_XLM || 0.5);
 const NATIVE_RESERVE_BUFFER = Number(process.env.STELLAR_RESERVE_BUFFER_XLM || 0.1);
@@ -129,6 +131,48 @@ function assertNativeReserve(account, feeStroops, additionalSubentries = 0) {
   }
   return { available, required };
 }
+
+const getSeverityPriority = (status) => ({ ok: 0, warning: 1, critical: 2 }[status] || 0);
+
+const getHighWaterMarkStatus = (value, warningThreshold, criticalThreshold) => {
+  if (criticalThreshold != null && value >= criticalThreshold) return 'critical';
+  if (warningThreshold != null && value >= warningThreshold) return 'warning';
+  return 'ok';
+};
+
+const getLowWaterMarkStatus = (value, warningThreshold, criticalThreshold) => {
+  if (criticalThreshold != null && value <= criticalThreshold) return 'critical';
+  if (warningThreshold != null && value <= warningThreshold) return 'warning';
+  return 'ok';
+};
+
+const getReservePressureStatus = (ratio, warningThreshold, criticalThreshold) => {
+  if (criticalThreshold != null && ratio >= criticalThreshold) return 'critical';
+  if (warningThreshold != null && ratio >= warningThreshold) return 'warning';
+  return 'ok';
+};
+
+const getOperatorRunbook = ({ baseFeeStatus, fundingBalanceStatus, reserveStatus, baseFee, fundingBalance, projectedReserveRatio }) => {
+  const steps = [];
+
+  if (baseFeeStatus !== 'ok') {
+    steps.push(`Base fee is ${baseFee} stroops; raise the funding account or slow outbound payments until network demand settles.`);
+  }
+
+  if (fundingBalanceStatus !== 'ok') {
+    steps.push(`Funding account balance is ${fundingBalance} XLM; add XLM so customer wallet creation and sends keep a safe buffer.`);
+  }
+
+  if (reserveStatus !== 'ok') {
+    steps.push(`Projected reserve consumption is ${(projectedReserveRatio * 100).toFixed(1)}% of funding balance; reduce new trustlines or pause wallet creation until reserve headroom returns.`);
+  }
+
+  if (steps.length === 0) {
+    return ['Funding account is healthy; continue normal wallet creation and payment flow.'];
+  }
+
+  return steps;
+};
 
 // Friendbot is unreliable (frequent 5xx/timeouts), and a failed first-time
 // funding used to leave a user with an empty wallet and no way to recover.
@@ -183,6 +227,93 @@ const getBalance = async (publicKey) => {
     logger.error("Error getting balance", error.message);
     throw new Error("Could not fetch balance. Check if account is funded.");
   }
+};
+
+const getFundingAccountHealth = async ({
+  publicKey,
+  reserveEntries = 0,
+  baseFeeWarningThreshold,
+  baseFeeCriticalThreshold,
+  fundingBalanceWarningThreshold,
+  fundingBalanceCriticalThreshold,
+  reserveWarningThreshold,
+  reserveCriticalThreshold,
+} = {}) => {
+  const targetPublicKey = publicKey || config.stellar.fundingAccountPublicKey;
+  if (!targetPublicKey) {
+    throw new Error('Stellar funding account public key is not configured.');
+  }
+
+  const thresholds = {
+    baseFeeWarningThreshold: baseFeeWarningThreshold ?? config.stellar.thresholds.baseFeeWarningThreshold,
+    baseFeeCriticalThreshold: baseFeeCriticalThreshold ?? config.stellar.thresholds.baseFeeCriticalThreshold,
+    fundingBalanceWarningThreshold: fundingBalanceWarningThreshold ?? config.stellar.thresholds.fundingBalanceWarningThreshold,
+    fundingBalanceCriticalThreshold: fundingBalanceCriticalThreshold ?? config.stellar.thresholds.fundingBalanceCriticalThreshold,
+    reserveWarningThreshold: reserveWarningThreshold ?? config.stellar.thresholds.reserveWarningThreshold,
+    reserveCriticalThreshold: reserveCriticalThreshold ?? config.stellar.thresholds.reserveCriticalThreshold,
+  };
+
+  const account = await server.loadAccount(targetPublicKey);
+  const nativeBalance = account.balances.find((b) => b.asset_type === 'native');
+  const fundingBalance = Number(nativeBalance ? nativeBalance.balance : '0');
+  const subentryCount = Number(account.subentry_count || 0);
+  const currentReserveRequired = BASE_RESERVE_XLM + subentryCount * BASE_RESERVE_PER_ENTRY;
+  const projectedReserveRequired = BASE_RESERVE_XLM + (subentryCount + Number(reserveEntries)) * BASE_RESERVE_PER_ENTRY;
+  const currentReserveRatio = currentReserveRequired / Math.max(fundingBalance, Number.EPSILON);
+  const projectedReserveRatio = projectedReserveRequired / Math.max(fundingBalance, Number.EPSILON);
+  const baseFee = Number(await server.fetchBaseFee());
+
+  const baseFeeStatus = getHighWaterMarkStatus(
+    baseFee,
+    thresholds.baseFeeWarningThreshold,
+    thresholds.baseFeeCriticalThreshold,
+  );
+  const fundingBalanceStatus = getLowWaterMarkStatus(
+    fundingBalance,
+    thresholds.fundingBalanceWarningThreshold,
+    thresholds.fundingBalanceCriticalThreshold,
+  );
+  const reserveStatus = getReservePressureStatus(
+    Math.max(currentReserveRatio, projectedReserveRatio),
+    thresholds.reserveWarningThreshold,
+    thresholds.reserveCriticalThreshold,
+  );
+
+  const status = [baseFeeStatus, fundingBalanceStatus, reserveStatus]
+    .reduce((highest, entry) => (
+      getSeverityPriority(entry) > getSeverityPriority(highest) ? entry : highest
+    ), 'ok');
+
+  const report = {
+    status,
+    publicKey: targetPublicKey,
+    baseFee,
+    baseFeeStatus,
+    fundingBalance,
+    fundingBalanceStatus,
+    reserveRequired: Number(currentReserveRequired.toFixed(7)),
+    projectedReserveRequired: Number(projectedReserveRequired.toFixed(7)),
+    currentReserveRatio: Number(currentReserveRatio.toFixed(4)),
+    projectedReserveRatio: Number(projectedReserveRatio.toFixed(4)),
+    reserveStatus,
+    fundingCapacityWallets: Math.max(0, Math.floor(fundingBalance / Math.max(1 + Number(reserveEntries) * BASE_RESERVE_PER_ENTRY, Number.EPSILON))),
+    runbook: getOperatorRunbook({
+      baseFeeStatus,
+      fundingBalanceStatus,
+      reserveStatus,
+      baseFee,
+      fundingBalance,
+      projectedReserveRatio,
+    }),
+  };
+
+  if (status !== 'ok') {
+    logger.warn(
+      `Stellar funding-account health warning: ${status} for ${targetPublicKey}; baseFee=${baseFee} stroops, balance=${fundingBalance} XLM, projectedReserveUsage=${(projectedReserveRatio * 100).toFixed(1)}%.`,
+    );
+  }
+
+  return report;
 };
 
 // Every relevant balance for a wallet: XLM plus USDC when the account holds
@@ -267,6 +398,34 @@ const getFriendlyPaymentError = (error) => {
   return null;
 };
 
+// Concurrency coordination: serialize submissions per source account to eliminate sequence collisions.
+const accountSubmissionLocks = new Map();
+
+const withAccountLock = async (accountKey, fn) => {
+  if (!accountKey) return fn();
+
+  const currentLock = accountSubmissionLocks.get(accountKey) || Promise.resolve();
+  let releaseLock;
+  const nextLock = new Promise((resolve) => {
+    releaseLock = resolve;
+  });
+
+  accountSubmissionLocks.set(
+    accountKey,
+    currentLock.then(() => nextLock, () => nextLock),
+  );
+
+  try {
+    await currentLock;
+    return await fn();
+  } finally {
+    releaseLock();
+    if (accountSubmissionLocks.get(accountKey) === nextLock) {
+      accountSubmissionLocks.delete(accountKey);
+    }
+  }
+};
+
 const submitPayment = async ({
   secretKey,
   destination,
@@ -289,123 +448,119 @@ const submitPayment = async ({
     }
 
     const normalizedAmount = assertValidAmount(amount, asset);
-
     const sourceKeypair = StellarSdk.Keypair.fromSecret(secretKey);
     const sourcePublicKey = sourceKeypair.publicKey();
 
-    const baseDestination = getBaseAccountId(destination);
+    return await withAccountLock(sourcePublicKey, async () => {
+      const baseDestination = getBaseAccountId(destination);
 
-    // Check if destination exists (once; this doesn't change between retries).
-    try {
-      await server.loadAccount(baseDestination);
-    } catch (_e) {
-      throw new Error("Destination account does not exist or is not funded.");
-    }
-
-    const fee = await server.fetchBaseFee();
-    const networkPassphrase =
-      config.stellar.network === "testnet"
-        ? StellarSdk.Networks.TESTNET
-        : StellarSdk.Networks.PUBLIC;
-
-    const stellarMemo = buildStellarMemo({ memo, memoType });
-
-    // The transaction is built once and (for a timeout/ambiguous write failure)
-    // the SAME signed envelope is reused for a bounded number of retries. This
-    // makes submission idempotent: a timed-out payment is verified against
-    // Horizon rather than resubmitted as a fresh transaction that could double.
-    // On tx_bad_seq (sequence number already advanced by a concurrent write) we
-    // reload the source account for a fresh sequence and rebuild instead.
-    let transaction;
-    let hash;
-    let lastError;
-    for (let attempt = 1; attempt <= SEND_MAX_ATTEMPTS; attempt += 1) {
-      const sourceAccount = await server.loadAccount(sourcePublicKey);
-      assertNativeReserve(sourceAccount, fee);
-
-      const builder = new StellarSdk.TransactionBuilder(sourceAccount, {
-        fee,
-        networkPassphrase,
-      }).addOperation(
-        StellarSdk.Operation.payment({
-          destination,
-          asset: resolveAsset(asset),
-          amount: normalizedAmount,
-        }),
-      );
-
-      if (stellarMemo) {
-        builder.addMemo(stellarMemo);
-      }
-
-      transaction = builder.setTimeout(30).build();
-      transaction.sign(sourceKeypair);
-      hash = safeHash(transaction);
-
+      // Check if destination exists (once; this doesn't change between retries).
       try {
-        const txResponse = await server.submitTransaction(transaction);
-        return {
-          txHash: txResponse.hash,
-          explorerUrl: getTransactionUrl(txResponse.hash),
-        };
-      } catch (error) {
-        if (isHorizonWriteUncertain(error)) {
-          if (hash) {
-            try {
-              const found = await server.transactions().transactionHash(hash).call();
-              if (found) {
-                logger.info(`Recovered seemingly-timed-out payment ${hash} via Horizon lookup.`);
-                return { txHash: hash, explorerUrl: getTransactionUrl(hash) };
-              }
-            } catch (_) {
-              // Ignore lookup errors
-            }
-          }
-
-          if (attempt < SEND_MAX_ATTEMPTS) {
-            logger.warn(`Payment uncertain (attempt ${attempt}/${SEND_MAX_ATTEMPTS}); resubmitting same envelope.`);
-            await sleep(attempt * 250);
-            continue;
-          } else {
-            throw new Error(
-              "Transaction submission status unknown after timeout; not resubmitting to avoid a duplicate.",
-            );
-          }
-        }
-
-        if (isBadSequence(error)) {
-          if (hash) {
-            try {
-              const found = await server.transactions().transactionHash(hash).call();
-              if (found) {
-                logger.info(`Recovered tx_bad_seq payment ${hash} via Horizon lookup.`);
-                return { txHash: hash, explorerUrl: getTransactionUrl(hash) };
-              }
-            } catch (_) {
-            }
-          }
-
-          if (attempt < SEND_MAX_ATTEMPTS) {
-            lastError = error;
-            logger.warn(
-              `Payment hit tx_bad_seq (attempt ${attempt}/${SEND_MAX_ATTEMPTS}); reloading sequence and retrying.`,
-            );
-            transaction = null;
-            await sleep(attempt * 250);
-            continue;
-          }
-        }
-
-        const friendlyMessage = getFriendlyPaymentError(error);
-        if (friendlyMessage) {
-          throw new Error(friendlyMessage);
-        }
-
-        throw error;
+        await server.loadAccount(baseDestination);
+      } catch (_e) {
+        throw new Error("Destination account does not exist or is not funded.");
       }
-    }
 
-    throw lastError || new Error("Failed to send payment");
+      const fee = await server.fetchBaseFee();
+      const networkPassphrase =
+        config.stellar.network === "testnet"
+          ? StellarSdk.Networks.TESTNET
+          : StellarSdk.Networks.PUBLIC;
+
+      const stellarMemo = buildStellarMemo({ memo, memoType });
+
+      let transaction;
+      let hash;
+      let lastError;
+      for (let attempt = 1; attempt <= SEND_MAX_ATTEMPTS; attempt += 1) {
+        const sourceAccount = await server.loadAccount(sourcePublicKey);
+        assertNativeReserve(sourceAccount, fee);
+
+        const builder = new StellarSdk.TransactionBuilder(sourceAccount, {
+          fee,
+          networkPassphrase,
+        }).addOperation(
+          StellarSdk.Operation.payment({
+            destination,
+            asset: resolveAsset(asset),
+            amount: normalizedAmount,
+          }),
+        );
+
+        if (stellarMemo) {
+          builder.addMemo(stellarMemo);
+        }
+
+        transaction = builder.setTimeout(30).build();
+        transaction.sign(sourceKeypair);
+        hash = safeHash(transaction);
+
+        try {
+          const txResponse = await server.submitTransaction(transaction);
+          return {
+            txHash: txResponse.hash,
+            explorerUrl: getTransactionUrl(txResponse.hash),
+          };
+        } catch (error) {
+          // Reconcile uncertain submissions before rebuilding or failing
+          if (isHorizonWriteUncertain(error)) {
+            if (hash) {
+              try {
+                const found = await server.transactions().transactionHash(hash).call();
+                if (found) {
+                  logger.info(`Recovered seemingly-timed-out payment ${hash} via Horizon lookup.`);
+                  return { txHash: hash, explorerUrl: getTransactionUrl(hash) };
+                }
+              } catch (_) {
+                // Ignore lookup errors
+              }
+            }
+
+            if (attempt < SEND_MAX_ATTEMPTS) {
+              logger.warn(`Payment uncertain (attempt ${attempt}/${SEND_MAX_ATTEMPTS}); resubmitting same envelope.`);
+              await sleep(attempt * 250);
+              continue;
+            } else {
+              throw new Error(
+                "Transaction submission status unknown after timeout; not resubmitting to avoid a duplicate.",
+              );
+            }
+          }
+
+          if (isBadSequence(error)) {
+            if (hash) {
+              try {
+                const found = await server.transactions().transactionHash(hash).call();
+                if (found) {
+                  logger.info(`Recovered tx_bad_seq payment ${hash} via Horizon lookup.`);
+                  return { txHash: hash, explorerUrl: getTransactionUrl(hash) };
+                }
+              } catch (_) {
+              }
+            }
+
+            if (attempt < SEND_MAX_ATTEMPTS) {
+              lastError = error;
+              logger.warn(
+                `Payment hit tx_bad_seq (attempt ${attempt}/${SEND_MAX_ATTEMPTS}); reloading sequence and retrying.`,
+              );
+              transaction = null;
+              await sleep(attempt * 250);
+              continue;
+            }
+          }
+
+          const friendlyMessage = getFriendlyPaymentError(error);
+          if (friendlyMessage) {
+            throw new Error(friendlyMessage);
+          }
+
+          throw error;
+        }
+      }
+
+      throw lastError || new Error("Failed to send payment");
+    });
   } catch (error) {
     logger.error("Error sending payment", error.message);
     throw new Error(error.message || "Failed to send payment");
@@ -420,61 +575,111 @@ const establishTrustline = async ({ secretKey, assetCode }) => {
   const sourceKeypair = StellarSdk.Keypair.fromSecret(secretKey);
   const sourcePublicKey = sourceKeypair.publicKey();
 
-  const asset = resolveAsset(assetCode);
-  if (asset.isNative()) {
-    throw new Error("XLM is the native asset and needs no trustline.");
-  }
+  return withAccountLock(sourcePublicKey, async () => {
+    const asset = resolveAsset(assetCode);
+    if (asset.isNative()) {
+      throw new Error("XLM is the native asset and needs no trustline.");
+    }
 
-  // An unfunded (nonexistent) account 404s here; surface a clear reason rather
-  // than a raw Horizon error dump.
-  let account;
-  try {
-    account = await server.loadAccount(sourcePublicKey);
-  } catch (error) {
-    logger.error("Error loading account for trustline", error.message);
-    throw new Error(
-      "Account is not funded yet — fund it before opening a trustline.",
+    // An unfunded (nonexistent) account 404s here; surface a clear reason rather
+    // than a raw Horizon error dump.
+    let account;
+    try {
+      account = await server.loadAccount(sourcePublicKey);
+    } catch (error) {
+      logger.error("Error loading account for trustline", error.message);
+      throw new Error(
+        "Account is not funded yet — fund it before opening a trustline.",
+      );
+    }
+
+    // Already trusted (same code *and* issuer): no-op, safe to call repeatedly.
+    const alreadyExisted = account.balances.some(
+      (b) =>
+        b.asset_code === asset.getCode() && b.asset_issuer === asset.getIssuer(),
     );
-  }
+    if (alreadyExisted) {
+      return { established: true, alreadyExisted: true };
+    }
 
-  // Already trusted (same code *and* issuer): no-op, safe to call repeatedly.
-  const alreadyExisted = account.balances.some(
-    (b) =>
-      b.asset_code === asset.getCode() && b.asset_issuer === asset.getIssuer(),
-  );
-  if (alreadyExisted) {
-    return { established: true, alreadyExisted: true };
-  }
+    const fee = await server.fetchBaseFee();
+    assertNativeReserve(account, fee, 1);
+    const networkPassphrase =
+      config.stellar.network === "testnet"
+        ? StellarSdk.Networks.TESTNET
+        : StellarSdk.Networks.PUBLIC;
 
-  const fee = await server.fetchBaseFee();
-  assertNativeReserve(account, fee, 1);
-  const networkPassphrase =
-    config.stellar.network === "testnet"
-      ? StellarSdk.Networks.TESTNET
-      : StellarSdk.Networks.PUBLIC;
+    let lastError;
+    for (let attempt = 1; attempt <= SEND_MAX_ATTEMPTS; attempt += 1) {
+      const sourceAccount = await server.loadAccount(sourcePublicKey);
+      const transaction = new StellarSdk.TransactionBuilder(sourceAccount, {
+        fee,
+        networkPassphrase,
+      })
+        .addOperation(StellarSdk.Operation.changeTrust({ asset }))
+        .setTimeout(30)
+        .build();
 
-  const transaction = new StellarSdk.TransactionBuilder(account, {
-    fee,
-    networkPassphrase,
-  })
-    .addOperation(StellarSdk.Operation.changeTrust({ asset }))
-    .setTimeout(30)
-    .build();
+      transaction.sign(sourceKeypair);
+      const hash = safeHash(transaction);
 
-  transaction.sign(sourceKeypair);
+      try {
+        const txResponse = await server.submitTransaction(transaction);
+        return {
+          established: true,
+          alreadyExisted: false,
+          txHash: txResponse.hash,
+          explorerUrl: getTransactionUrl(txResponse.hash),
+        };
+      } catch (error) {
+        if (isHorizonWriteUncertain(error)) {
+          if (hash) {
+            try {
+              const found = await server.transactions().transactionHash(hash).call();
+              if (found) {
+                return {
+                  established: true,
+                  alreadyExisted: false,
+                  txHash: hash,
+                  explorerUrl: getTransactionUrl(hash),
+                };
+              }
+            } catch (_) {}
+          }
+          if (attempt < SEND_MAX_ATTEMPTS) {
+            await sleep(attempt * 250);
+            continue;
+          }
+        }
 
-  try {
-    const txResponse = await server.submitTransaction(transaction);
-    return {
-      established: true,
-      alreadyExisted: false,
-      txHash: txResponse.hash,
-      explorerUrl: getTransactionUrl(txResponse.hash),
-    };
-  } catch (error) {
-    logger.error("Error establishing trustline", error.message);
-    throw new Error(`Could not establish ${asset.getCode()} trustline.`);
-  }
+        if (isBadSequence(error)) {
+          if (hash) {
+            try {
+              const found = await server.transactions().transactionHash(hash).call();
+              if (found) {
+                return {
+                  established: true,
+                  alreadyExisted: false,
+                  txHash: hash,
+                  explorerUrl: getTransactionUrl(hash),
+                };
+              }
+            } catch (_) {}
+          }
+          if (attempt < SEND_MAX_ATTEMPTS) {
+            lastError = error;
+            await sleep(attempt * 250);
+            continue;
+          }
+        }
+
+        logger.error("Error establishing trustline", error.message);
+        throw new Error(`Could not establish ${asset.getCode()} trustline.`);
+      }
+    }
+
+    throw lastError || new Error(`Could not establish ${asset.getCode()} trustline.`);
+  });
 };
 
 module.exports = {
@@ -482,6 +687,7 @@ module.exports = {
   createWallet,
   getBalance,
   getBalances,
+  getFundingAccountHealth,
   submitPayment,
   establishTrustline,
   assertNativeReserve,
@@ -494,4 +700,5 @@ module.exports = {
   redactMemo,
   fundTestnetAccount,
   getTransactionUrl,
+  withAccountLock,
 };

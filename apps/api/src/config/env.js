@@ -1,6 +1,28 @@
 require('dotenv').config();
 
+const { resolveNetworkProfile } = require('./networkProfiles');
+
 const env = process.env.NODE_ENV || 'development';
+
+// Resolve the Stellar network as one coherent profile rather than trusting the
+// raw string. Problems are collected rather than thrown here so that
+// validateEnv can report every configuration fault in a single startup
+// failure; nothing downstream should read `stellar` before that check runs.
+const rawStellarNetwork = process.env.STELLAR_NETWORK || 'testnet';
+const stellarHorizonUrls = (process.env.HORIZON_URLS || '')
+  .split(',')
+  .map((u) => u.trim())
+  .filter(Boolean);
+const stellarAllowMainnet = String(process.env.STELLAR_ALLOW_MAINNET || '').toLowerCase() === 'true';
+
+const { profile: stellarProfile, problems: stellarNetworkProblems } = resolveNetworkProfile({
+  network: rawStellarNetwork,
+  horizonUrl: process.env.STELLAR_HORIZON_URL || null,
+  horizonUrls: stellarHorizonUrls,
+  usdcIssuer: process.env.STELLAR_USDC_ISSUER || null,
+  allowMainnet: stellarAllowMainnet,
+  enableFriendbot: String(process.env.STELLAR_ENABLE_FRIENDBOT || '').toLowerCase() === 'true',
+});
 
 module.exports = {
   port: process.env.PORT || 3002,
@@ -36,6 +58,10 @@ module.exports = {
     callbackUrl: process.env.WHATSPPP_CALLBACK_URL,
     businessAccountId: process.env.WHATSPPP_BUSINESS_ACCOUNT_ID,
     graphApiVersion: process.env.META_GRAPH_API_VERSION,
+    connectTimeoutMs: Number(process.env.WHATSAPP_CONNECT_TIMEOUT_MS || 10000),
+    responseTimeoutMs: Number(process.env.WHATSAPP_RESPONSE_TIMEOUT_MS || 10000),
+    maxSendRetries: Number(process.env.WHATSAPP_SEND_MAX_RETRIES || 2),
+    retryBaseDelayMs: Number(process.env.WHATSAPP_SEND_RETRY_BASE_DELAY_MS || 250),
   },
   limits: {
     maxSendAmount: Number(process.env.MAX_SEND_AMOUNT || 1000),
@@ -84,9 +110,12 @@ module.exports = {
     sentinelMasterName: process.env.REDIS_SENTINEL_MASTER_NAME || '',
   },
   worker: {
+    healthPort: Number(process.env.WORKER_HEALTH_PORT || 3003),
     concurrency: Number(process.env.WORKER_CONCURRENCY || 5),
     lockDurationMs: Number(process.env.WORKER_LOCK_DURATION_MS || 30000),
     heartbeatIntervalMs: Number(process.env.WORKER_HEARTBEAT_INTERVAL_MS || 30000),
+    heartbeatFreshnessMs: Number(process.env.WORKER_HEARTBEAT_FRESHNESS_MS || 90000),
+    metricsIntervalMs: Number(process.env.WORKER_METRICS_INTERVAL_MS || 15000),
     shutdownTimeoutMs: Number(process.env.WORKER_SHUTDOWN_TIMEOUT_MS || 10000),
   },
   health: {
@@ -118,17 +147,28 @@ module.exports = {
     r2SecretAccessKey: process.env.CLOUDDFLARE_R2_SECRET_ACCESS_KEY,
   },
   stellar: {
-    network: process.env.STELLAR_NETWORK || 'testnet',
-    horizonUrl: process.env.STELLAR_HORIZON_URL || 'https://horizon-testnet.stellar.org',
-    horizonUrls: (process.env.HORIZON_URLS || '')
-      .split(',')
-      .map((u) => u.trim())
-      .filter(Boolean),
+    // Canonical id when the network resolved; otherwise the raw value, so the
+    // startup error can quote back what was actually configured.
+    network: stellarProfile ? stellarProfile.id : rawStellarNetwork,
+    rawNetwork: rawStellarNetwork,
+    networkProfile: stellarProfile,
+    networkProblems: stellarNetworkProblems,
+    networkPassphrase: stellarProfile ? stellarProfile.passphrase : null,
+    allowMainnet: stellarAllowMainnet,
+    horizonUrl: process.env.STELLAR_HORIZON_URL
+      || (stellarProfile ? stellarProfile.defaultHorizonUrl : 'https://horizon-testnet.stellar.org'),
+    horizonUrls: stellarHorizonUrls,
     horizonTimeoutMs: Number(process.env.HORIZON_TIMEOUT_MS || 10000),
     horizonCircuitThreshold: Number(process.env.HORIZON_CIRCUIT_THRESHOLD || 3),
     horizonCircuitCooldownMs: Number(process.env.HORIZON_CIRCUIT_COOLDOWN_MS || 30000),
-    usdcIssuer: process.env.STELLAR_USDC_ISSUER || 'GBBD47IF6LWK7P7MDEVNCWR7DPUWV3NY3DT1QEVFL4NAT4AQ3HZLLFLA5',
-    isMainnet: (process.env.STELLAR_NETWORK || 'testnet') !== 'testnet',
+    usdcIssuer: process.env.STELLAR_USDC_ISSUER
+      || (stellarProfile ? stellarProfile.usdcIssuer : null),
+    explorerBaseUrl: stellarProfile ? stellarProfile.explorerBaseUrl : null,
+    supportsFriendbot: stellarProfile ? stellarProfile.supportsFriendbot : false,
+    // Fail closed: an unresolved network is never treated as mainnet, so a
+    // typo can no longer activate real-funds behaviour. Previously any value
+    // other than the literal 'testnet' selected the public network.
+    isMainnet: stellarProfile ? stellarProfile.isMainnet : false,
     auth: {
       signingKey: process.env.STELLAR_AUTH_SIGNING_KEY,
       homeDomain: process.env.STELLAR_HOME_DOMAIN,
@@ -175,25 +215,20 @@ module.exports = {
       appId: process.env.DOJAH_APP_ID,
       secretKey: process.env.DOJAH_SECRET_KEY,
     },
-    pinPepper: process.env.PIN_PEPPER,
-    // Tier single/daily limits are denominated in policyCurrency (NGN).
-    policyCurrency: (process.env.POLICY_CURRENCY || 'NGN').trim().toUpperCase(),
-    policyVersion: process.env.POLICY_VERSION || '1',
-    policyFxMaxAgeMs: Number(process.env.POLICY_FX_MAX_AGE_MS || 300000),
-    tierLimits: {
-      0: { daily: '0.00', single: '0.00' },
-      1: {
-        daily: process.env.TIER_1_DAILY_LIMIT || '50000.00',
-        single: process.env.TIER_1_SINGLE_LIMIT || '20000.00',
-      },
-      2: {
-        daily: process.env.TIER_2_DAILY_LIMIT || '500000.00',
-        single: process.env.TIER_2_SINGLE_LIMIT || '200000.00',
-      },
-      3: {
-        daily: process.env.TIER_3_DAILY_LIMIT || '5000000.00',
-        single: process.env.TIER_3_SINGLE_LIMIT || '1000000.00',
-      },
+    pinPepper: process.env.PIN_PEPPER || process.env.PIN_PEPPER_V1 || 'development-only-pin-pepper',
+    pinPepperVersion: process.env.PIN_PEPPER_VERSION || 'v1',
+    pinPepperVersions: (process.env.PIN_PEPPER_VERSIONS || 'v1').split(',').map((v) => v.trim()).filter(Boolean),
+    pinPepperByVersion: {
+      v1: process.env.PIN_PEPPER_V1 || process.env.PIN_PEPPER || 'development-only-pin-pepper',
+      v2: process.env.PIN_PEPPER_V2 || process.env.PIN_PEPPER || 'development-only-pin-pepper',
+    },
+    pinHash: {
+      n: Number(process.env.PIN_SCRYPT_N || 16384),
+      r: Number(process.env.PIN_SCRYPT_R || 8),
+      p: Number(process.env.PIN_SCRYPT_P || 1),
+      keyLength: Number(process.env.PIN_SCRYPT_KEY_LENGTH || 32),
+      saltLength: Number(process.env.PIN_HASH_SALT_LENGTH || 16),
+      maxMem: Number(process.env.PIN_SCRYPT_MAXMEM || 128 * 1024 * 1024),
     },
   },
   voice: {
