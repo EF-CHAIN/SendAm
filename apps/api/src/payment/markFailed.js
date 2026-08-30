@@ -1,18 +1,15 @@
-// Failure-path bookkeeping for executePayment. Marking the transaction row
-// 'failed' happens inside the orchestrator's catch — if THAT update also
-// rejects (database hiccup mid-incident), the bookkeeping error must not
-// replace the original payment error the caller needs to see. prisma is
-// injected so this stays unit-testable offline.
 const defaultLogger = require('../utils/logger');
+const { transitionPaymentState } = require('./payment.transitions');
 
 const markTransactionFailed = async ({ prisma, transactionId, metadata, error, logger = defaultLogger }) => {
   try {
-    await prisma.transaction.update({
-      where: { id: transactionId },
-      data: {
-        status: 'failed',
-        metadata: { ...metadata, error: error.message },
-      },
+    await transitionPaymentState({
+      db: prisma,
+      transactionId,
+      toState: 'failed',
+      actor: { type: 'system', id: 'orchestrator' },
+      reason: error?.message || 'Transaction failed',
+      metadata,
     });
   } catch (updateError) {
     logger.error(
@@ -23,3 +20,4 @@ const markTransactionFailed = async ({ prisma, transactionId, metadata, error, l
 };
 
 module.exports = { markTransactionFailed };
+

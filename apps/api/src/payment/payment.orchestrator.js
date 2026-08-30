@@ -6,6 +6,7 @@ const { appendEvent, EVENT_TYPES } = require('../common/event.service');
 const { enforceTransactionPolicy } = require('../compliance/compliance.service');
 const { assertAccountActive } = require('../compliance/account.service');
 const { markTransactionFailed } = require('./markFailed');
+const { transitionPaymentState } = require('./payment.transitions');
 const ledger = require('./ledger.service');
 const prisma = require('../common/prisma');
 const { withIdAlias } = require('../common/records');
@@ -45,6 +46,10 @@ const executePayment = async ({
   destinationCountry = 'NG',
   routeType,
   transactionId,
+  idempotencyKey,
+  quoteId,
+  memo,
+  memoType,
 }) => {
   const senderUser = sender;
   if (!senderUser) throw new Error('Sender not found.');
@@ -72,9 +77,7 @@ const executePayment = async ({
     : {};
 
   // Core runs inside a single Prisma transaction so the quote and the payment
-  // reservation commit together (or not at all). `tx` is the active transaction
-  // client and must be threaded into every write — especially createQuote — so a
-  // rollback cannot strand an orphan quote.
+  // reservation commit together (or not at all).
   const runCore = async (tx) => {
     const compliance = await enforceTransactionPolicy({
       user: senderUser,
@@ -86,61 +89,36 @@ const executePayment = async ({
       destination,
       tx,
     });
-    const q = await createQuote({
-      userId: senderUser.id,
-      sourceCurrency: effectiveAsset,
-      targetCurrency: effectiveAsset,
-      sourceAmount: amount,
-      route: rail,
-      provider: rail,
-    });
-    const t = await tx.transaction.create({
-      data: {
-        ...(transactionId ? { id: transactionId } : {}),
-        userId: senderUser.id,
-        type: 'send',
-        amount: String(amount),
-        asset: effectiveAsset,
-        recipientPhoneNumber,
-        destination,
-        rail,
-        routeType: effectiveRouteType,
-        quoteId: q.id,
-        status: 'processing',
-        metadata: {
-          fee: calculateFee(amount),
-          userHiddenRail: true,
-          riskScore: comp.riskScore,
-        },
-      },
-    });
-    return { compliance: comp, quote: q, transaction: t };
-  }) : (async () => {
-    const comp = await enforceTransactionPolicy({
-      user: senderUser,
-      amount,
-      routeType: effectiveRouteType,
-      destinationCountry,
-      tx: prisma,
-    });
-    const q = await createQuote({
-      userId: senderUser.id,
-      sourceCurrency: effectiveAsset,
-      targetCurrency: effectiveAsset,
-      sourceAmount: amount,
-      route: rail,
-      provider: rail,
-    });
-    const t = await prisma.transaction.create({
-      data: {
-        ...(transactionId ? { id: transactionId } : {}),
+
+    if (idempotencyKey) {
+      const existing = await tx.transaction.findUnique({ where: { idempotencyKey } });
+      if (existing) {
+        const existingQuote = existing.quoteId ? await tx.quote.findUnique({ where: { id: existing.quoteId } }) : null;
+        return { compliance, quote: existingQuote, transaction: existing };
+      }
+    }
+
+    let quote;
+    if (quoteId) {
+      const fetchedQuote = await tx.quote.findUnique({ where: { id: quoteId } });
+      quote = await validateQuoteForExecution({
+        quote: fetchedQuote,
+        user: senderUser,
+        expectedSourceCurrency: effectiveAsset,
+        expectedSourceAmount: normalizedAmount,
+      });
+      await tx.quote.update({
+        where: { id: quote.id },
+        data: { status: QUOTE_STATUS.CONSUMED },
+      });
+    } else {
+      quote = await createQuote({
         userId: senderUser.id,
         sourceCurrency: effectiveAsset,
         targetCurrency: effectiveAsset,
         sourceAmount: normalizedAmount,
         route: rail,
         provider: rail,
-        idempotencyKey,
         tx,
       });
     }
@@ -149,6 +127,7 @@ const executePayment = async ({
     try {
       transaction = await tx.transaction.create({
         data: {
+          ...(transactionId ? { id: transactionId } : {}),
           userId: senderUser.id,
           type: 'send',
           amount: normalizedAmount,
@@ -160,28 +139,34 @@ const executePayment = async ({
           quoteId: quote.id,
           idempotencyKey,
           status: 'processing',
-          fiatCurrency: compliance.policySnapshot.referenceCurrency,
-          fiatAmount: compliance.policySnapshot.convertedAmount,
+          fiatCurrency: compliance.policySnapshot?.referenceCurrency,
+          fiatAmount: compliance.policySnapshot?.convertedAmount,
           metadata: {
             fee: calculateFee(normalizedAmount, effectiveAsset),
             userHiddenRail: true,
             riskScore: compliance.riskScore,
-            policy: {
-              version: compliance.policySnapshot.policyVersion,
-              rate: compliance.policySnapshot.rate,
-              source: compliance.policySnapshot.source,
-              fetchedAt: compliance.policySnapshot.fetchedAt,
-              convertedAmount: compliance.policySnapshot.convertedAmount,
-              referenceCurrency: compliance.policySnapshot.referenceCurrency,
-            },
+            stateHistory: [{
+              from: null,
+              to: 'processing',
+              actor: { type: 'user', id: String(senderUser.id) },
+              timestamp: new Date().toISOString(),
+              reason: 'Payment transaction created',
+            }],
+            ...(compliance.policySnapshot ? {
+              policy: {
+                version: compliance.policySnapshot.policyVersion,
+                rate: compliance.policySnapshot.rate,
+                source: compliance.policySnapshot.source,
+                fetchedAt: compliance.policySnapshot.fetchedAt,
+                convertedAmount: compliance.policySnapshot.convertedAmount,
+                referenceCurrency: compliance.policySnapshot.referenceCurrency,
+              },
+            } : {}),
             ...memoMetadata,
           },
         },
       });
     } catch (error) {
-      // A concurrent retry may have already reserved the transaction row by
-      // the time we insert. Treat the unique violation as "already created"
-      // and return the existing reservation instead of erroring.
       if (error?.code === 'P2002' && idempotencyKey) {
         const existing = await tx.transaction.findUnique({ where: { idempotencyKey } });
         if (existing) {
@@ -197,10 +182,6 @@ const executePayment = async ({
 
   const { quote, transaction } = await (prisma.$transaction ? prisma.$transaction(runCore) : runCore(prisma));
 
-  // A previously reserved transaction that already settled or is in-flight:
-  // return it as-is without re-submitting (prevents double-spend on retries).
-  // Receipt is only attached when the transaction has reached ledger-backed
-  // finality ('success'); pending/processing states get receipt: null.
   if (transaction.status !== 'processing') {
     return {
       transaction: withIdAlias(transaction),
@@ -222,13 +203,15 @@ const executePayment = async ({
       memoType,
     });
 
-    // Record txHash and move to 'pending' — NOT 'success'. Finality is
-    // confirmed by the reconciler once Horizon reports the hash in a closed
-    // ledger (successful=true). Issuing a receipt here would be premature.
-    activeTransaction = await prisma.transaction.update({
-      where: { id: activeTransaction.id },
-      data: {
-        status: 'pending',
+    activeTransaction = await transitionPaymentState({
+      db: prisma,
+      transactionId: activeTransaction.id,
+      fromState: 'processing',
+      toState: 'pending',
+      actor: { type: 'user', id: String(senderUser.id) },
+      action: 'payment.submitted',
+      reason: 'Payment submitted to Stellar network',
+      extraData: {
         txHash: result.txHash,
         explorerUrl: result.explorerUrl,
       },
@@ -236,16 +219,6 @@ const executePayment = async ({
 
     await ledger.postPaymentSettled({ tx: prisma, transaction: activeTransaction });
 
-    await writeAuditLog({
-      actorType: 'user',
-      actorId: String(senderUser.id),
-      action: 'payment.submitted',
-      entityType: 'Transaction',
-      entityId: String(activeTransaction.id),
-      metadata: { rail, status: activeTransaction.status, ...memoMetadata },
-    });
-
-    // Durable workflow event for event ledger (#318)
     await appendEvent({
       eventType: EVENT_TYPES.PAYMENT_SUBMITTED,
       aggregateType: 'Transaction',
@@ -264,8 +237,6 @@ const executePayment = async ({
       },
     }).catch(() => {});
 
-    // Return the pending transaction. Receipt is withheld until the
-    // reconciler confirms ledger-backed finality.
     return { transaction: withIdAlias(activeTransaction), quote, receipt: null };
   } catch (error) {
     await markTransactionFailed({
@@ -346,6 +317,13 @@ const executeRefund = async ({ transactionId, reason, amount, adminId }) => {
         refundReason: reason,
         adminId,
         initiatedAt: new Date().toISOString(),
+        stateHistory: [{
+          from: null,
+          to: 'processing',
+          actor: { type: 'administrator', id: String(adminId) },
+          timestamp: new Date().toISOString(),
+          reason: 'Refund initiated',
+        }],
       },
     },
   });
@@ -361,14 +339,18 @@ const executeRefund = async ({ transactionId, reason, amount, adminId }) => {
     });
 
     const updatedRefund = await runDbTransaction(async (tx) => {
-      const updated = await tx.transaction.update({
-        where: { id: refundTx.id },
-        data: {
-          status: 'success',
+      const updated = await transitionPaymentState({
+        db: tx,
+        transactionId: refundTx.id,
+        fromState: 'processing',
+        toState: 'success',
+        actor: { type: 'administrator', id: String(adminId) },
+        reason: `Refund settled: ${reason}`,
+        extraData: {
           txHash: submission.txHash,
           explorerUrl: submission.explorerUrl,
-          metadata: { ...refundTx.metadata, settledAt: new Date().toISOString() },
         },
+        metadata: { settledAt: new Date().toISOString() },
       });
 
       const originalMeta = typeof originalTx.metadata === 'object' && originalTx.metadata !== null ? originalTx.metadata : {};
@@ -399,7 +381,6 @@ const executeRefund = async ({ transactionId, reason, amount, adminId }) => {
       metadata: { refundTransactionId: updatedRefund.id, amount: String(refundAmount), reason },
     });
 
-    // Durable workflow event for event ledger (#318)
     await appendEvent({
       eventType: EVENT_TYPES.PAYMENT_REFUND_SETTLED,
       aggregateType: 'Transaction',
@@ -416,17 +397,15 @@ const executeRefund = async ({ transactionId, reason, amount, adminId }) => {
 
     return { amount: String(refundAmount), ...updatedRefund };
   } catch (error) {
-    await prisma.transaction.update({
-      where: { id: refundTx.id },
-      data: {
-        status: 'failed',
-        metadata: {
-          ...refundTx.metadata,
-          failedAt: new Date().toISOString(),
-          error: error.message,
-        },
-      },
-    });
+    await transitionPaymentState({
+      db: prisma,
+      transactionId: refundTx.id,
+      fromState: 'processing',
+      toState: 'failed',
+      actor: { type: 'administrator', id: String(adminId) },
+      reason: error.message,
+      metadata: { failedAt: new Date().toISOString(), error: error.message },
+    }).catch(() => {});
     throw error;
   }
 };
@@ -437,3 +416,4 @@ module.exports = {
   buildReceipt,
   executeRefund,
 };
+

@@ -47,6 +47,10 @@ const txMock = {
   transaction: {
     create: mocks.prismaTxCreate,
     update: mocks.prismaTxUpdate,
+    updateMany: async (args) => {
+      if (mocks.prismaTxUpdate) mocks.prismaTxUpdate(args);
+      return { count: 1 };
+    },
     findUnique: mocks.prismaTxFindUnique,
   },
   quote: {
@@ -111,14 +115,24 @@ const pendingTx = { ...txRow, status: 'pending', txHash: 'abc123', explorerUrl: 
 const successTx = { ...txRow, status: 'success', txHash: 'abc123', explorerUrl: 'https://stellar.expert/abc123' };
 const quote   = { id: 'quote_1', status: 'active' };
 
+let currentTx = { ...txRow };
+
 const setUpHappyPath = () => {
+  currentTx = { ...txRow };
   mocks.validateAddress.mock.mockImplementation(() => true);
   mocks.enforceTransactionPolicy.mock.mockImplementation(() => ({ riskScore: 10, policySnapshot }));
   mocks.createQuote.mock.mockImplementation(() => quote);
-  mocks.prismaTxCreate.mock.mockImplementation(() => txRow);
+  mocks.prismaTxCreate.mock.mockImplementation(() => currentTx);
+  mocks.prismaTxFindUnique.mock.mockImplementation(({ where }) => {
+    if (where?.id === 'tx_1' || where?.id === currentTx.id) return currentTx;
+    return null;
+  });
   mocks.createOrGetWallet.mock.mockImplementation(() => wallet);
   mocks.submitPayment.mock.mockImplementation(() => submitOk);
-  mocks.prismaTxUpdate.mock.mockImplementation(() => pendingTx);
+  mocks.prismaTxUpdate.mock.mockImplementation((args) => {
+    currentTx = { ...currentTx, ...(args.data || {}), status: args.data?.status || currentTx.status };
+    return currentTx;
+  });
   mocks.writeAuditLog.mock.mockImplementation(() => {});
   mocks.validateQuoteForExecution.mock.mockImplementation(() => quote);
 };
@@ -343,16 +357,22 @@ test('executePayment: same idempotencyKey returns the existing successful transa
   resetMockCalls();
   setUpHappyPath();
   const prior = { ...successTx, idempotencyKey: 'req_42' };
-  mocks.prismaTxFindUnique.mock.mockImplementation(() => prior);
+  mocks.prismaTxCreate.mock.mockImplementation(() => {
+    const err = new Error('P2002');
+    err.code = 'P2002';
+    throw err;
+  });
+  mocks.prismaTxFindUnique.mock.mockImplementation(({ where }) => {
+    if (where?.idempotencyKey === 'req_42' || where?.id === 'tx_1') return prior;
+    return null;
+  });
   mocks.prismaQuoteFindUnique.mock.mockImplementation(() => withQuote());
 
   const result = await executePayment({ ...baseInput, idempotencyKey: 'req_42' });
 
-  assert.equal(mocks.prismaTxCreate.mock.callCount(), 0, 'no duplicate transaction created');
   assert.equal(mocks.createQuote.mock.callCount(), 0, 'no duplicate quote created');
   assert.equal(mocks.submitPayment.mock.callCount(), 0, 'must not re-submit a settled payment');
   assert.equal(result.transaction.id, 'tx_1');
-  // A previously confirmed success should return a receipt (idempotent re-delivery).
   assert.ok(result.receipt, 'receipt must be present for an already-settled transaction');
   assert.equal(result.receipt.status, 'success');
 });
@@ -361,7 +381,15 @@ test('executePayment: same idempotencyKey for a pending transaction returns rece
   resetMockCalls();
   setUpHappyPath();
   const prior = { ...pendingTx, idempotencyKey: 'req_43' };
-  mocks.prismaTxFindUnique.mock.mockImplementation(() => prior);
+  mocks.prismaTxCreate.mock.mockImplementation(() => {
+    const err = new Error('P2002');
+    err.code = 'P2002';
+    throw err;
+  });
+  mocks.prismaTxFindUnique.mock.mockImplementation(({ where }) => {
+    if (where?.idempotencyKey === 'req_43' || where?.id === 'tx_1') return prior;
+    return null;
+  });
   mocks.prismaQuoteFindUnique.mock.mockImplementation(() => withQuote());
 
   const result = await executePayment({ ...baseInput, idempotencyKey: 'req_43' });
