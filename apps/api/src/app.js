@@ -12,6 +12,7 @@ const pricingRoutes = require('./pricing/pricing.routes');
 const simRoutes = require('./routes/sim.routes');
 const authRoutes = require('./routes/auth.routes');
 const receiptRoutes = require('./routes/receipt.routes');
+const retentionRoutes = require('./routes/retention.routes');
 
 const errorHandler = require('./middlewares/errorHandler');
 const notFound = require('./middlewares/notFound');
@@ -25,6 +26,7 @@ const { requestMetrics, metricsHandler, increment } = require('./observability/m
 const { AppError } = require('./errors');
 const { getContext } = require('./observability/context');
 const { pingRedis } = require('./queues/queue.service');
+const { checkAll, httpStatusFor } = require('./observability/dependencies');
 
 const app = express();
 let startupComplete = false;
@@ -225,6 +227,7 @@ if (config.features.walletRestApi) {
 }
 
 app.use('/api/admin', adminRoutes);
+app.use('/api/admin/retention', retentionRoutes);
 app.use('/api/compliance', complianceRoutes);
 app.use('/api/pricing', pricingRoutes);
 

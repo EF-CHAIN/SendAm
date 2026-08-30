@@ -145,6 +145,16 @@ const validateWorkerEnv = (config) => {
   if (!Number.isFinite(config.worker?.lockDurationMs) || config.worker.lockDurationMs < 5000) {
     problems.push('WORKER_LOCK_DURATION_MS must be at least 5000.');
   }
+  if (!Number.isInteger(config.worker?.healthPort) || config.worker.healthPort < 1 || config.worker.healthPort > 65535) {
+    problems.push('WORKER_HEALTH_PORT must be an integer between 1 and 65535.');
+  }
+  if (!Number.isFinite(config.worker?.heartbeatFreshnessMs)
+      || config.worker.heartbeatFreshnessMs < config.worker.heartbeatIntervalMs) {
+    problems.push('WORKER_HEARTBEAT_FRESHNESS_MS must be at least WORKER_HEARTBEAT_INTERVAL_MS.');
+  }
+  if (!Number.isFinite(config.worker?.metricsIntervalMs) || config.worker.metricsIntervalMs < 1000) {
+    problems.push('WORKER_METRICS_INTERVAL_MS must be at least 1000.');
+  }
   if (problems.length) throw new Error(`Invalid worker configuration:\n  - ${problems.join('\n  - ')}`);
 };
 

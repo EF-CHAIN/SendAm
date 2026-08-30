@@ -1,9 +1,10 @@
 const axios = require('axios');
+const { randomUUID } = require('node:crypto');
 const config = require('../config/env');
 const logger = require('../utils/logger');
 const outbox = require('./notificationOutbox.service');
 const { increment } = require('../observability/metrics');
-const { outboundHeaders } = require('../observability/context');
+const { getContext, outboundHeaders } = require('../observability/context');
 const { ProviderSkippedError } = require('../compliance/providerErrors');
 
 // ---------------------------------------------------------------------------
@@ -18,6 +19,55 @@ const { ProviderSkippedError } = require('../compliance/providerErrors');
 // ---------------------------------------------------------------------------
 const STATUS_RANK = { sent: 1, delivered: 2, read: 3, failed: 4 };
 const MAX_OUTBOUND_RETRIES = 2;
+const activeSendControllers = new Set();
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const waitForRetry = async (ms, sleepImpl, signal) => {
+  if (signal.aborted) return;
+  let onAbort;
+  await Promise.race([
+    sleepImpl(ms),
+    new Promise((resolve) => {
+      onAbort = resolve;
+      signal.addEventListener('abort', resolve, { once: true });
+    }),
+  ]);
+  signal.removeEventListener('abort', onAbort);
+};
+
+const cancelInFlightSends = (reason = 'shutdown') => {
+  for (const controller of activeSendControllers) controller.abort({ type: 'shutdown', message: reason });
+  return activeSendControllers.size;
+};
+
+const errorDetails = (error, kind) => ({
+  kind,
+  status: error.response?.status || null,
+  code: error.code || null,
+  message: String(error.response?.data?.error?.message || error.message || kind).slice(0, 500),
+});
+
+const classifySynchronousFailure = (error, signal) => {
+  if (signal.aborted) {
+    const cancelled = ['shutdown', 'caller'].includes(signal.reason?.type);
+    return { outcome: 'unknown', retryable: false, error: errorDetails(error, cancelled ? 'cancelled' : 'timeout') };
+  }
+  const status = error.response?.status;
+  if (status === 429 || status >= 500) {
+    return { outcome: 'transient_failure', retryable: true, error: errorDetails(error, 'http') };
+  }
+  if (status >= 400 && status < 500) {
+    return { outcome: 'permanent_failure', retryable: false, error: errorDetails(error, 'http') };
+  }
+  if (['ECONNABORTED', 'ETIMEDOUT'].includes(error.code)) {
+    return { outcome: 'unknown', retryable: false, error: errorDetails(error, 'timeout') };
+  }
+  if (['ENOTFOUND', 'EAI_AGAIN', 'ECONNREFUSED', 'ENETUNREACH'].includes(error.code)) {
+    return { outcome: 'transient_failure', retryable: true, error: errorDetails(error, 'network') };
+  }
+  return { outcome: 'unknown', retryable: false, error: errorDetails(error, 'network') };
+};
 
 // Meta error codes seen on `statuses[].errors[].code`. Only failures known to
 // be transient (rate limiting, temporary delivery problems) are retried.
@@ -135,6 +185,14 @@ const sendTemplateMessage = async (to, templateName, languageCode = 'en', compon
   }
 };
 
+/**
+ * @typedef {'accepted'|'transient_failure'|'permanent_failure'|'unknown'} SendOutcome
+ * @typedef {{outcome: SendOutcome, correlationId: string, attempts: number,
+ *   providerMessageId?: string, retryable?: boolean, data?: object,
+ *   error?: {kind: string, status: number|null, code: string|null, message: string}}} SendResult
+ */
+
+/** @returns {Promise<SendResult>} */
 const sendTextMessage = async (to, body, options = {}) => {
   const {
     messageTransport = config.messageTransport,
@@ -146,12 +204,22 @@ const sendTextMessage = async (to, body, options = {}) => {
     templateName = null,
     templateLanguage = 'en',
     templateComponents = [],
+    signal: callerSignal = null,
+    correlationId: providedCorrelationId = null,
+    sleepImpl = sleep,
   } = options;
+  const correlationId = providedCorrelationId
+    || getContext().correlationId
+    || (notification?.referenceType && notification?.referenceId
+      ? `${notification.referenceType}:${notification.referenceId}`
+      : randomUUID());
 
   // Meta 24-hour Customer Service Window Enforcement (#190)
   if (enforceWindow && !isWithinConversationWindow(lastCustomerInteractionAt)) {
     if (templateName) {
-      return sendTemplateMessage(to, templateName, templateLanguage, templateComponents, options);
+      const data = await sendTemplateMessage(to, templateName, templateLanguage, templateComponents, options);
+      const providerMessageId = data?.messages?.[0]?.id || null;
+      return { outcome: data ? 'accepted' : 'unknown', providerMessageId, correlationId, attempts: 1, data };
     }
     logger.warn('whatsapp_window_expired', { to, lastCustomerInteractionAt });
     const db = notification ? (prisma || require('../common/prisma')) : null;
@@ -164,7 +232,10 @@ const sendTextMessage = async (to, body, options = {}) => {
         error: 'Meta customer service window expired (24h). Approved template required.',
       });
     }
-    return null;
+    return {
+      outcome: 'permanent_failure', retryable: false, correlationId, attempts: 1,
+      error: { kind: 'conversation_window', status: null, code: null, message: 'Meta customer service window expired (24h). Approved template required.' },
+    };
   }
 
   // Notification recording is opt-in: callers that care about delivery
@@ -211,27 +282,71 @@ const sendTextMessage = async (to, body, options = {}) => {
       } else if (db && notification) {
         await recordNotificationCreated(db, notification, { to, body, providerMessageId: null, status: 'sent' });
       }
-      return result;
+      return { outcome: 'accepted', providerMessageId: null, correlationId, attempts: 1, data: result };
+    } catch (error) {
+      return { outcome: 'permanent_failure', retryable: false, correlationId, attempts: 1, error: errorDetails(error, 'storage') };
     }
+  }
 
-    const url = `https://graph.facebook.com/v19.0/${config.whatsapp.phoneNumberId}/messages`;
+  const url = `https://graph.facebook.com/${config.whatsapp.graphApiVersion || 'v19.0'}/${config.whatsapp.phoneNumberId}/messages`;
 
-    const payload = {
-      messaging_product: 'whatsapp',
-      recipient_type: 'individual',
-      to: to,
-      type: 'text',
-      text: {
-        preview_url: false,
-        body: body,
-      }
-    };
+  const payload = {
+    messaging_product: 'whatsapp',
+    recipient_type: 'individual',
+    to,
+    type: 'text',
+    text: { preview_url: false, body },
+    biz_opaque_callback_data: String(correlationId).slice(0, 512),
+  };
 
-    const response = await axiosImpl.post(url, payload, {
-      headers: {
-        'Authorization': `Bearer ${config.whatsapp.token}`,
-        'Content-Type': 'application/json',
-        ...outboundHeaders(),
+  const controller = new AbortController();
+  activeSendControllers.add(controller);
+  const onCallerAbort = () => controller.abort({ type: 'caller', message: 'caller cancelled' });
+  callerSignal?.addEventListener('abort', onCallerAbort, { once: true });
+  if (callerSignal?.aborted) onCallerAbort();
+  const connectDeadline = setTimeout(
+    () => controller.abort({ type: 'timeout', message: 'connection deadline exceeded' }),
+    config.whatsapp.connectTimeoutMs,
+  );
+
+  let finalResult;
+  const maxAttempts = Math.max(1, Number(config.whatsapp.maxSendRetries || 0) + 1);
+  try {
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      try {
+        const response = await axiosImpl.post(url, payload, {
+          headers: {
+            'Authorization': `Bearer ${config.whatsapp.token}`,
+            'Content-Type': 'application/json',
+            ...outboundHeaders(),
+          },
+          timeout: config.whatsapp.responseTimeoutMs,
+          signal: controller.signal,
+        });
+        const providerMessageId = response.data?.messages?.[0]?.id;
+        finalResult = providerMessageId && typeof providerMessageId === 'string'
+          ? { outcome: 'accepted', providerMessageId, correlationId, attempts: attempt, data: response.data }
+          : {
+            outcome: 'unknown', retryable: false, correlationId, attempts: attempt,
+            error: { kind: 'malformed_response', status: response.status || 200, code: null, message: 'Meta response did not contain a message id' },
+          };
+        break;
+      } catch (error) {
+        const classified = classifySynchronousFailure(error, controller.signal);
+        finalResult = { ...classified, correlationId, attempts: attempt };
+        if (!classified.retryable || attempt === maxAttempts) break;
+        const retryAfterSeconds = Number(error.response?.headers?.['retry-after']);
+        const delay = Number.isFinite(retryAfterSeconds)
+          ? retryAfterSeconds * 1000
+          : config.whatsapp.retryBaseDelayMs * (2 ** (attempt - 1));
+        await waitForRetry(delay, sleepImpl, controller.signal);
+        if (controller.signal.aborted) {
+          finalResult = {
+            outcome: 'unknown', retryable: false, correlationId, attempts: attempt,
+            error: errorDetails(new Error('send cancelled'), controller.signal.reason?.type === 'timeout' ? 'timeout' : 'cancelled'),
+          };
+          break;
+        }
       }
     });
 
@@ -249,6 +364,11 @@ const sendTextMessage = async (to, body, options = {}) => {
         status: providerMessageId ? 'sent' : 'queued',
       });
     }
+  } finally {
+    clearTimeout(connectDeadline);
+    callerSignal?.removeEventListener('abort', onCallerAbort);
+    activeSendControllers.delete(controller);
+  }
 
     return response.data;
   } catch (error) {
@@ -278,6 +398,7 @@ const sendTextMessage = async (to, body, options = {}) => {
     // Don't throw to prevent webhook failures when whatsapp is misconfigured
     return null;
   }
+  return finalResult;
 };
 
 /**
@@ -472,4 +593,6 @@ module.exports = {
   classifyWhatsappFailure,
   deleteUserData,
   STATUS_RANK,
+  cancelInFlightSends,
+  classifySynchronousFailure,
 };

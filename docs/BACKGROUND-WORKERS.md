@@ -5,7 +5,8 @@ SendAm has two independently managed process types:
 - `npm start --workspace=apps/api` runs the HTTP API. It validates webhooks and
   enqueues jobs, but never imports or starts a processor or poller.
 - `npm run start:worker --workspace=apps/api` runs BullMQ processors and
-  scheduled pollers. It does not bind an HTTP port.
+  scheduled pollers. It binds a worker-only probe and metrics port (3003 by
+  default); this is not the public API port.
 
 The root `Procfile` provides matching `web` and `worker` process declarations
 for platforms that support Procfiles.
@@ -21,6 +22,11 @@ WORKER_CONCURRENCY=5
 WORKER_LOCK_DURATION_MS=30000
 WORKER_SHUTDOWN_TIMEOUT_MS=30000
 WORKER_HEARTBEAT_INTERVAL_MS=60000
+WORKER_HEARTBEAT_FRESHNESS_MS=90000
+WORKER_HEALTH_PORT=3003
+WORKER_METRICS_INTERVAL_MS=15000
+# Optional; defaults to hostname:pid and must be unique per replica.
+WORKER_INSTANCE_ID=sendam-worker-0
 PROCESS_TYPE=worker
 DATABASE_POOL_MAX=5
 DATABASE_CONNECTION_TIMEOUT_MS=5000
@@ -74,6 +80,20 @@ before deploying the API-only release. A brief overlap is safe because BullMQ
 coordinates consumers and job IDs are stable.
 
 ## Monitoring and recovery
+
+Scrape every worker replica directly at `GET :3003/metrics` with
+`Authorization: Bearer <METRICS_TOKEN>`. Preserve Prometheus's `instance` and
+Kubernetes `pod` labels; do not scrape through a load balancer that hides
+individual replicas. Configure liveness as `GET :3003/live` and readiness as
+`GET :3003/ready`. Readiness returns 503 when PostgreSQL or Redis is unavailable,
+the WhatsApp processor is missing, the heartbeat is stale, or shutdown starts.
+
+Worker metrics include per-queue waiting/active/failed counts, oldest-job age,
+stalled-job events, last successful processing time, deposit-sweep age, and
+heartbeat/readiness gauges. `worker_id` distinguishes replicas; monitoring
+should aggregate queue totals while retaining `instance`/`worker_id` for
+diagnosis. Load `observability/prometheus-rules.yml` so API-up cannot mask a
+worker-down, stale-sweep, or queue-lag alert.
 
 Alert on:
 

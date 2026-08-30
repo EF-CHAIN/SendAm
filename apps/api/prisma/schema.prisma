@@ -15,13 +15,13 @@ model User {
   pinHash      String?
   pinSetAt     DateTime?
   pendingSend    Json?
+  confirmationVersion Int       @default(0)
   welcomeSentAt  DateTime?
-  contactsJson               Json?
-  lastCustomerInteractionAt  DateTime?
-  messagingConsent           String    @default("opted_in")
-  consentSource             String?   @default("system")
-  consentUpdatedAt          DateTime? @default(now())
-  locale                     String    @default("en")
+  contactsJson   Json?
+  deletedAt      DateTime?
+  deletionStatus String?
+  anonymizedAt   DateTime?
+  legalHold      Boolean?  @default(false)
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
 
@@ -34,13 +34,20 @@ model User {
   notifications Notification[]
   quotes        Quote[]
   restSessions  RestSession[]
+  supportCases  SupportCase[]
 
   privacyRequests PrivacyRequest[]
   legalHolds     LegalHold[]
   anonymizedAt   DateTime?
+  deactivatedAt  DateTime?   // set when account is deactivated (#332)
+  deactivationReason String? // last deactivation reason code
+
+  accountStatusRecords AccountStatusRecord[]
+  messagingConsentRecords MessagingConsentRecord[]
 
   @@index([anonymizedAt])
   @@index([createdAt, id])
+  @@index([deactivatedAt])
 }
 
 model Sep10Challenge {
@@ -107,7 +114,7 @@ model Wallet {
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
 
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Restrict)
 
   // Network is part of wallet identity: the same user may hold one wallet per
   // chain per network, and testnet material can never satisfy a mainnet lookup.
@@ -144,9 +151,10 @@ model Transaction {
   createdAt             DateTime @default(now())
   updatedAt             DateTime @updatedAt
 
-  user  User   @relation(fields: [userId], references: [id], onDelete: Cascade)
-  quote         Quote?         @relation(fields: [quoteId], references: [id])
-  ledgerEntries JournalEntry[]
+  user  User   @relation(fields: [userId], references: [id], onDelete: Restrict)
+  quote Quote? @relation(fields: [quoteId], references: [id])
+  idempotencyRequest PaymentIdempotency?
+  confirmation PaymentConfirmation?
 
   @@index([userId, createdAt])
   @@index([status])
@@ -205,6 +213,58 @@ model LedgerPosting {
   @@index([asset, createdAt])
 }
 
+model PaymentIdempotency {
+  id             String   @id @default(cuid())
+  userId         String
+  operation      String
+  key            String
+  fingerprint    String
+  state          String   @default("processing")
+  response       Json?
+  reservedTransactionId String   @unique
+  transactionId  String?  @unique
+  leaseExpiresAt DateTime
+  expiresAt      DateTime
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  transaction Transaction? @relation(fields: [transactionId], references: [id], onDelete: SetNull)
+
+  @@unique([userId, operation, key])
+  @@index([expiresAt])
+  @@index([state, leaseExpiresAt])
+}
+
+model PaymentConfirmation {
+  id             String   @id @default(cuid())
+  userId         String
+  nonce          String   @unique
+  reference      String
+  version        Int
+  summaryHash    String
+  amount         String
+  asset          String
+  destination    String
+  recipientLabel String?
+  routeType      String
+  state          String   @default("pending")
+  expiresAt      DateTime
+  authorizedAt   DateTime?
+  cancelledAt    DateTime?
+  transactionId  String?  @unique
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  transaction Transaction? @relation(fields: [transactionId], references: [id], onDelete: SetNull)
+
+  @@unique([userId, reference])
+  @@unique([userId, version])
+  @@index([userId, state, createdAt])
+  @@index([expiresAt])
+}
+
 model Contact {
   id              String   @id @default(cuid())
   ownerId         String
@@ -216,7 +276,7 @@ model Contact {
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
-  owner User @relation("ContactOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  owner User @relation("ContactOwner", fields: [ownerId], references: [id], onDelete: Restrict)
 
   @@unique([ownerId, phoneNumber])
 }
@@ -230,7 +290,7 @@ model Alias {
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Restrict)
 
   @@unique([userId, alias])
 }
@@ -254,13 +314,12 @@ model KycProfile {
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
 
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-  screeningResults SanctionsScreeningResult[]
+  user User @relation(fields: [userId], references: [id], onDelete: Restrict)
 
   @@index([status])
   @@index([sanctionsStatus])
   @@index([custodyStatus])
-  @@index([status, updatedAt])
+  @@index([status, updatedAt, id])
   @@index([updatedAt, id])
 }
 
@@ -335,7 +394,7 @@ model VoiceCommand {
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
 
-  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+  user User? @relation(fields: [userId], references: [id], onDelete: Restrict)
 
   @@index([phoneNumber])
   @@index([whatsappMessageId])
@@ -364,6 +423,7 @@ model AuditLog {
   @@index([actorType, createdAt])
   @@index([entityType, createdAt])
   @@index([entityId, createdAt])
+  @@index([actorId, createdAt])
 }
 
 model AdminUser {
@@ -470,7 +530,7 @@ model Notification {
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
 
-  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+  user User? @relation(fields: [userId], references: [id], onDelete: Restrict)
 
   @@index([status, claimedAt])
   @@index([userId])
@@ -536,7 +596,7 @@ model Quote {
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
-  user         User?         @relation(fields: [userId], references: [id], onDelete: SetNull)
+  user         User?         @relation(fields: [userId], references: [id], onDelete: Restrict)
   transactions Transaction[]
 
   @@index([userId])
@@ -573,6 +633,24 @@ model RateLimitHit {
   resetAt   DateTime
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+model UserErasure {
+  id          String   @id @default(cuid())
+  userId      String
+  actorType   String   @default("system")
+  actorId     String?
+  reason      String
+  jurisdiction String? 
+  legalHold   Boolean  @default(false)
+  status      String   @default("completed")
+  executedAt  DateTime @default(now())
+  createdAt   DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@index([userId, executedAt])
+  @@index([status])
 }
 
 model SimMessage {
@@ -764,6 +842,55 @@ model SupportCaseSnapshot {
   case SupportCase @relation(fields: [caseId], references: [id], onDelete: Cascade)
 
   @@index([caseId, snapshotType])
+}
+
+// ─── Issue #318: Event sourcing / workflow event ledger ──────────────────────
+// Immutable, append-only domain event log for execution-critical workflows.
+// Each record is chained to the previous via HMAC so deletions and reorderings
+// are detectable. Events are never updated or deleted — new events supersede.
+//
+// `aggregateType` / `aggregateId` identify the domain object the event belongs
+// to (e.g. "Transaction"/"cuid", "Wallet"/"cuid", "User"/"cuid").
+// `payload` holds structured event data: who triggered it, what changed, why.
+model WorkflowEvent {
+  id            String   @id @default(cuid())
+  eventType     String   // e.g. payment.submitted, kyc.approved, account.deactivated
+  aggregateType String?  // Domain model name (Transaction, Wallet, User, KycProfile, …)
+  aggregateId   String?  // ID of the domain object
+  actorType     String   @default("system") // user | administrator | system
+  actorId       String?  // userId or adminId that triggered the event
+  payload       Json     @default("{}") // structured event data
+  previousHash  String?  @unique // chained reference for tamper-detection
+  hash          String?  @unique // HMAC over (previousHash + event fields)
+  createdAt     DateTime @default(now())
+
+  @@index([eventType, createdAt])
+  @@index([aggregateType, aggregateId])
+  @@index([actorType, actorId])
+  @@index([createdAt, id])
+}
+
+// ─── Issue #332: Account deactivation/reactivation ───────────────────────────
+// Records every deactivation and reactivation for a user account, along with
+// the reason, approving admin, and current state. Wallet and payment activity
+// is blocked while status = 'deactivated'. Reactivation requires admin approval
+// and writes a matching event to WorkflowEvent for the full audit trail.
+model AccountStatusRecord {
+  id          String   @id @default(cuid())
+  userId      String
+  status      String   // 'active' | 'deactivated'
+  reason      String   // structured reason code
+  notes       String?  // free-text detail
+  initiatedBy String   // admin user ID or 'system'
+  approvedBy  String?  // second-approval admin user ID (for reactivation)
+  approvedAt  DateTime?
+  effectiveAt DateTime @default(now())
+  createdAt   DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([status, createdAt])
 }
 
 // Multi-tenant / partner isolation marker for routing and authorization scoping.

@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 const {
   increment,
   observeDuration,
+  setGauge,
   renderMetrics,
   metricsHandler,
   resetMetrics,
@@ -13,10 +14,12 @@ beforeEach(() => resetMetrics());
 test('renders Prometheus counters and histograms with bounded labels', () => {
   increment('sendam_http_requests_total', { method: 'GET', route: '/health', status_code: 200 });
   observeDuration('sendam_http_request_duration_seconds', { method: 'GET', route: '/health', status_code: 200 }, 0.2);
+  setGauge('sendam_test_gauge', 7, { process: 'worker' });
   const body = renderMetrics();
   assert.match(body, /sendam_http_requests_total\{method="GET",route="\/health",status_code="200"\} 1/);
   assert.match(body, /sendam_http_request_duration_seconds_count.* 1/);
   assert.match(body, /sendam_process_resident_memory_bytes/);
+  assert.match(body, /sendam_test_gauge\{process="worker"\} 7/);
 });
 
 test('metrics endpoint requires the dedicated bearer token', () => {

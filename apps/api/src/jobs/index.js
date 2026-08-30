@@ -11,6 +11,7 @@ const registerJobs = () => {
   const outboxReconciler = startOutboxReconciler();
   return {
     whatsappWorker,
+    processorNames: ['whatsapp-inbound'],
     stop: async () => {
       depositPoller.stop();
       auditPoller.stop();

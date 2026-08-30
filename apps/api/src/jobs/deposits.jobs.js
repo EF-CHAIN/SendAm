@@ -500,7 +500,7 @@ const runDepositSweep = async (deps) => {
     });
   } catch (err) {
     logger.error(`Deposit poller: failed to load wallets: ${err.message}`);
-    return;
+    return false;
   }
 
   // Process wallets sequentially to stay within Horizon rate limits.
@@ -521,7 +521,9 @@ const runDepositSweep = async (deps) => {
     await processDepositOutbox(deps);
   } catch (err) {
     logger.error(`Deposit poller: outbox worker error: ${err.message}`);
+    return false;
   }
+  return true;
 };
 
 // ---------------------------------------------------------------------------
@@ -549,16 +551,25 @@ const startDepositPoller = ({
   fetchRate = () => getExchangeRate({ sourceCurrency: 'USDC', targetCurrency: 'NGN' }),
 } = {}) => {
   const deps = { horizon, prismaClient, notify, fetchRate };
+  let lastSuccessfulSweepAt = 0;
+  setGauge('sendam_deposit_sweep_last_success_timestamp_seconds', () => lastSuccessfulSweepAt / 1000);
+  setGauge('sendam_deposit_sweep_age_seconds', () => (
+    lastSuccessfulSweepAt ? Math.max(0, (Date.now() - lastSuccessfulSweepAt) / 1000) : -1
+  ));
+
+  const sweep = async () => {
+    if (await runDepositSweep(deps)) lastSuccessfulSweepAt = Date.now();
+  };
 
   logger.info(`Deposit poller started (interval: ${intervalMs}ms)`);
 
   // Run immediately on start, then on each interval tick.
-  runDepositSweep(deps).catch((err) => {
+  sweep().catch((err) => {
     logger.error(`Deposit poller: initial sweep error: ${err.message}`);
   });
 
   const timer = setInterval(() => {
-    runDepositSweep(deps).catch((err) => {
+    sweep().catch((err) => {
       logger.error(`Deposit poller: sweep error: ${err.message}`);
     });
   }, intervalMs);

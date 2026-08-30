@@ -1,11 +1,12 @@
 const stellarAdapter = require('./stellar.adapter');
 const { encrypt, decrypt } = require('../services/crypto.service');
-const { writeAuditLog } = require('../common/audit.service');
-const prisma = require('../common/prisma');
 const { withIdAlias, withIdAliases } = require('../common/records');
 const logger = require('../utils/logger');
 const { canonicalizePhoneNumber } = require('../utils/validators');
 const config = require('../config/env');
+
+const getPrisma = () => require('../common/prisma');
+const getWriteAuditLog = () => require('../common/audit.service').writeAuditLog;
 
 // SendAm is Stellar-only. The chain column stays on Wallet for legacy rows
 // (a removed Lisk rail once wrote chain='lisk'); those rows are ignored
@@ -116,6 +117,9 @@ const provisionWallet = async (walletId) => {
 // secret key is encrypted (crypto.service.js) before it ever touches the
 // database. Callers never see a plaintext secret key.
 const createOrGetWallet = async ({ user, phoneNumber }) => {
+  const prisma = getPrisma();
+  const writeAuditLog = getWriteAuditLog();
+
   let owner = user;
   if (!owner) {
     const canonicalPhone = canonicalizePhoneNumber(phoneNumber);
@@ -125,6 +129,7 @@ const createOrGetWallet = async ({ user, phoneNumber }) => {
       update: {},
     });
   }
+  assertAccountActive(owner);
 
   const network = activeNetwork();
 
@@ -175,6 +180,16 @@ const createOrGetWallet = async ({ user, phoneNumber }) => {
     metadata: { chain: CHAIN, network },
   });
 
+  // Durable workflow event (#318)
+  await appendEvent({
+    eventType: EVENT_TYPES.WALLET_CREATED,
+    aggregateType: 'Wallet',
+    aggregateId: String(wallet.id),
+    actorType: 'system',
+    actorId: String(owner.id),
+    payload: { chain: CHAIN, publicKey: wallet.publicKey, network: wallet.network },
+  }).catch(() => {});
+
   return withIdAlias(wallet);
 };
 
@@ -201,11 +216,18 @@ const getWalletByUserAndChain = async ({ userId, chain = CHAIN, network = null }
 };
 
 const fundWallet = async ({ wallet }) => {
-  const provisioned = await provisionWallet(wallet.id);
-  return {
-    wallet: withIdAlias(provisioned),
-    result: { funded: provisioned.funded, fundingState: provisioned.fundingState, trustlineState: provisioned.trustlineState },
-  };
+  const prisma = getPrisma();
+  const result = await stellarAdapter.fundTestnetAccount(wallet.publicKey);
+  if (result.funded) {
+    // Retry the (idempotent) trustline so a wallet that missed it at creation
+    // — e.g. funding succeeded but the trustline call failed — recovers here.
+    await ensureUsdcTrustline({
+      secretKey: decrypt(wallet.encryptedSecretKey),
+      publicKey: wallet.publicKey,
+    });
+    return { wallet: withIdAlias(await prisma.wallet.update({ where: { id: wallet.id }, data: { funded: true } })), result };
+  }
+  return { wallet: withIdAlias(wallet), result };
 };
 
 const balance = async ({ wallet }) => {
@@ -244,6 +266,7 @@ const submitPayment = async ({ wallet, destination, amount, asset, memo, memoTyp
 };
 
 const transactionHistory = async ({ userId }) => {
+  const prisma = getPrisma();
   const history = await prisma.transaction.findMany({
     where: { userId },
     orderBy: { createdAt: 'desc' },
