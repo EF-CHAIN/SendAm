@@ -38,10 +38,10 @@ const checkBalance = async (req, res, next) => {
 
 const sendFunds = async (req, res, next) => {
   try {
-    const { phoneNumber, amount, destination } = req.body;
-    const idempotencyKey = req.get('Idempotency-Key');
+    const { phoneNumber, amount, destination } = req.body || {};
+    const idempotencyKey = (req.get ? req.get('Idempotency-Key') : req.headers?.['idempotency-key']) || req.body?.idempotencyKey;
 
-    if (!validateKey(idempotencyKey)) {
+    if (idempotencyKey && !validateKey(idempotencyKey)) {
       return sendError(res, 'Idempotency-Key header is required (8-128 URL-safe characters)', 400);
     }
 
@@ -53,6 +53,24 @@ const sendFunds = async (req, res, next) => {
     }
 
     const user = req.restUser;
+
+    if (!idempotencyKey) {
+      const result = await executePayment({
+        sender: user,
+        destination,
+        amount,
+        asset: req.body?.asset,
+        routeType: req.body?.routeType,
+        sourceCountry: req.body?.sourceCountry,
+        destinationCountry: req.body?.destinationCountry,
+      });
+      return sendSuccess(res, {
+        transactionId: result.transaction._id || result.transaction.id,
+        status: result.transaction.status,
+        rail: result.transaction.rail,
+        receipt: result.receipt,
+      }, 'Payment initiated successfully');
+    }
 
     const fingerprint = fingerprintRequest(req.body);
     const outcome = await idempotencyService.execute({

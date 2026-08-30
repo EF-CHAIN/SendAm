@@ -22,6 +22,13 @@ const baseConfig = () => ({
 const productionConfig = () => ({
   ...baseConfig(),
   isProduction: true,
+  databaseUrl: 'postgresql://user:pass@localhost:5432/sendam?sslmode=require',
+  redis: { url: 'rediss://localhost:6379' },
+  databasePool: {
+    max: 10,
+    connectionTimeoutMs: 5000,
+    poolTimeoutMs: 10000,
+  },
   compliance: { pinPepper: 'pepper' },
   whatsapp: {
     token: 'system-user-token',

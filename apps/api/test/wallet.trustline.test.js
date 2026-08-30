@@ -89,6 +89,11 @@ injectMock('common/records', () => ({
   withIdAliases: (xs) => xs,
 }));
 injectMock('utils/validators', () => ({ canonicalizePhoneNumber: (value) => value }));
+injectMock('compliance/account.service', () => ({ assertAccountActive: () => {} }));
+injectMock('common/event.service', () => ({
+  appendEvent: async () => {},
+  EVENT_TYPES: { WALLET_CREATED: 'wallet.created' },
+}));
 
 // Now load the SUT.
 const walletService = require('../src/wallet/wallet.service');

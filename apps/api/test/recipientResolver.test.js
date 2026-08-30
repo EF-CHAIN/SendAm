@@ -17,6 +17,7 @@ const prismaWithAliases = (aliases) => ({
   },
 });
 
+const wallets = {};
 const walletServiceMock = () => ({
   createOrGetWallet: async ({ phoneNumber }) => {
     if (wallets[phoneNumber]) return wallets[phoneNumber];

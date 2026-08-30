@@ -21,28 +21,34 @@ pool.on('error', (error) => increment('sendam_database_pool_errors_total', { mes
 pool.on('acquire', () => setGauge('sendam_database_pool_waiting', pool.waitingCount));
 const connectFromPool = pool.connect.bind(pool);
 pool.connect = (...args) => {
+  if (typeof args[0] === 'function') {
+    return connectFromPool(...args);
+  }
   const started = process.hrtime.bigint();
   let expired = false;
   const connection = connectFromPool(...args);
-  connection.then((client) => {
-    if (expired) client.release();
-  }).catch(() => {});
-  let timeoutHandle;
-  const timeout = new Promise((_, reject) => {
-    timeoutHandle = setTimeout(() => {
-      expired = true;
-      increment('sendam_database_pool_timeouts_total');
-      reject(new Error('Database pool wait timed out'));
-    }, config.databasePool.poolTimeoutMs);
-  });
-  return Promise.race([connection, timeout]).finally(() => {
-    clearTimeout(timeoutHandle);
-    observeDuration(
-      'sendam_database_pool_wait_seconds',
-      {},
-      Number(process.hrtime.bigint() - started) / 1e9,
-    );
-  });
+  if (connection && typeof connection.then === 'function') {
+    connection.then((client) => {
+      if (expired) client.release();
+    }).catch(() => {});
+    let timeoutHandle;
+    const timeout = new Promise((_, reject) => {
+      timeoutHandle = setTimeout(() => {
+        expired = true;
+        increment('sendam_database_pool_timeouts_total');
+        reject(new Error('Database pool wait timed out'));
+      }, config.databasePool.poolTimeoutMs);
+    });
+    return Promise.race([connection, timeout]).finally(() => {
+      clearTimeout(timeoutHandle);
+      observeDuration(
+        'sendam_database_pool_wait_seconds',
+        {},
+        Number(process.hrtime.bigint() - started) / 1e9,
+      );
+    });
+  }
+  return connection;
 };
 
 const adapter = new PrismaPg(pool, { disposeExternalPool: true });

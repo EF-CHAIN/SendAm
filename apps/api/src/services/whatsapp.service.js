@@ -250,7 +250,7 @@ const sendTextMessage = async (to, body, options = {}) => {
   // notification that does not require durability; for those that do,
   // reserveOutboundNotification throws and the send does not happen.
   let reserved = null;
-  if (db && notification) {
+  if (db && notification && outbox.requiresDurableRecord(notification)) {
     reserved = await outbox.reserveOutboundNotification(db, { notification, to, body });
 
     if (reserved) {
@@ -267,8 +267,8 @@ const sendTextMessage = async (to, body, options = {}) => {
     }
   }
 
-  try {
-    if (messageTransport === 'sim') {
+  if (messageTransport === 'sim') {
+    try {
       const simDb = prisma || require('../common/prisma');
       const result = await simDb.simMessage.create({
         data: {
@@ -348,21 +348,6 @@ const sendTextMessage = async (to, body, options = {}) => {
           break;
         }
       }
-    });
-
-    const providerMessageId = response.data?.messages?.[0]?.id || null;
-    if (reserved) {
-      await outbox.attachProviderResult(db, reserved.id, {
-        providerMessageId,
-        status: providerMessageId ? 'sent' : 'queued',
-      });
-    } else if (db && notification) {
-      await recordNotificationCreated(db, notification, {
-        to,
-        body,
-        providerMessageId,
-        status: providerMessageId ? 'sent' : 'queued',
-      });
     }
   } finally {
     clearTimeout(connectDeadline);
@@ -370,34 +355,38 @@ const sendTextMessage = async (to, body, options = {}) => {
     activeSendControllers.delete(controller);
   }
 
-    return response.data;
-  } catch (error) {
-    logger.error('WhatsApp API Error:', error.response?.data || error.message);
-    const reason = String(error.response?.data?.error?.message || error.message || 'send failed').slice(0, 500);
-
-    if (reserved) {
-      // The request may have reached Meta before this error (a timeout says
-      // nothing about whether the message was accepted). Only a definite
-      // rejection is recorded as failed; anything else is left as an
-      // unresolved send for reconciliation rather than being marked failed and
-      // blindly retried.
-      if (error.response) {
+  const providerMessageId = finalResult.providerMessageId || null;
+  if (reserved) {
+    if (finalResult.outcome === 'accepted') {
+      await outbox.attachProviderResult(db, reserved.id, {
+        providerMessageId,
+        status: providerMessageId ? 'sent' : 'queued',
+      });
+    } else {
+      const reason = String(finalResult.error?.message || 'send failed').slice(0, 500);
+      if (finalResult.outcome === 'permanent_failure') {
         await outbox.markSendFailed(db, reserved.id, reason);
       } else {
         await outbox.markUnresolved(db, reserved.id, `no provider response: ${reason}`);
       }
-    } else if (db && notification) {
-      await recordNotificationCreated(db, notification, {
-        to,
-        body,
-        providerMessageId: null,
-        status: 'failed',
-        error: reason,
-      });
     }
-    // Don't throw to prevent webhook failures when whatsapp is misconfigured
-    return null;
+  } else if (db && notification) {
+    const status = finalResult.outcome === 'accepted'
+      ? 'queued'
+      : (finalResult.outcome === 'unknown' ? 'unknown' : 'failed');
+    await recordNotificationCreated(db, notification, {
+      to,
+      body,
+      providerMessageId,
+      status,
+      error: finalResult.error?.message || null,
+    });
   }
+
+  if (finalResult.outcome !== 'accepted') {
+    logger.error('whatsapp_send_failed', { correlationId, ...finalResult.error, attempts: finalResult.attempts });
+  }
+
   return finalResult;
 };
 

@@ -262,8 +262,8 @@ module.exports = {
     // It must never be reachable in a real deployment by accident, so it
     // follows the same kill-switch pattern: OFF in production unless
     // explicitly set, ON elsewhere for local testing.
-    chatSim: process.env.ENABLE_CHAT_SIO
-	  ? process.env.ENABLE_CHAT_SIM === 'true'
+    chatSim: process.env.ENABLE_CHAT_SIM
+      ? process.env.ENABLE_CHAT_SIM === 'true'
       : env !== 'production',
   },
 };

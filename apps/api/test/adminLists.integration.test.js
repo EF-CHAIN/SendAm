@@ -82,7 +82,7 @@ const inject = (relative, exports) => {
   require.cache[filename] = { id: filename, filename, loaded: true, exports };
 };
 inject('../src/common/prisma', fakePrisma);
-inject('../src/config/env', { admin: { sessionTtlHours: 12 }, jwtSecret: 'test-secret' });
+inject('../src/config/env', { admin: { sessionTtlHours: 12 }, jwtSecret: 'test-secret', encryptionKey: '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef' });
 
 const controller = require('../src/controllers/admin.controller');
 

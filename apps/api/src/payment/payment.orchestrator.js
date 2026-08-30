@@ -45,6 +45,10 @@ const executePayment = async ({
   destinationCountry = 'NG',
   routeType,
   transactionId,
+  memo,
+  memoType,
+  quoteId,
+  idempotencyKey,
 }) => {
   const senderUser = sender;
   if (!senderUser) throw new Error('Sender not found.');
@@ -86,54 +90,34 @@ const executePayment = async ({
       destination,
       tx,
     });
-    const q = await createQuote({
-      userId: senderUser.id,
-      sourceCurrency: effectiveAsset,
-      targetCurrency: effectiveAsset,
-      sourceAmount: amount,
-      route: rail,
-      provider: rail,
-    });
-    const t = await tx.transaction.create({
-      data: {
-        ...(transactionId ? { id: transactionId } : {}),
+
+    // Idempotency short-circuit: an earlier attempt with this key already
+    // reserved a transaction. Return it (and its quote) without creating
+    // duplicates or re-consuming a quote.
+    if (idempotencyKey) {
+      const prior = await tx.transaction.findUnique({ where: { idempotencyKey } });
+      if (prior) {
+        const quote = prior.quoteId ? await tx.quote.findUnique({ where: { id: prior.quoteId } }) : null;
+        return { compliance, quote, transaction: prior };
+      }
+    }
+
+    let quote;
+    if (quoteId) {
+      const existing = await tx.quote.findUnique({ where: { id: quoteId } });
+      await validateQuoteForExecution({
+        quote: existing,
         userId: senderUser.id,
-        type: 'send',
-        amount: String(amount),
         asset: effectiveAsset,
-        recipientPhoneNumber,
-        destination,
-        rail,
-        routeType: effectiveRouteType,
-        quoteId: q.id,
-        status: 'processing',
-        metadata: {
-          fee: calculateFee(amount),
-          userHiddenRail: true,
-          riskScore: comp.riskScore,
-        },
-      },
-    });
-    return { compliance: comp, quote: q, transaction: t };
-  }) : (async () => {
-    const comp = await enforceTransactionPolicy({
-      user: senderUser,
-      amount,
-      routeType: effectiveRouteType,
-      destinationCountry,
-      tx: prisma,
-    });
-    const q = await createQuote({
-      userId: senderUser.id,
-      sourceCurrency: effectiveAsset,
-      targetCurrency: effectiveAsset,
-      sourceAmount: amount,
-      route: rail,
-      provider: rail,
-    });
-    const t = await prisma.transaction.create({
-      data: {
-        ...(transactionId ? { id: transactionId } : {}),
+        amount: normalizedAmount,
+      });
+      // Safe to settle: claim the quote so a retry with the same id is rejected.
+      quote = await tx.quote.update({
+        where: { id: quoteId },
+        data: { status: QUOTE_STATUS.CONSUMED },
+      });
+    } else {
+      quote = await createQuote({
         userId: senderUser.id,
         sourceCurrency: effectiveAsset,
         targetCurrency: effectiveAsset,
@@ -149,6 +133,7 @@ const executePayment = async ({
     try {
       transaction = await tx.transaction.create({
         data: {
+          ...(transactionId ? { id: transactionId } : {}),
           userId: senderUser.id,
           type: 'send',
           amount: normalizedAmount,
@@ -160,20 +145,22 @@ const executePayment = async ({
           quoteId: quote.id,
           idempotencyKey,
           status: 'processing',
-          fiatCurrency: compliance.policySnapshot.referenceCurrency,
-          fiatAmount: compliance.policySnapshot.convertedAmount,
+          fiatCurrency: compliance.policySnapshot?.referenceCurrency,
+          fiatAmount: compliance.policySnapshot?.convertedAmount,
           metadata: {
             fee: calculateFee(normalizedAmount, effectiveAsset),
             userHiddenRail: true,
             riskScore: compliance.riskScore,
-            policy: {
-              version: compliance.policySnapshot.policyVersion,
-              rate: compliance.policySnapshot.rate,
-              source: compliance.policySnapshot.source,
-              fetchedAt: compliance.policySnapshot.fetchedAt,
-              convertedAmount: compliance.policySnapshot.convertedAmount,
-              referenceCurrency: compliance.policySnapshot.referenceCurrency,
-            },
+            ...(compliance.policySnapshot ? {
+              policy: {
+                version: compliance.policySnapshot.policyVersion,
+                rate: compliance.policySnapshot.rate,
+                source: compliance.policySnapshot.source,
+                fetchedAt: compliance.policySnapshot.fetchedAt,
+                convertedAmount: compliance.policySnapshot.convertedAmount,
+                referenceCurrency: compliance.policySnapshot.referenceCurrency,
+              },
+            } : {}),
             ...memoMetadata,
           },
         },
