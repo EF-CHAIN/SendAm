@@ -22,6 +22,7 @@ const startWorker = async ({
   validateWorkerEnv(config);
   await connect();
   const jobRuntime = await jobs();
+  jobRuntime?.rotationJobs?.startRotationScheduler?.();
   const health = createHealth({
     checkDatabase: () => prisma.$queryRawUnsafe('SELECT 1'),
     checkRedis: getQueueReadiness,

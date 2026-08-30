@@ -616,14 +616,28 @@ model AdminRole {
 }
 
 model ProcessedMessage {
-  id        String   @id @default(cuid())
-  messageId String   @unique
-  status    String   @default("completed")
+  id        String    @id @default(cuid())
+  messageId String    @unique
+  status    String    @default("completed")
   lastError String?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @default(now()) @updatedAt
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @default(now()) @updatedAt
 
   @@index([status, updatedAt])
+}
+
+model SecretRotation {
+  id          String    @id @default(cuid())
+  category    String
+  hash        String
+  rotatedBy   String
+  rotatedAt   DateTime  @default(now())
+  expiresAt   DateTime
+  createdAt   DateTime  @default(now())
+
+  @@index([category, rotatedAt])
+  @@index([expiresAt])
+  @@index([category, expiresAt])
 }
 
 model RateLimitHit {

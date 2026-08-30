@@ -3,14 +3,12 @@ const { encrypt, decrypt } = require('../services/crypto.service');
 const { withIdAlias, withIdAliases } = require('../common/records');
 const logger = require('../utils/logger');
 const { canonicalizePhoneNumber } = require('../utils/validators');
+const { CATALOG } = require('../errors/catalog');
 const config = require('../config/env');
 
 const getPrisma = () => require('../common/prisma');
 const getWriteAuditLog = () => require('../common/audit.service').writeAuditLog;
 
-// SendAm is Stellar-only. The chain column stays on Wallet for legacy rows
-// (a removed Lisk rail once wrote chain='lisk'); those rows are ignored
-// everywhere below.
 const CHAIN = 'stellar';
 
 class WalletNetworkMismatchError extends Error {
@@ -57,7 +55,41 @@ const assertUsableOnActiveNetwork = (wallet) => {
 // The issued asset every new wallet should be able to receive from day one.
 const USDC = 'USDC';
 const PROVISIONING_LEASE_MS = 5 * 60 * 1000;
+const MAX_PROVISIONING_ATTEMPTS = 5;
+const MAX_TRUSTLINE_ATTEMPTS = 5;
 const errorMessage = (error) => String(error?.message || error || 'Unknown provider failure').slice(0, 500);
+
+const RECOVERABLE_ERROR_CODES = Object.freeze({
+  account_not_funded: { retryable: true, action: 'fund_account', userMessage: 'Account is not funded yet.' },
+  insufficient_reserve: { retryable: false, action: 'add_xlm', userMessage: 'Insufficient XLM reserve.' },
+  missing_trustline: { retryable: false, action: 'open_trustline', userMessage: 'Missing trustline for the requested asset.' },
+  unsupported_asset: { retryable: false, action: 'none', userMessage: 'Unsupported asset.' },
+  bad_sequence: { retryable: true, action: 'retry', userMessage: 'Sequence conflict — will retry.' },
+  line_full: { retryable: false, action: 'remove_trustline', userMessage: 'Trustline limit reached.' },
+  source_no_trust: { retryable: false, action: 'open_trustline', userMessage: 'Sender has no trustline for this asset.' },
+  source_not_authorized: { retryable: false, action: 'contact_support', userMessage: 'Sender trustline is not authorized.' },
+});
+
+const classifyRecoverableError = (error) => {
+  const code = String(error?.code || 'unknown');
+  if (RECOVERABLE_ERROR_CODES[code]) {
+    return { ...RECOVERABLE_ERROR_CODES[code], code };
+  }
+  const classification = stellarAdapter.classifyRecoverableError(error);
+  return { ...classification, retryable: Boolean(classification.retryable) };
+};
+
+const isProvisioningRetryable = (wallet) => {
+  if (wallet.fundingState === 'succeeded' || wallet.funded) return false;
+  const classification = classifyRecoverableError(new Error(wallet.fundingError || ''));
+  return classification.retryable && wallet.fundingAttempts < MAX_PROVISIONING_ATTEMPTS;
+};
+
+const isTrustlineRetryable = (wallet) => {
+  if (wallet.trustlineState === 'succeeded') return false;
+  const classification = classifyRecoverableError(new Error(wallet.trustlineError || ''));
+  return classification.retryable && wallet.trustlineAttempts < MAX_TRUSTLINE_ATTEMPTS;
+};
 
 // Open the USDC trustline so a funded wallet can receive USDC immediately.
 // Non-fatal, exactly like funding: a failure is logged and the caller carries
@@ -76,12 +108,29 @@ const ensureUsdcTrustline = async ({ wallet }) => {
   });
   if (claimed.count === 0) return prisma.wallet.findUnique({ where: { id: wallet.id } });
   try {
-    await stellarAdapter.establishTrustline({ secretKey: decrypt(wallet.encryptedSecretKey), assetCode: USDC });
-    return prisma.wallet.update({ where: { id: wallet.id }, data: { trustlineState: 'succeeded', trustlineError: null, trustlineUpdatedAt: new Date() } });
+    const result = await stellarAdapter.establishTrustline({ secretKey: decrypt(wallet.encryptedSecretKey), assetCode: USDC });
+    const updateData = { trustlineState: 'succeeded', trustlineError: null, trustlineUpdatedAt: new Date() };
+    if (result.alreadyExisted) updateData.trustlineState = 'succeeded';
+    return prisma.wallet.update({ where: { id: wallet.id }, data: updateData });
   } catch (error) {
-    logger.warn(`USDC trustline failed for ${CHAIN} wallet ${wallet.publicKey}: ${error.message}`);
-    await prisma.wallet.update({ where: { id: wallet.id }, data: { trustlineState: 'failed', trustlineError: errorMessage(error), trustlineUpdatedAt: new Date() } });
-    await writeAuditLog({ actorType: 'system', action: 'wallet.trustline.failed', entityType: 'Wallet', entityId: String(wallet.id), metadata: { retryable: true, error: errorMessage(error) } });
+    const classification = stellarAdapter.classifyTrustlineError(error);
+    logger.warn(`USDC trustline ${classification.code} for ${CHAIN} wallet ${wallet.publicKey}: ${error.message}`);
+    const isRetryable = classification.retryable && wallet.trustlineAttempts < MAX_TRUSTLINE_ATTEMPTS;
+    await prisma.wallet.update({
+      where: { id: wallet.id },
+      data: {
+        trustlineState: isRetryable ? 'pending' : 'failed',
+        trustlineError: classification.userMessage.slice(0, 500),
+        trustlineUpdatedAt: new Date(),
+      },
+    });
+    await writeAuditLog({
+      actorType: 'system',
+      action: 'wallet.trustline.failed',
+      entityType: 'Wallet',
+      entityId: String(wallet.id),
+      metadata: { code: classification.code, retryable: isRetryable, action: classification.action, error: errorMessage(error) },
+    });
     return prisma.wallet.findUnique({ where: { id: wallet.id } });
   }
 };
@@ -104,13 +153,67 @@ const provisionWallet = async (walletId) => {
       if (!result.funded) throw new Error('Funding provider did not confirm funding');
       wallet = await prisma.wallet.update({ where: { id: wallet.id }, data: { funded: true, fundingState: 'succeeded', fundingError: null, fundingUpdatedAt: new Date(), trustlineState: 'pending' } });
     } catch (error) {
-      logger.warn(`Funding failed for ${CHAIN} wallet ${wallet.publicKey}: ${error.message}`);
-      await prisma.wallet.update({ where: { id: wallet.id }, data: { fundingState: 'failed', fundingError: errorMessage(error), fundingUpdatedAt: new Date() } });
-      await writeAuditLog({ actorType: 'system', action: 'wallet.funding.failed', entityType: 'Wallet', entityId: String(wallet.id), metadata: { retryable: true, error: errorMessage(error) } });
+      const classification = classifyRecoverableError(error);
+      logger.warn(`Funding ${classification.code} for ${CHAIN} wallet ${wallet.publicKey}: ${error.message}`);
+      const isRetryable = classification.retryable && wallet.fundingAttempts < MAX_PROVISIONING_ATTEMPTS;
+      await prisma.wallet.update({
+        where: { id: wallet.id },
+        data: {
+          fundingState: isRetryable ? 'pending' : 'failed',
+          fundingError: classification.userMessage.slice(0, 500),
+          fundingUpdatedAt: new Date(),
+        },
+      });
+      await writeAuditLog({
+        actorType: 'system',
+        action: 'wallet.funding.failed',
+        entityType: 'Wallet',
+        entityId: String(wallet.id),
+        metadata: { code: classification.code, retryable: isRetryable, action: classification.action, error: errorMessage(error) },
+      });
       return prisma.wallet.findUnique({ where: { id: wallet.id } });
     }
   }
   return ensureUsdcTrustline({ wallet });
+};
+
+// Support/admin remediation: safely retry provisioning or trustline for a wallet
+// that is in a failed state. Idempotent — calling it on a healthy wallet is a no-op.
+const recoverWallet = async ({ walletId, adminId }) => {
+  const wallet = await prisma.wallet.findUnique({ where: { id: walletId } });
+  if (!wallet) throw Object.assign(new Error('Wallet not found'), { statusCode: 404 });
+
+  if (wallet.fundingState !== 'succeeded' && !wallet.funded) {
+    await prisma.wallet.update({
+      where: { id: wallet.id },
+      data: { fundingState: 'pending', fundingAttempts: 0, fundingError: null, fundingUpdatedAt: new Date() },
+    });
+    await writeAuditLog({
+      actorType: 'administrator',
+      actorId: adminId || 'system',
+      action: 'wallet.funding.recovered',
+      entityType: 'Wallet',
+      entityId: String(wallet.id),
+      metadata: { chain: CHAIN },
+    });
+  }
+
+  if (wallet.trustlineState !== 'succeeded') {
+    await prisma.wallet.update({
+      where: { id: wallet.id },
+      data: { trustlineState: 'pending', trustlineAttempts: 0, trustlineError: null, trustlineUpdatedAt: new Date() },
+    });
+    await writeAuditLog({
+      actorType: 'administrator',
+      actorId: adminId || 'system',
+      action: 'wallet.trustline.recovered',
+      entityType: 'Wallet',
+      entityId: String(wallet.id),
+      metadata: { chain: CHAIN },
+    });
+  }
+
+  return provisionWallet(wallet.id);
 };
 
 // One wallet per user, direct custody: the adapter generates a keypair, the
@@ -285,6 +388,7 @@ module.exports = {
   getWalletByUserAndChain,
   fundWallet,
   provisionWallet,
+  recoverWallet,
   balance,
   balancesForUser,
   submitPayment,
