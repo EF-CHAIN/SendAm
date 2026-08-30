@@ -79,4 +79,7 @@ router.post('/users/:userId/deactivate', requireAdmin('operations.write'), admin
 router.post('/users/:userId/reactivate', requireAdmin('operations.write'), adminController.reactivateUserAccount);
 router.get('/users/:userId/account-status', requireAdmin('admin.read'), adminController.getUserAccountStatusHistory);
 
+// ── Issue #308: Customer Statement generation (admin view) ────────────────────
+router.get('/users/:userId/statement', requireAdmin('compliance.read'), adminController.getUserStatement);
+
 module.exports = router;

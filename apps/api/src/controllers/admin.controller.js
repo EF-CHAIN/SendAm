@@ -725,6 +725,55 @@ const getUserAccountStatusHistory = async (req, res, next) => {
   }
 };
 
+const { buildStatementData, exportStatementCsv, exportStatementPdf } = require('../wallet/statement.service');
+
+const getUserStatement = async (req, res, next) => {
+  try {
+    const { startDate, endDate, asset, format = 'json' } = req.query;
+    const userId = req.params.userId;
+
+    if (format === 'csv') {
+      const { csv, statementId } = await exportStatementCsv({
+        userId,
+        startDate,
+        endDate,
+        asset,
+        actingActor: { type: 'administrator', id: req.admin.id },
+        req,
+      });
+      res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+      res.setHeader('Content-Disposition', `attachment; filename="statement-${userId}-${statementId}.csv"`);
+      return res.status(200).send(csv);
+    }
+
+    if (format === 'pdf') {
+      const { pdfBuffer, statementId } = await exportStatementPdf({
+        userId,
+        startDate,
+        endDate,
+        asset,
+        actingActor: { type: 'administrator', id: req.admin.id },
+        req,
+      });
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', `attachment; filename="statement-${userId}-${statementId}.pdf"`);
+      return res.status(200).send(pdfBuffer);
+    }
+
+    const statement = await buildStatementData({
+      userId,
+      startDate,
+      endDate,
+      asset,
+    });
+
+    return sendSuccess(res, statement, 'Customer account statement generated');
+  } catch (error) {
+    if (error.statusCode) return sendError(res, error.message, error.statusCode);
+    next(error);
+  }
+};
+
 module.exports = {
   login,
   acceptInvite,
@@ -748,4 +797,16 @@ module.exports = {
   exportAuditLogs,
   getSystemHealth,
   revealSensitiveFields,
+  getWorkflowEvents,
+  verifyEventChain,
+  exportWorkflowEvents,
+  getUserEvidencePackage,
+  downloadUserEvidencePackage,
+  exportKycEvidence,
+  exportAccountStatusHistory,
+  getUserOnboardingStatus,
+  deactivateUserAccount,
+  reactivateUserAccount,
+  getUserAccountStatusHistory,
+  getUserStatement,
 };
