@@ -13,6 +13,7 @@ const { canonicalizePhoneNumber } = require('../utils/validators');
 const { parseConsentCommand, applyConsentKeyword, isMessageAllowed } = require('../compliance/consent.service');
 const { t, SUPPORTED_LOCALES } = require('../i18n/messages');
 const { formatDateByLocale, formatAmountByLocale } = require('../i18n/formatters');
+const { buildStandardReceipt, formatChannelReceiptMessage, recordReceiptDeliveryEvent } = require('../services/receipt.service');
 
 const PENDING_SEND_TTL_MS = 10 * 60 * 1000;
 const NATIVE_ASSET = 'XLM';
@@ -255,10 +256,11 @@ const handlePendingPin = async ({ phoneNumber, user, text, notify, db = defaultP
     routeType: pending.routeType,
   });
 
-  const receiptMsg = t('payment_success', {
+  const standardReceipt = buildStandardReceipt(result.transaction, { mask: true });
+  const receiptMsg = `${t('payment_success', {
     status: result.transaction.status,
     receiptId: result.receipt.transactionId,
-  }, locale);
+  }, locale)}\n\n${formatChannelReceiptMessage(standardReceipt)}`;
 
   await notify(phoneNumber, receiptMsg, {
     notification: {
