@@ -33,6 +33,7 @@ const registerSecretRotationJobs = () => {
 
   return { startRotationScheduler };
 };
+const { startWebhookInboxDrain, startOutboxReconciler } = require('./messaging.jobs');
 
 const registerJobs = () => {
   const whatsappWorker = registerWhatsAppJobs();
@@ -44,9 +45,16 @@ const registerJobs = () => {
     depositPoller,
     auditPoller,
     rotationJobs,
+  const inboxDrain = startWebhookInboxDrain();
+  const outboxReconciler = startOutboxReconciler();
+  return {
+    whatsappWorker,
+    processorNames: ['whatsapp-inbound'],
     stop: async () => {
       depositPoller.stop();
       auditPoller.stop();
+      inboxDrain.stop();
+      outboxReconciler.stop();
     },
   };
 };

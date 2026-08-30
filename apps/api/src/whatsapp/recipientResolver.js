@@ -84,8 +84,10 @@ async function preflightDestination({ stellarService, destination, asset, memo, 
  * 3. @names
  * 4. Raw G... Stellar addresses
  */
-const createRecipientResolver = ({ prisma, walletService, stellarService }) => {
-  return async (user, recipient, preflightContext = {}) => {
+const createRecipientResolver = ({ prisma, walletService }) => {
+  const service = typeof walletService === 'function' ? walletService() : walletService;
+
+  return async (user, recipient) => {
     const raw = String(recipient || '').trim();
     const normalized = raw.toLowerCase();
 
@@ -108,15 +110,10 @@ const createRecipientResolver = ({ prisma, walletService, stellarService }) => {
       result = { destination: raw, label: raw };
     }
 
-    // Run preflight checks when requested
-    if (preflightContext.asset && stellarService) {
-      const preflight = await preflightDestination({
-        stellarService,
-        destination: result.destination,
-        asset: preflightContext.asset,
-        memo: preflightContext.memo,
-      });
-      return { ...result, preflight };
+    // 2. Phone number — create or fetch wallet for that phone number.
+    if (service && isValidPhoneNumber(raw)) {
+      const wallet = await service.createOrGetWallet({ phoneNumber: raw });
+      return { destination: wallet.publicKey, label: raw };
     }
 
     return result;

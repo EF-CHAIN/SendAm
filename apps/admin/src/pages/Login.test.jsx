@@ -1,14 +1,19 @@
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { BrowserRouter } from 'react-router-dom';
+import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import Login from './Login';
 import { describe, it, expect, beforeEach } from 'vitest';
 
+// Use MemoryRouter to avoid jsdom's "Not implemented: navigation" error that
+// fires when Login calls navigate('/') after a successful login via BrowserRouter.
 const renderLogin = () => {
   return render(
-    <BrowserRouter>
-      <Login />
-    </BrowserRouter>
+    <MemoryRouter initialEntries={['/login']}>
+      <Routes>
+        <Route path="/login" element={<Login />} />
+        <Route path="/" element={<div data-testid="dashboard">Dashboard</div>} />
+      </Routes>
+    </MemoryRouter>
   );
 };
 
@@ -23,7 +28,7 @@ describe('Login Component', () => {
     expect(screen.getByRole('button', { name: /sign in/i })).toBeInTheDocument();
   });
 
-  it('handles successful login and redirects', async () => {
+  it('handles successful login and redirects to dashboard', async () => {
     renderLogin();
     // Both fields are required; the email must be filled or HTML5 constraint
     // validation blocks form submission (matching real browser behavior).
@@ -35,9 +40,12 @@ describe('Login Component', () => {
     await userEvent.type(passwordInput, 'correct_password');
     await userEvent.click(submitButton);
 
+    // On success, navigate('/') renders the dashboard route
     await waitFor(() => {
-      expect(localStorage.getItem('adminToken')).toBe('fake_token');
+      expect(screen.getByTestId('dashboard')).toBeInTheDocument();
     });
+
+    expect(localStorage.getItem('adminToken')).toBe('fake_token');
   });
 
   it('handles failed login and displays error', async () => {

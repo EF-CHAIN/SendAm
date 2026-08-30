@@ -1,4 +1,5 @@
 const logger = require('../utils/logger');
+const { transitionPaymentState } = require('./payment.transitions');
 const defaultHorizonServer = () => require('../config/stellar').server;
 const writeAuditLog = async (args) => {
   try {
@@ -86,16 +87,15 @@ const reconcileStaleTransactions = async ({
         }
         if (horizonTx && horizonTx.successful) {
           // ✅ Confirmed — ledger-backed finality achieved.
-          const updated = await prisma.transaction.update({
-            where: { id: tx.id },
-            data: {
-              status: 'success',
-              explorerUrl: transactionUrl(tx.txHash),
-              metadata: {
-                ...tx.metadata,
-                confirmedAt: new Date().toISOString(),
-              },
-            },
+          const updated = await transitionPaymentState({
+            db: prisma,
+            transactionId: tx.id,
+            fromState: ['processing', 'pending'],
+            toState: 'success',
+            actor: { type: 'system', id: 'reconciler' },
+            reason: 'Reconciled to success via on-chain txHash',
+            extraData: { explorerUrl: transactionUrl(tx.txHash) },
+            metadata: { confirmedAt: new Date().toISOString() },
           });
           updatedCount += 1;
           loggerInstance.info(`Reconciled transaction ${tx.id} to success via txHash ${tx.txHash}`);
@@ -109,15 +109,16 @@ const reconcileStaleTransactions = async ({
 
         if (horizonTx && !horizonTx.successful) {
           // ❌ Definitive on-chain failure (e.g. op_underfunded recorded on ledger).
-          await prisma.transaction.update({
-            where: { id: tx.id },
-            data: {
-              status: 'failed',
-              metadata: {
-                ...tx.metadata,
-                reconciliationError: 'Transaction included in ledger but marked unsuccessful.',
-                failedAt: new Date().toISOString(),
-              },
+          await transitionPaymentState({
+            db: prisma,
+            transactionId: tx.id,
+            fromState: ['processing', 'pending'],
+            toState: 'failed',
+            actor: { type: 'system', id: 'reconciler' },
+            reason: 'Transaction included in ledger but marked unsuccessful',
+            metadata: {
+              reconciliationError: 'Transaction included in ledger but marked unsuccessful.',
+              failedAt: new Date().toISOString(),
             },
           });
           updatedCount += 1;
@@ -135,15 +136,16 @@ const reconcileStaleTransactions = async ({
           }
 
           // ❌ 404 + window closed = ledger sequence definitively expired.
-          await prisma.transaction.update({
-            where: { id: tx.id },
-            data: {
-              status: 'expired',
-              metadata: {
-                ...tx.metadata,
-                reconciliationError: 'ledger_sequence_expired',
-                expiredAt: new Date().toISOString(),
-              },
+          await transitionPaymentState({
+            db: prisma,
+            transactionId: tx.id,
+            fromState: ['processing', 'pending'],
+            toState: 'expired',
+            actor: { type: 'system', id: 'reconciler' },
+            reason: 'ledger_sequence_expired',
+            metadata: {
+              reconciliationError: 'ledger_sequence_expired',
+              expiredAt: new Date().toISOString(),
             },
           });
           updatedCount += 1;
@@ -166,17 +168,15 @@ const reconcileStaleTransactions = async ({
 
           if (matchingPayment) {
             const hash = matchingPayment.transaction_hash;
-            const updated = await prisma.transaction.update({
-              where: { id: tx.id },
-              data: {
-                status: 'success',
-                txHash: hash,
-                explorerUrl: transactionUrl(hash),
-                metadata: {
-                  ...tx.metadata,
-                  confirmedAt: new Date().toISOString(),
-                },
-              },
+            const updated = await transitionPaymentState({
+              db: prisma,
+              transactionId: tx.id,
+              fromState: ['processing', 'pending'],
+              toState: 'success',
+              actor: { type: 'system', id: 'reconciler' },
+              reason: `Reconciled to success via payment history match on ${senderPublicKey}`,
+              extraData: { txHash: hash, explorerUrl: transactionUrl(hash) },
+              metadata: { confirmedAt: new Date().toISOString() },
             });
             updatedCount += 1;
             loggerInstance.info(`Reconciled transaction ${tx.id} to success via payment history match on ${senderPublicKey}`);
@@ -196,15 +196,16 @@ const reconcileStaleTransactions = async ({
       //    wall-clock alone if the window could still be open.
       const maxStaleCutoff = new Date(Date.now() - staleAgeMs * 3);
       if (tx.createdAt <= maxStaleCutoff && isLedgerSequenceExpired(tx)) {
-        await prisma.transaction.update({
-          where: { id: tx.id },
-          data: {
-            status: 'failed',
-            metadata: {
-              ...tx.metadata,
-              reconciliationError: 'ledger_sequence_expired',
-              failedAt: new Date().toISOString(),
-            },
+        await transitionPaymentState({
+          db: prisma,
+          transactionId: tx.id,
+          fromState: ['processing', 'pending'],
+          toState: 'failed',
+          actor: { type: 'system', id: 'reconciler' },
+          reason: 'ledger_sequence_expired (no on-chain evidence)',
+          metadata: {
+            reconciliationError: 'ledger_sequence_expired',
+            failedAt: new Date().toISOString(),
           },
         });
         updatedCount += 1;
@@ -440,9 +441,19 @@ const operatorResolveStuckPayment = async ({
       escalatedAt: action === 'escalate' ? now.toISOString() : metadata.escalatedAt,
     };
 
-    const updated = await tx.transaction.update({
-      where: { id: transaction.id },
-      data: { status: nextStatus, metadata: nextMetadata },
+    const updated = await transitionPaymentState({
+      db: tx,
+      transactionId: transaction.id,
+      fromState: transaction.status,
+      toState: nextStatus,
+      actor: { type: 'administrator', id: adminId },
+      reason: cleanReason,
+      metadata: {
+        resolvedAt: action === 'mark_resolved' ? now.toISOString() : metadata.resolvedAt,
+        escalatedAt: action === 'escalate' ? now.toISOString() : metadata.escalatedAt,
+        operatorActions: [...(Array.isArray(metadata.operatorActions) ? metadata.operatorActions : []), actionEvent],
+        ...(action === 'retry' ? { retryHistory: [...(Array.isArray(metadata.retryHistory) ? metadata.retryHistory : []), actionEvent] } : {}),
+      },
     });
 
     const audit = {

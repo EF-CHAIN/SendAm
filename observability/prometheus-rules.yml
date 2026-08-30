@@ -11,6 +11,61 @@ groups:
           summary: SendAm API metrics target is down
           runbook_url: https://github.com/EF-CHAIN/SendAm/blob/main/docs/OBSERVABILITY.md#api-down
 
+      - alert: SendAmWorkerDown
+        expr: absent(up{job="sendam-worker"}) or up{job="sendam-worker"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          service: sendam-worker
+        annotations:
+          summary: No SendAm worker metrics target is reachable
+          runbook_url: https://github.com/EF-CHAIN/SendAm/blob/main/docs/OBSERVABILITY.md#worker-unhealthy
+
+      - alert: SendAmWorkerNotReady
+        expr: sendam_worker_ready == 0
+        for: 2m
+        labels:
+          severity: critical
+          service: sendam-worker
+        annotations:
+          summary: A SendAm worker has lost Redis, database, processor, or heartbeat readiness
+
+      - alert: SendAmWorkerHeartbeatStale
+        expr: time() - sendam_worker_last_heartbeat_timestamp_seconds > 90
+        for: 1m
+        labels:
+          severity: critical
+          service: sendam-worker
+        annotations:
+          summary: A SendAm worker heartbeat is stale
+
+      - alert: SendAmQueueLagHigh
+        expr: max by (queue) (sendam_queue_oldest_job_age_seconds) > 120
+        for: 5m
+        labels:
+          severity: critical
+          service: sendam-worker
+        annotations:
+          summary: A SendAm queue has been waiting for more than two minutes
+
+      - alert: SendAmQueueStalled
+        expr: sum by (queue) (increase(sendam_queue_stalled_jobs_total[10m])) > 0
+        for: 1m
+        labels:
+          severity: warning
+          service: sendam-worker
+        annotations:
+          summary: BullMQ reported a stalled SendAm job
+
+      - alert: SendAmDepositSweepStale
+        expr: sendam_deposit_sweep_age_seconds < 0 or sendam_deposit_sweep_age_seconds > 120
+        for: 3m
+        labels:
+          severity: critical
+          service: sendam-worker
+        annotations:
+          summary: The deposit sweep has not completed successfully
+
       - alert: SendAmHighHttpErrorRate
         expr: |
           sum(rate(sendam_http_requests_total{status_code=~"5.."}[5m]))
@@ -113,3 +168,43 @@ groups:
           service: sendam-api
         annotations:
           summary: SendAm jobs are running inline instead of durably queued (Redis unavailable)
+
+      - alert: SendAmQueueBacklogWarning
+        expr: sum by (queue) (sendam_queue_backlog_size) > 50
+        for: 5m
+        labels:
+          severity: warning
+          service: sendam-worker
+        annotations:
+          summary: SendAm queue {{ $labels.queue }} backlog exceeds 50 jobs
+          runbook_url: https://github.com/EF-CHAIN/SendAm/blob/main/docs/OBSERVABILITY.md#queue-backlog
+
+      - alert: SendAmQueueBacklogCritical
+        expr: sum by (queue) (sendam_queue_backlog_size) > 200
+        for: 2m
+        labels:
+          severity: critical
+          service: sendam-worker
+        annotations:
+          summary: SendAm queue {{ $labels.queue }} backlog exceeds critical threshold (200 jobs)
+          runbook_url: https://github.com/EF-CHAIN/SendAm/blob/main/docs/OBSERVABILITY.md#queue-backlog
+
+      - alert: SendAmQueueJobLagHigh
+        expr: sum by (queue) (sendam_queue_lag_seconds) > 300
+        for: 5m
+        labels:
+          severity: warning
+          service: sendam-worker
+        annotations:
+          summary: SendAm queue {{ $labels.queue }} oldest job processing lag exceeds 5 minutes
+          runbook_url: https://github.com/EF-CHAIN/SendAm/blob/main/docs/OBSERVABILITY.md#queue-lag
+
+      - alert: SendAmDeadLetterQueueGrowing
+        expr: sum(increase(sendam_dlq_moves_total[5m])) > 0
+        for: 0m
+        labels:
+          severity: critical
+          service: sendam-worker
+        annotations:
+          summary: SendAm dead-letter queue is receiving failed poison message jobs
+          runbook_url: https://github.com/EF-CHAIN/SendAm/blob/main/docs/OBSERVABILITY.md#dead-letter-queue
