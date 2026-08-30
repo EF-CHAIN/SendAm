@@ -1,18 +1,24 @@
 const express = require('express');
 const router = express.Router();
 const walletController = require('../controllers/wallet.controller');
+const requireRestApiEnabled = require('../middlewares/requireRestApiEnabled');
+const requireRestSession = require('../middlewares/requireRestSession');
 const { validateRequest } = require('../middlewares/validateRequest');
+
+router.use(requireRestApiEnabled);
+router.use(requireRestSession);
 
 router.post(
   '/create',
   validateRequest({
     body: {
       allowedKeys: ['phoneNumber'],
-      required: ['phoneNumber'],
+      required: [],
       fields: {
         phoneNumber: {
           type: 'string',
           trim: true,
+          optional: true,
           custom: (value) => value.length > 5,
           message: 'A valid phone number is required',
         },
@@ -21,6 +27,9 @@ router.post(
   }),
   walletController.createWallet,
 );
+
+// Self-service balance
+router.get('/balance', walletController.checkBalance);
 
 router.get(
   '/:phone/balance',
@@ -41,6 +50,9 @@ router.get(
   walletController.checkBalance,
 );
 
+// Self-service transactions
+router.get('/transactions', walletController.getTransactionHistory);
+
 router.get(
   '/:phone/transactions',
   validateRequest({
@@ -60,16 +72,21 @@ router.get(
   walletController.getTransactionHistory,
 );
 
+// Statement generation and export (#308)
+router.get('/statement', walletController.getStatement);
+router.get('/statement/export', walletController.getStatement);
+
 router.post(
   '/send',
   validateRequest({
     body: {
       allowedKeys: ['phoneNumber', 'amount', 'destination', 'asset', 'routeType', 'sourceCountry', 'destinationCountry'],
-      required: ['phoneNumber', 'amount', 'destination'],
+      required: ['amount', 'destination'],
       fields: {
         phoneNumber: {
           type: 'string',
           trim: true,
+          optional: true,
           custom: (value) => value.length > 5,
           message: 'A valid phone number is required',
         },

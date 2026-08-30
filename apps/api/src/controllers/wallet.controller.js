@@ -96,9 +96,59 @@ const getTransactionHistory = async (req, res, next) => {
   }
 };
 
+const { buildStatementData, exportStatementCsv, exportStatementPdf } = require('../wallet/statement.service');
+
+const getStatement = async (req, res, next) => {
+  try {
+    const { startDate, endDate, asset, format = 'json' } = req.query;
+    const user = req.restUser;
+
+    if (format === 'csv') {
+      const { csv, statementId } = await exportStatementCsv({
+        userId: user.id,
+        startDate,
+        endDate,
+        asset,
+        actingActor: { type: 'user', id: user.id },
+        req,
+      });
+      res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+      res.setHeader('Content-Disposition', `attachment; filename="statement-${statementId}.csv"`);
+      return res.status(200).send(csv);
+    }
+
+    if (format === 'pdf') {
+      const { pdfBuffer, statementId } = await exportStatementPdf({
+        userId: user.id,
+        startDate,
+        endDate,
+        asset,
+        actingActor: { type: 'user', id: user.id },
+        req,
+      });
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', `attachment; filename="statement-${statementId}.pdf"`);
+      return res.status(200).send(pdfBuffer);
+    }
+
+    const statement = await buildStatementData({
+      userId: user.id,
+      startDate,
+      endDate,
+      asset,
+    });
+
+    return sendSuccess(res, statement, 'Account statement generated');
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   createWallet,
   checkBalance,
   sendFunds,
   getTransactionHistory,
+  getStatement,
 };
+

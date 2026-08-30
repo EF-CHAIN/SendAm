@@ -5,8 +5,10 @@ const privacyController = require('./privacy.controller');
 const consentController = require('./consent.controller');
 const requireAdmin = require('../middlewares/requireAdmin');
 const requireRestApiEnabled = require('../middlewares/requireRestApiEnabled');
+const requireRestSession = require('../middlewares/requireRestSession');
 const { validateRequest } = require('../middlewares/validateRequest');
 
+// Admin single-user lookup
 router.get(
   '/kyc/:phone',
   requireAdmin,
@@ -27,26 +29,45 @@ router.get(
   controller.getProfile,
 );
 
+// Customer self-service KYC profile
+router.get('/kyc', requireRestApiEnabled, requireRestSession, controller.getOwnProfile);
+
+// Customer start KYC verification
 router.post(
   '/kyc/start',
   requireRestApiEnabled,
+  requireRestSession,
+  controller.startKyc,
+);
+
+// Provider callback for Smile ID
+router.post('/kyc/callback/smileid', controller.smileIdCallback);
+
+// Customer PIN setup
+router.post(
+  '/pin',
+  requireRestApiEnabled,
+  requireRestSession,
   validateRequest({
     body: {
-      allowedKeys: ['phoneNumber', 'providerReference'],
-      required: ['phoneNumber'],
+      allowedKeys: ['phoneNumber', 'pin'],
+      required: ['pin'],
       fields: {
-        phoneNumber: {
+        pin: {
           type: 'string',
           trim: true,
-          custom: (value) => value.length > 5,
-          message: 'A valid phone number is required',
+          custom: (value) => /^\d{4,6}$/.test(value),
+          message: 'A 4-6 digit numeric PIN is required',
         },
-        providerReference: { type: 'string', optional: true },
+        phoneNumber: { type: 'string', optional: true },
       },
     },
   }),
-  controller.startKyc,
+  controller.setPin,
 );
+
+// Customer onboarding status (#330)
+router.get('/onboarding', requireRestApiEnabled, requireRestSession, controller.getOnboardingStatus);
 
 // ── Messaging preferences (#310) ────────────────────────────────────────
 // Customers manage their own consent; support may read it but not write it,
@@ -62,3 +83,4 @@ privacyRouter.post('/erasure', requireRestApiEnabled, requireRestSession, privac
 router.use('/privacy', privacyRouter);
 
 module.exports = router;
+
