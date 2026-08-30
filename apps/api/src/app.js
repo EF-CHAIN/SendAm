@@ -16,10 +16,18 @@ const notFound = require('./middlewares/notFound');
 const PostgresRateStore = require('./middlewares/postgresRateStore');
 const requireChatSimEnabled = require('./middlewares/requireChatSimEnabled');
 const config = require('./config/env');
+const { getTrustProxySetting, sanitizeForwardingHeaders } = require('./config/proxy');
 const logger = require('./utils/logger');
 const prisma = require('./common/prisma');
+const { requestMetrics, getMetricSnapshot } = require('./observability/metrics');
 
 const app = express();
+
+app.set('trust proxy', getTrustProxySetting());
+app.use((req, _res, next) => {
+  sanitizeForwardingHeaders(req);
+  next();
+});
 
 // Middlewares
 app.use(helmet());
@@ -42,6 +50,7 @@ if (config.corsOrigins.length > 0) {
 // for production log aggregation. Use the standard Apache 'combined' format in
 // production so hosted log drains get parseable, complete request lines.
 app.use(morgan(config.isProduction ? 'combined' : 'dev'));
+app.use(requestMetrics);
 
 // Capture the raw request body so the WhatsApp webhook can verify the
 // X-Hub-Signature-256 HMAC against exactly what Meta signed.
@@ -70,6 +79,10 @@ app.get('/health', async (req, res) => {
   } catch (_error) {
     res.status(503).json({ status: 'degraded', db: 'disconnected', uptime: process.uptime() });
   }
+});
+
+app.get('/metrics', (_req, res) => {
+  res.status(200).json(getMetricSnapshot());
 });
 
 // Routes

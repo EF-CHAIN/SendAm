@@ -12,11 +12,13 @@ model User {
   whatsappName String?
   kycTier      Int       @default(0)
   riskScore    Int       @default(0)
-  pinHash      String?
-  pinSetAt     DateTime?
-  pendingSend    Json?
-  welcomeSentAt  DateTime?
-  contactsJson   Json?
+  pinHash            String?
+  pinSetAt           DateTime?
+  pinFailedAttempts  Int       @default(0)
+  pinLockedUntil     DateTime?
+  pendingSend        Json?
+  welcomeSentAt      DateTime?
+  contactsJson       Json?
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
 

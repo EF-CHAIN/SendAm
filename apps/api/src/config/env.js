@@ -44,6 +44,9 @@ module.exports = {
     botWindowMs: Number(process.env.BOT_RATE_WINDOW_SEC || 60) * 1000,
     botMax: Number(process.env.BOT_RATE_MAX || 20),
   },
+  proxy: {
+    trust: process.env.TRUST_PROXY || (env === 'production' ? '1' : 'false'),
+  },
   redis: {
     url: process.env.REDIS_URL || process.env.UPSTASH_REDIS_URL,
   },
@@ -76,6 +79,8 @@ module.exports = {
       secretKey: process.env.DOJAH_SECRET_KEY,
     },
     pinPepper: process.env.PIN_PEPPER,
+    pinFailureLimit: Number(process.env.PIN_FAILURE_LIMIT || 5),
+    pinLockoutMs: Number(process.env.PIN_LOCKOUT_MS || 10 * 60 * 1000),
   },
   voice: {
     provider: process.env.VOICE_PROVIDER || 'deepgram',

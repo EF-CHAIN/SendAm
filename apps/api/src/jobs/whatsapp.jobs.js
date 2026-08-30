@@ -1,6 +1,7 @@
 const { registerProcessor } = require('../queues/queue.service');
 const { processMessage } = require('../whatsapp/assistant.service');
 const { processVoiceMessage } = require('../voice/voice.service');
+const { retryOutboundNotification } = require('../services/whatsapp.service');
 const logger = require('../utils/logger');
 
 const registerWhatsAppJobs = () => {
@@ -13,6 +14,18 @@ const registerWhatsAppJobs = () => {
     }
 
     await processMessage(from, whatsappName, text);
+  });
+
+  registerProcessor('whatsapp-outbound-retry', async (job) => {
+    const { notificationId, to, body, attempts = 0 } = job.data;
+    if (!notificationId) return;
+
+    await retryOutboundNotification({
+      notificationId,
+      to,
+      body,
+      attempts,
+    });
   });
 
   logger.info('WhatsApp queue processor registered');

@@ -1,5 +1,6 @@
 const logger = require('../utils/logger');
 const prisma = require('./prisma');
+const { getClientIp } = require('../config/proxy');
 
 const writeAuditLog = async ({ actorType = 'system', actorId, action, entityType, entityId, metadata = {}, req }) => {
   try {
@@ -10,7 +11,7 @@ const writeAuditLog = async ({ actorType = 'system', actorId, action, entityType
         action,
         entityType,
         entityId,
-        ipAddress: req?.ip,
+        ipAddress: getClientIp(req),
         userAgent: req?.get?.('user-agent'),
         metadata,
       },
