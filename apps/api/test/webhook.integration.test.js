@@ -64,7 +64,7 @@ const prismaMock = {
   },
   wallet: {
     findUnique: async () => null,
-    create: async ({ data }) => ({ id: `wallet_${Math.random().toString(36).slice(2, 9)}`, ...data }),
+    create: async ({ data }) => ({ publicKey: 'G' + 'A'.repeat(55), ...data }),
     update: async ({ where, data }) => ({ id: where.id, ...data }),
     findMany: async () => [],
   },
@@ -99,7 +99,6 @@ const prismaMock = {
     upsert: async ({ create }) => ({ ...create, resetAt: new Date(Date.now() + 60_000) }),
   },
   transaction: { findMany: async () => [], findFirst: async () => null },
-  wallet: { findUnique: async () => null, create: async ({ data }) => ({ publicKey: 'G' + 'A'.repeat(55), ...data }) },
   kycProfile: {
     findUnique: async ({ where }) => {
       if (where.userId) return { id: 'kyc_1', userId: where.userId, tier: 1, status: 'approved', riskScore: 10 };

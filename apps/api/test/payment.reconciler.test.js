@@ -143,14 +143,6 @@ test('reconcileStaleTransactions: txHash on ledger but successful=false → fail
 // Transient 404: window still open → no update, retry next cycle
 // ---------------------------------------------------------------------------
 test('reconcileStaleTransactions: Horizon 404 while ledger sequence window is open → no status change (retry)', async () => {
-  // Transaction is 6 min old: past staleAgeMs(5m) but inside LEDGER_SEQUENCE_WINDOW_MS(5m)?
-  // Actually 6 min > 5 min, so sequence window IS closed for the default.
-  // Use a transaction only 5.5 min old to stay within the window.
-  const tx = recentPendingTx({
-    id: 'tx_fresh',
-    createdAt: new Date(Date.now() - 5.5 * 60 * 1000), // 5.5 min > staleAgeMs but < window
-  });
-  // Override staleAgeMs to 5min but window is 5min — need tx inside the window.
   // Use a 2-min-old tx with staleAgeMs=1min so it's stale but window still open.
   const freshTx = recentPendingTx({
     id: 'tx_fresh2',
