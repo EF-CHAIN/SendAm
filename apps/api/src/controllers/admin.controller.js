@@ -13,6 +13,8 @@ const { getWalletActivitySummary } = require('../services/wallet-activity-summar
 const walletService = require('../wallet/wallet.service');
 const { getRotationStatus, rotateSecret: performSecretRotation, evaluateRotationHealth, SECRET_CATEGORIES } = require('../services/secret-rotation.service');
 const { userDto, walletDto, transactionDto, kycProfileDto } = require('../admin/adminDtos');
+const { getExchangeRate } = require('../pricing/pricing.service');
+const { getAssetRule } = require('../utils/money');
 
 // Build an inclusive [gte, lte] range from `from`/`to` query params. Tolerant of
 // bare dates ("2024-01-01") and full ISO timestamps; invalid input is ignored
@@ -232,6 +234,54 @@ const me = async (req, res, next) => {
   } catch (error) { return next(error); }
 };
 
+// Unified balance/valuation summary. Totals settled volume per asset, plus a
+// best-effort conversion to a single base currency so operators can compare
+// wallets holding different assets. Each row carries the FX source and
+// precision so a stale or unavailable rate is visible rather than silently
+// wrong. `baseAmount` stays null when no rate can be sourced.
+const BALANCE_SUMMARY_BASE_CURRENCY = 'USD';
+
+const getBalanceSummary = async () => {
+  const rows = await prisma.$queryRaw`
+    SELECT "asset", SUM("amount"::numeric)::text AS total
+    FROM "Transaction"
+    WHERE "status" = 'success'
+    GROUP BY "asset"
+  `;
+
+  return Promise.all(rows.map(async ({ asset, total }) => {
+    let rule;
+    try {
+      rule = getAssetRule(asset);
+    } catch {
+      return { asset, amount: total, precision: null, baseCurrency: BALANCE_SUMMARY_BASE_CURRENCY, baseAmount: null, rate: null, source: 'unsupported_asset' };
+    }
+
+    const amount = Number(total).toFixed(rule.precision);
+    if (asset === BALANCE_SUMMARY_BASE_CURRENCY) {
+      return { asset, amount, precision: rule.precision, baseCurrency: BALANCE_SUMMARY_BASE_CURRENCY, baseAmount: amount, rate: '1', source: 'identity' };
+    }
+
+    let rate = null;
+    try {
+      rate = await getExchangeRate({ sourceCurrency: asset, targetCurrency: BALANCE_SUMMARY_BASE_CURRENCY });
+    } catch {
+      rate = null;
+    }
+    const baseAmount = rate != null ? (Number(amount) * Number(rate)).toFixed(getAssetRule(BALANCE_SUMMARY_BASE_CURRENCY).precision) : null;
+
+    return {
+      asset,
+      amount,
+      precision: rule.precision,
+      baseCurrency: BALANCE_SUMMARY_BASE_CURRENCY,
+      baseAmount,
+      rate,
+      source: rate != null ? 'exchangerate-api' : 'unavailable',
+    };
+  }));
+};
+
 const getStats = async (req, res, next) => {
   try {
     const [
@@ -243,6 +293,7 @@ const getStats = async (req, res, next) => {
       pendingTransactions,
       pendingKyc,
       voiceCommands,
+      balances,
     ] = await Promise.all([
       prisma.user.count(),
       prisma.wallet.count(),
@@ -252,6 +303,7 @@ const getStats = async (req, res, next) => {
       prisma.transaction.count({ where: { status: { in: ['pending', 'processing'] } } }),
       prisma.kycProfile.count({ where: { status: { in: ['pending', 'review'] } } }),
       prisma.voiceCommand.count(),
+      getBalanceSummary(),
     ]);
 
     sendSuccess(res, {
@@ -263,6 +315,7 @@ const getStats = async (req, res, next) => {
       pendingTransactions,
       pendingKyc,
       voiceCommands,
+      balances,
     });
   } catch (error) {
     next(error);

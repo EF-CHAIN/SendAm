@@ -44,7 +44,7 @@ ALTER TABLE "ReconciliationCheckpoint" ADD CONSTRAINT "ReconciliationCheckpoint_
 -- Add support case model for structured support workflow
 CREATE TABLE "SupportCase" (
   "id" TEXT NOT NULL PRIMARY KEY,
-  "caseNumber" TEXT NOT NULL UNIQUE,
+  "caseNumber" TEXT NOT NULL,
   "userId" TEXT,
   "status" TEXT NOT NULL DEFAULT 'open',
   "priority" TEXT NOT NULL DEFAULT 'normal',
