@@ -344,6 +344,7 @@ const balance = async ({ wallet }) => {
 // one wallet sets error and leaves assets empty rather than blanking the whole
 // reply. Legacy non-Stellar rows are excluded by query.
 const balancesForUser = async ({ userId, phoneNumber }) => {
+  const prisma = getPrisma();
   const network = activeNetwork();
   const wallets = userId
     ? await prisma.wallet.findMany({ where: { userId, chain: CHAIN, network } })

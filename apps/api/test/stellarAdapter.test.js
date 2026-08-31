@@ -60,7 +60,7 @@ test('submitPayment returns a friendly error for op_no_trust', async () => {
       asset: 'XLM',
     }),
     {
-      message: "The recipient can't receive USDC yet.",
+      message: "The recipient can't receive this asset yet. They need to open a trustline first.",
     },
   );
 });
@@ -94,7 +94,7 @@ test('submitPayment returns a friendly error for op_underfunded', async () => {
       asset: 'XLM',
     }),
     {
-      message: 'Insufficient balance for this payment.',
+      message: 'Insufficient balance for this payment. The sender needs more XLM to cover the transfer and fees.',
     },
   );
 });
@@ -109,7 +109,7 @@ test('submitPayment preserves unknown Horizon errors unchanged', async () => {
       extras: {
         result_codes: {
           transaction: 'tx_failed',
-          operations: ['op_line_full'],
+          operations: ['op_no_issuer'],
         },
       },
     },
@@ -171,7 +171,27 @@ afterEach(() => {
   mock.restoreAll();
 });
 
-test('getBalances returns XLM and USDC rows when both trustlines exist', async () => {
+const NETWORK = 'testnet';
+
+test('getBalances returns canonical identity for native XLM only', async () => {
+  mock.method(server, 'loadAccount', async () => ({
+    balances: [{ asset_type: 'native', balance: '5.0000000' }],
+  }));
+
+  const balances = await stellarAdapter.getBalances('GABCD');
+  assert.deepEqual(balances, [
+    {
+      asset: 'XLM',
+      value: '5.0000000',
+      issuer: null,
+      network: NETWORK,
+      assetId: 'stellar:testnet:XLM',
+      trusted: true,
+    },
+  ]);
+});
+
+test('getBalances tags configured USDC as trusted with issuer provenance', async () => {
   mock.method(server, 'loadAccount', async () => ({
     balances: [
       { asset_type: 'native', balance: '42.5000000' },
@@ -181,21 +201,26 @@ test('getBalances returns XLM and USDC rows when both trustlines exist', async (
 
   const balances = await stellarAdapter.getBalances('GABCD');
   assert.deepEqual(balances, [
-    { asset: 'XLM', value: '42.5000000' },
-    { asset: 'USDC', value: '10.0000000' },
+    {
+      asset: 'XLM',
+      value: '42.5000000',
+      issuer: null,
+      network: NETWORK,
+      assetId: 'stellar:testnet:XLM',
+      trusted: true,
+    },
+    {
+      asset: 'USDC',
+      value: '10.0000000',
+      issuer: USDC_ISSUER,
+      network: NETWORK,
+      assetId: `stellar:testnet:USDC:${USDC_ISSUER}`,
+      trusted: true,
+    },
   ]);
 });
 
-test('getBalances returns only XLM for an XLM-only account', async () => {
-  mock.method(server, 'loadAccount', async () => ({
-    balances: [{ asset_type: 'native', balance: '5.0000000' }],
-  }));
-
-  const balances = await stellarAdapter.getBalances('GABCD');
-  assert.deepEqual(balances, [{ asset: 'XLM', value: '5.0000000' }]);
-});
-
-test('getBalances ignores a USDC-code trustline from an untrusted issuer', async () => {
+test('getBalances never drops a spoofed USDC-code trustline but flags it untrusted', async () => {
   mock.method(server, 'loadAccount', async () => ({
     balances: [
       { asset_type: 'native', balance: '1.0000000' },
@@ -204,7 +229,48 @@ test('getBalances ignores a USDC-code trustline from an untrusted issuer', async
   }));
 
   const balances = await stellarAdapter.getBalances('GABCD');
-  assert.deepEqual(balances, [{ asset: 'XLM', value: '1.0000000' }]);
+  assert.equal(balances.length, 2, 'spoofed trustline must stay for reconciliation evidence');
+
+  const usdcSpoof = balances.find((b) => b.asset === 'USDC');
+  assert.equal(usdcSpoof.value, '999.0000000');
+  assert.equal(usdcSpoof.issuer, OTHER_ISSUER);
+  assert.equal(usdcSpoof.trusted, false);
+  assert.equal(usdcSpoof.assetId, `stellar:testnet:USDC:${OTHER_ISSUER}`);
+
+  const xlm = balances.find((b) => b.asset === 'XLM');
+  assert.equal(xlm.trusted, true);
+});
+
+test('getBalances reports unknown assets with trusted false instead of treating them as trusted', async () => {
+  mock.method(server, 'loadAccount', async () => ({
+    balances: [
+      { asset_type: 'native', balance: '2.0000000' },
+      { asset_type: 'credit_alphanum4', asset_code: 'DOGE', asset_issuer: OTHER_ISSUER, balance: '7.0000000' },
+    ],
+  }));
+
+  const balances = await stellarAdapter.getBalances('GABCD');
+  const doge = balances.find((b) => b.asset === 'DOGE');
+  assert.ok(doge, 'unknown asset must be returned for reconciliation');
+  assert.equal(doge.trusted, false);
+  assert.equal(doge.assetId, `stellar:testnet:DOGE:${OTHER_ISSUER}`);
+});
+
+test('getBalances flags untrusted when the same code is issued by a different (changed) issuer', async () => {
+  // An issuer that is NOT the configured one for USDC on this network must
+  // never be trusted, even though the code is exactly "USDC".
+  mock.method(server, 'loadAccount', async () => ({
+    balances: [
+      { asset_type: 'native', balance: '3.0000000' },
+      { asset_type: 'credit_alphanum4', asset_code: 'USDC', asset_issuer: OTHER_ISSUER, balance: '50.0000000' },
+    ],
+  }));
+
+  const balances = await stellarAdapter.getBalances('GABCD');
+  const usdc = balances.find((b) => b.asset === 'USDC');
+  assert.equal(usdc.trusted, false);
+  assert.equal(usdc.issuer, OTHER_ISSUER);
+  assert.notEqual(usdc.assetId, `stellar:testnet:USDC:${USDC_ISSUER}`);
 });
 
 // A funded account with a sequence so TransactionBuilder can build against it,

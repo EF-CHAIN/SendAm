@@ -7,6 +7,7 @@ const logger = require("../utils/logger");
 const config = require("../config/env");
 const { assertValidAmount } = require("../utils/money");
 const { outboundHeaders } = require("../observability/context");
+const assetIdentity = require("./assetIdentity");
 
 const chain = "stellar";
 
@@ -316,29 +317,48 @@ const getFundingAccountHealth = async ({
   return report;
 };
 
-// Every relevant balance for a wallet: XLM plus USDC when the account holds
-// a trustline for it. Horizon lists all trustlines regardless of issuer, so
-// USDC is only reported when both the asset code *and* the configured
-// issuer match — a same-code trustline from another issuer is a different,
-// unrelated asset and must not be surfaced as USDC.
+// Every balance line for a wallet, each tagged with its canonical asset
+// identity (network + code + issuer) and whether this service recognises the
+// issuer. Horizon lists every trustline regardless of issuer — a same-code
+// trustline from another issuer (e.g. someone else's "USDC") is a different,
+// unrelated asset. It is still returned here (never dropped, so reconciliation
+// evidence isn't lost) but marked `trusted: false`; callers must never treat
+// an untrusted row as the real asset just because the code matches (#285).
 const getBalances = async (publicKey) => {
   try {
     const account = await server.loadAccount(publicKey);
+    const network = config.stellar.network;
     const balances = [];
 
     const xlmBalance = account.balances.find((b) => b.asset_type === "native");
+    const nativeIdentity = assetIdentity.describeAsset({ network, assetType: "native" });
     balances.push({
       asset: "XLM",
       value: xlmBalance ? xlmBalance.balance : "0",
+      issuer: nativeIdentity.issuer,
+      network: nativeIdentity.network,
+      assetId: nativeIdentity.assetId,
+      trusted: nativeIdentity.trusted,
     });
 
-    const usdcBalance = account.balances.find(
-      (b) =>
-        b.asset_code === "USDC" && b.asset_issuer === config.stellar.usdcIssuer,
-    );
-    if (usdcBalance) {
-      balances.push({ asset: "USDC", value: usdcBalance.balance });
-    }
+    account.balances
+      .filter((b) => b.asset_type !== "native")
+      .forEach((b) => {
+        const identity = assetIdentity.describeAsset({
+          network,
+          assetType: b.asset_type,
+          code: b.asset_code,
+          issuer: b.asset_issuer,
+        });
+        balances.push({
+          asset: identity.code,
+          value: b.balance,
+          issuer: identity.issuer,
+          network: identity.network,
+          assetId: identity.assetId,
+          trusted: identity.trusted,
+        });
+      });
 
     return balances;
   } catch (error) {
@@ -476,6 +496,8 @@ const classifyTrustlineError = (error) => {
   }
 
   return { code: 'unknown', retryable: false, userMessage: 'Could not establish trustline. Please retry.' };
+};
+
 // Concurrency coordination: serialize submissions per source account to eliminate sequence collisions.
 const accountSubmissionLocks = new Map();
 
@@ -614,6 +636,7 @@ const submitPayment = async ({
                   return { txHash: hash, explorerUrl: getTransactionUrl(hash) };
                 }
               } catch (_) {
+                // lookup failed; fall through to the standard retry path
               }
             }
 
@@ -722,7 +745,9 @@ const establishTrustline = async ({ secretKey, assetCode }) => {
                   explorerUrl: getTransactionUrl(hash),
                 };
               }
-            } catch (_) {}
+            } catch (_) {
+              // lookup failed; resubmit the same envelope below
+            }
           }
           if (attempt < SEND_MAX_ATTEMPTS) {
             await sleep(attempt * 250);
@@ -742,7 +767,9 @@ const establishTrustline = async ({ secretKey, assetCode }) => {
                   explorerUrl: getTransactionUrl(hash),
                 };
               }
-            } catch (_) {}
+            } catch (_) {
+              // lookup failed; treat as bad sequence and retry below
+            }
           }
           if (attempt < SEND_MAX_ATTEMPTS) {
             lastError = error;
@@ -751,105 +778,14 @@ const establishTrustline = async ({ secretKey, assetCode }) => {
           }
         }
 
-        const friendlyMessage = getFriendlyPaymentError(error);
-        if (friendlyMessage) {
-          const classification = classifyRecoverableError(error);
-          throw Object.assign(new Error(friendlyMessage), {
-            code: classification.code,
-            retryable: classification.retryable,
-            action: classification.action,
-            raw: error,
-          });
-        }
-
-        const classification = classifyRecoverableError(error);
+        logger.error("Error establishing trustline", error.message);
+        const classification = classifyTrustlineError(error);
         throw Object.assign(new Error(classification.userMessage), {
           code: classification.code,
           retryable: classification.retryable,
-          action: classification.action,
+          alreadyExisted: classification.alreadyExisted || false,
           raw: error,
         });
-      }
-    }
-
-    throw lastError || new Error("Failed to send payment");
-  } catch (error) {
-    logger.error("Error sending payment", error.message);
-    throw new Error(error.message || "Failed to send payment");
-  }
-};
-
-// Open a trustline so the wallet can hold an issued asset (e.g. USDC). This is
-// a `changeTrust` operation the wallet signs for itself, and it costs one XLM
-// reserve entry (see docs/STELLAR.md). Idempotent: callers may retry freely, so
-// if the trustline already exists we report that without submitting anything.
-const establishTrustline = async ({ secretKey, assetCode }) => {
-  const sourceKeypair = StellarSdk.Keypair.fromSecret(secretKey);
-  const sourcePublicKey = sourceKeypair.publicKey();
-
-  const asset = resolveAsset(assetCode);
-  if (asset.isNative()) {
-    throw new Error("XLM is the native asset and needs no trustline.");
-  }
-
-  // An unfunded (nonexistent) account 404s here; surface a clear reason rather
-  // than a raw Horizon error dump.
-  let account;
-  try {
-    account = await server.loadAccount(sourcePublicKey);
-  } catch (error) {
-    logger.error("Error loading account for trustline", error.message);
-    throw new Error(
-      "Account is not funded yet — fund it before opening a trustline.",
-    );
-  }
-
-  // Already trusted (same code *and* issuer): no-op, safe to call repeatedly.
-  const alreadyExisted = account.balances.some(
-    (b) =>
-      b.asset_code === asset.getCode() && b.asset_issuer === asset.getIssuer(),
-  );
-  if (alreadyExisted) {
-    return { established: true, alreadyExisted: true };
-  }
-
-  const fee = await server.fetchBaseFee();
-  assertNativeReserve(account, fee, 1);
-  const networkPassphrase =
-    config.stellar.network === "testnet"
-      ? StellarSdk.Networks.TESTNET
-      : StellarSdk.Networks.PUBLIC;
-
-  const transaction = new StellarSdk.TransactionBuilder(account, {
-    fee,
-    networkPassphrase,
-  })
-    .addOperation(StellarSdk.Operation.changeTrust({ asset }))
-    .setTimeout(30)
-    .build();
-
-  transaction.sign(sourceKeypair);
-
-  try {
-    const txResponse = await server.submitTransaction(transaction);
-    return {
-      established: true,
-      alreadyExisted: false,
-      txHash: txResponse.hash,
-      explorerUrl: getTransactionUrl(txResponse.hash),
-    };
-  } catch (error) {
-    logger.error("Error establishing trustline", error.message);
-    const classification = classifyTrustlineError(error);
-    throw Object.assign(new Error(classification.userMessage), {
-      code: classification.code,
-      retryable: classification.retryable,
-      alreadyExisted: classification.alreadyExisted || false,
-      raw: error,
-    });
-  }
-        logger.error("Error establishing trustline", error.message);
-        throw new Error(`Could not establish ${asset.getCode()} trustline.`);
       }
     }
 

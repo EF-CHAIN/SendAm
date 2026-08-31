@@ -342,9 +342,12 @@ const exportStatementPdf = async ({ userId, startDate, endDate, asset, actingAct
     { label: 'Generated At', value: data.generatedAt.slice(0, 19).replace('T', ' ') + ' UTC' },
   ];
 
+  // Only a balance this service recognises as the real asset (matching
+  // network + issuer, not just a same-named code) is reported here — a
+  // spoofed same-code trustline must never be valued as trusted USDC (#285).
   const summary = [
-    { label: 'Current XLM Balance', value: data.liveBalances.find((b) => b.asset === 'XLM')?.value || '0.00' },
-    { label: 'Current USDC Balance', value: data.liveBalances.find((b) => b.asset === 'USDC')?.value || '0.00' },
+    { label: 'Current XLM Balance', value: data.liveBalances.find((b) => b.asset === 'XLM' && b.trusted !== false)?.value || '0.00' },
+    { label: 'Current USDC Balance', value: data.liveBalances.find((b) => b.asset === 'USDC' && b.trusted !== false)?.value || '0.00' },
     { label: 'Total Transactions', value: String(data.transactionCount) },
     { label: 'Total Network Fees', value: `${data.totalFeesXlm} XLM` },
   ];

@@ -57,6 +57,9 @@ const {
 
 const WALLET_PUBLIC_KEY = 'GCEZWKCA5VLDNRLN3RPRJMRZOX3Z6G5CHCGZNN4F4RJ9A5GD4G7GGY3';
 const PHONE = '+2349000000001';
+// The configured testnet USDC issuer (issue #285). A deposit from any other
+// issuer is deliberately not trusted or valued, even if the code is "USDC".
+const TESTNET_USDC_ISSUER = 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5';
 
 // Build a minimal Prisma mock. `updateLog` records every update in order.
 const makePrisma = (wallets, updateLog = []) => ({
@@ -97,13 +100,14 @@ const makeHorizon = (pages) => {
 };
 
 // Build a payment record the way Horizon returns it.
-const makePayment = ({ to, from, amount, asset_type = 'credit_alphanum4', asset_code = 'USDC', paging_token }) => ({
+const makePayment = ({ to, from, amount, asset_type = 'credit_alphanum4', asset_code = 'USDC', asset_issuer, paging_token }) => ({
   type: 'payment',
   to,
   from,
   amount,
   asset_type,
   asset_code,
+  ...(asset_issuer ? { asset_issuer } : {}),
   paging_token,
 });
 
@@ -148,13 +152,38 @@ describe('Rule 1 — new inbound payment: one notification, cursor advanced', ()
     const notify = async (_phone, text) => notified.push(text);
 
     const inboundRecord = makePayment({
-      to: WALLET_PUBLIC_KEY, from: 'G_OTHER', amount: '20', paging_token: 'c1',
+      to: WALLET_PUBLIC_KEY, from: 'G_OTHER', amount: '20', asset_issuer: TESTNET_USDC_ISSUER, paging_token: 'c1',
     });
     const horizon = makeHorizon([[inboundRecord]]);
 
     await pollWallet(wallet, { horizon, prismaClient, notify, fetchRate: async () => 1550 });
 
     assert.match(notified[0], /~₦/, 'fiat hint should appear when rate is available');
+  });
+
+  test('spoofed USDC from an unrecognized issuer is flagged and never valued', async () => {
+    const wallet = { id: 'w1', publicKey: WALLET_PUBLIC_KEY, phoneNumber: PHONE, paymentCursor: 'cursor_0' };
+    const prismaClient = makePrisma([wallet]);
+    const notified = [];
+    const notify = async (_phone, text) => notified.push(text);
+
+    const inboundRecord = makePayment({
+      to: WALLET_PUBLIC_KEY,
+      from: 'G_OTHER',
+      amount: '20',
+      asset_code: 'USDC',
+      asset_issuer: 'GAQAA5L65LSYH7CQ3VTJ7F3HHNTNCQIKEO7YPC2FUYAKQNRFAWSFTNZK',
+      paging_token: 'c2',
+    });
+    const horizon = makeHorizon([[inboundRecord]]);
+
+    await pollWallet(wallet, { horizon, prismaClient, notify, fetchRate: async () => 1550 });
+
+    // Must be worded as unverified, not as trusted USDC, and must carry no
+    // fiat value even though a rate is available (#285).
+    assert.match(notified[0], /unrecognized issuer/);
+    assert.match(notified[0], /not verified USDC/);
+    assert.doesNotMatch(notified[0], /~₦/, 'spoofed asset must not carry a fiat value');
   });
 
   test('notification text omits fiat hint when rate fetch fails', async () => {

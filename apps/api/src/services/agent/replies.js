@@ -57,12 +57,19 @@ const replies = {
   // A wallet with no USDC trustline shows only XLM.
   // A wallet whose Horizon fetch failed shows a single error line instead of
   // asset rows so the rest of the reply is still rendered.
+  // An asset row whose issuer this service doesn't recognise (`trusted:
+  // false`, e.g. a same-code token from an unverified issuer) is flagged
+  // rather than shown as if it were the real, trusted asset (#285).
   balances: (wallets) => {
     const lines = wallets.flatMap((w) => {
       if (w.error) {
         return [`${chainLabel(w.chain)}: unavailable (${w.error})`];
       }
-      return (w.assets || []).map((a) => `${a.asset}: ${a.value}`);
+      return (w.assets || []).map((a) => (
+        a.trusted === false
+          ? `${a.asset}: ${a.value} (unverified issuer — not trusted ${a.asset})`
+          : `${a.asset}: ${a.value}`
+      ));
     });
     return `Your balances:\n\n${lines.join('\n')}`;
   },
