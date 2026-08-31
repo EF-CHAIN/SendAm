@@ -21,7 +21,8 @@ const config = require('./config/env');
 const { getTrustProxySetting, sanitizeForwardingHeaders } = require('./config/proxy');
 const logger = require('./utils/logger');
 const prisma = require('./common/prisma');
-const { requestMetrics, getMetricSnapshot } = require('./observability/metrics');
+const { correlationMiddleware } = require('./observability/context');
+const { requestMetrics, getMetricSnapshot, metricsHandler, increment } = require('./observability/metrics');
 
 const app = express();
 let startupComplete = false;

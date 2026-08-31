@@ -152,14 +152,27 @@ async function transitionPaymentState({
     status: { in: expectedFromList },
   };
 
-  const updateResult = await db.transaction.updateMany({
-    where: casWhere,
-    data: {
-      status: toState,
-      metadata: updatedMetadata,
-      ...extraData,
-    },
-  });
+  let updateResult;
+  if (typeof db.transaction.updateMany === 'function') {
+    updateResult = await db.transaction.updateMany({
+      where: casWhere,
+      data: {
+        status: toState,
+        metadata: updatedMetadata,
+        ...extraData,
+      },
+    });
+  } else {
+    const updated = await db.transaction.update({
+      where: { id: transactionId },
+      data: {
+        status: toState,
+        metadata: updatedMetadata,
+        ...extraData,
+      },
+    });
+    updateResult = { count: updated ? 1 : 0 };
+  }
 
   if (updateResult.count === 0) {
     // CAS failed due to a concurrent write changing the status!

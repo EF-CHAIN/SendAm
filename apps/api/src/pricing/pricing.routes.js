@@ -35,19 +35,5 @@ router.post(
   },
 );
 
-// Optional: periodic reconciliation endpoint (protected, admin-only in production)
-router.post('/reconcile', requireRestSession, async (req, res, next) => {
-  try {
-    // In production, restrict to admin users
-    if (config.isProduction && req.restUser?.role !== 'admin') {
-      return sendError(res, 'Forbidden', 403);
-    }
-    
-    const result = await reconcileQuotes({ emit: true });
-    return sendSuccess(res, result, 'Quote reconciliation complete');
-  } catch (error) {
-    next(error);
-  }
-});
-
 module.exports = router;
+

@@ -104,6 +104,7 @@ const resolveCategoryStatus = ({ category, user = null, records = [] }) => {
   if (record && record.status !== STATUS.UNSET) return record.status;
 
   if (user && user.messagingConsent === 'opted_out') return STATUS.DENIED;
+  if (user && user.messagingConsent === 'opted_in') return STATUS.GRANTED;
 
   return defaultStatusFor(category);
 };

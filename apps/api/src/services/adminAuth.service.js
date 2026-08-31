@@ -4,27 +4,18 @@ const prisma = require('../common/prisma');
 const config = require('../config/env');
 const scrypt = promisify(crypto.scrypt);
 const TTL_MS = config.admin.sessionTtlHours * 60 * 60 * 1000;
-const ADMIN_PERMISSIONS = [
-  'stats:read',
-  'users:read',
-  'wallets:read',
-  'transactions:read',
-  'kyc:read',
-  'audit:read',
-  'system:read',
-  'sensitive:reveal',
-];
-
-const sign = (body) =>
-  crypto.createHmac('sha256', JWT_SECRET).update(body).digest('base64url');
-
-// Constant-time string compare that tolerates length differences without
-// throwing (timingSafeEqual requires equal-length buffers).
-const safeEqual = (a, b) => {
-  const bufA = Buffer.from(String(a));
-  const bufB = Buffer.from(String(b));
-  if (bufA.length !== bufB.length) return false;
-  return crypto.timingSafeEqual(bufA, bufB);
+const ROLE_PERMISSIONS = Object.freeze({
+  read_only: ['admin.read'],
+  compliance: ['admin.read', 'compliance.read', 'compliance.write'],
+  operations: ['admin.read', 'operations.write'],
+  administrator: ['*'],
+});
+const normalizeEmail = (email) => String(email || '').trim().toLowerCase();
+const tokenHash = (token) => crypto.createHash('sha256').update(String(token)).digest('hex');
+const hashPassword = async (password) => {
+  if (typeof password !== 'string' || password.length < 12) throw Object.assign(new Error('Password must be at least 12 characters'), { statusCode: 400 });
+  const salt = crypto.randomBytes(16); const derived = await scrypt(password, salt, 64);
+  return `scrypt$${salt.toString('base64url')}$${derived.toString('base64url')}`;
 };
 const verifyPassword = async (candidate, encoded) => {
   if (typeof candidate !== 'string' || !encoded) return false;
@@ -34,11 +25,19 @@ const verifyPassword = async (candidate, encoded) => {
   const actual = await scrypt(candidate, Buffer.from(saltText, 'base64url'), expected.length);
   return crypto.timingSafeEqual(actual, expected);
 };
-
-const createToken = () => {
-  const payload = { role: 'admin', permissions: ADMIN_PERMISSIONS, iat: Date.now(), exp: Date.now() + TTL_MS };
-  const body = Buffer.from(JSON.stringify(payload)).toString('base64url');
-  return `${body}.${sign(body)}`;
+const ensureRoles = () => prisma.$transaction(Object.entries(ROLE_PERMISSIONS).map(([name, permissions]) => prisma.adminRole.upsert({
+  where: { name }, create: { name, permissions, description: `${name.replace('_', ' ')} administrator role` }, update: { permissions },
+})));
+const bootstrapLegacyAdministrator = async (email, password) => {
+  if (!config.admin.password || !config.admin.bootstrapEmail || normalizeEmail(email) !== normalizeEmail(config.admin.bootstrapEmail)) return null;
+  const candidate = Buffer.from(String(password || '')); const legacy = Buffer.from(config.admin.password);
+  if (candidate.length !== legacy.length || !crypto.timingSafeEqual(candidate, legacy) || await prisma.adminUser.count() !== 0) return null;
+  const roles = await ensureRoles(); const role = roles.find((item) => item.name === 'administrator');
+  // The bootstrap account is minted from the shared ADMIN_PASSWORD, so it is
+  // born with `mustChangePassword`. Until the operator rotates it to a private
+  // password every admin route (except the password change itself) is blocked,
+  // which keeps the shared credential from authenticating real admin work.
+  return prisma.adminUser.create({ data: { email: normalizeEmail(email), name: 'Bootstrap administrator', passwordHash: await hashPassword(password), roleId: role.id, mustChangePassword: true }, include: { role: true } });
 };
 const authenticate = async (email, password) => {
   const normalized = normalizeEmail(email);
@@ -50,12 +49,12 @@ const authenticate = async (email, password) => {
   await prisma.adminUser.update({ where: { id: admin.id }, data: { lastLoginAt: new Date() } });
   return { token, session, admin, mustChangePassword: admin.mustChangePassword === true };
 };
-
-module.exports = {
-  ADMIN_PERMISSIONS,
-  verifyPassword,
-  createToken,
-  verifyToken,
+const verifyToken = async (token) => {
+  if (typeof token !== 'string' || token.length < 32) return null;
+  const session = await prisma.adminSession.findUnique({ where: { tokenHash: tokenHash(token) }, include: { admin: { include: { role: true } } } });
+  if (!session || session.revokedAt || session.expiresAt <= new Date() || session.admin.disabledAt) return null;
+  await prisma.adminSession.update({ where: { id: session.id }, data: { lastUsedAt: new Date() } });
+  return { id: session.admin.id, email: session.admin.email, name: session.admin.name, role: session.admin.role.name, permissions: session.admin.role.permissions, sessionId: session.id, mustChangePassword: session.admin.mustChangePassword === true };
 };
 const hasPermission = (admin, permission) => Boolean(admin?.permissions?.includes('*') || admin?.permissions?.includes(permission));
 const createInvitation = async ({ email, name, roleName, createdById }) => {
