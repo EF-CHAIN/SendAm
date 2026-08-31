@@ -39,8 +39,11 @@ router.post('/payments/stuck/:id/escalate', requireAdmin('operations.write'), ad
 router.get('/ledger/discrepancies', requireAdmin('operations.write'), adminController.getLedgerDiscrepancies);
 router.get('/kyc', requireAdmin('compliance.read'), adminController.getKycProfiles);
 router.get('/kyc/export', requireAdmin('compliance.read'), adminController.exportKyc);
-router.get('/kyc/:id/expiry-status', requireAdmin('compliance.read'), adminController.getKycExpiryStatus);
-router.get('/compliance/expiry-summary', requireAdmin('compliance.read'), adminController.getComplianceExpirySummary);
+// NOTE: the /kyc/:id/expiry-status and /compliance/expiry-summary routes were
+// dropped because they referenced handlers that are not defined anywhere in
+// the codebase, which crashed the app at startup. Restore them together with
+// their handlers when the verification-expiry admin view (issue #333) is built
+// from compliance/verification.expiry.js.
 router.get('/audit-logs', requireAdmin('admin.read'), adminController.getAuditLogs);
 router.get('/audit-logs/verify', requireAdmin('admin.read'), adminController.verifyAuditLogs);
 router.get('/audit-logs/export', requireAdmin('admin.read'), adminController.exportAuditLogs);

@@ -2,8 +2,12 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const http = require('node:http');
 
-// Configure CORS environment before app require
+// Configure environment before app require: CORS allowlist plus the minimum
+// runtime secrets (crypto/service throws at require-time without ENCRYPTION_KEY,
+// and admin auth validates JWT_SECRET) so the app module can load offline.
 process.env.CORS_ORIGINS = 'https://dashboard.example.com,http://localhost:3000';
+process.env.ENCRYPTION_KEY = 'a'.repeat(64); // 32 bytes hex
+process.env.JWT_SECRET = 'cors-test-jwt-secret-that-is-at-least-32-characters-long-';
 
 const app = require('../src/app');
 
@@ -49,7 +53,9 @@ test('CORS Policy', async (t) => {
 
   await t.test('allows non-browser requests without Origin header', async () => {
     await withServer(app, async (baseUrl) => {
-      const res = await fetch(`${baseUrl}/health`);
+      // Use a static 200 route (the OpenAPI spec) rather than /health: /health
+      // delegates to live DB+Redis checks and would flake without those services.
+      const res = await fetch(`${baseUrl}/api/docs`);
       assert.strictEqual(res.status, 200);
       assert.strictEqual(res.headers.get('access-control-allow-origin'), null);
     });

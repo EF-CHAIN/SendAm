@@ -1,7 +1,7 @@
 const { sendSuccess, sendError, sendCursorPaginated } = require('../utils/response');
 const { authenticate, createInvitation, acceptInvitation, revokeSessions, hashPassword, changeOwnPassword } = require('../services/adminAuth.service');
 const { writeAuditLog } = require('../common/audit.service');
-const { appendEvent, EVENT_TYPES, queryEvents, verifyEventChain: verifyEventChainService } = require('../common/event.service');
+const { queryEvents, verifyEventChain: verifyEventChainService } = require('../common/event.service');
 const { deactivateAccount, reactivateAccount, getAccountStatusHistory, DEACTIVATION_REASONS } = require('../compliance/account.service');
 const { getOnboardingStatus } = require('../compliance/onboarding.service');
 const { buildUserEvidencePackage, exportWorkflowEventsCsv, exportKycEvidenceCsv, exportAccountStatusHistoryCsv } = require('../compliance/evidence.service');

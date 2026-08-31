@@ -144,6 +144,7 @@ model Transaction {
   user  User   @relation(fields: [userId], references: [id], onDelete: Cascade)
   quote         Quote?         @relation(fields: [quoteId], references: [id])
   ledgerEntries JournalEntry[]
+  reconciliationCheckpoints ReconciliationCheckpoint[]
 
   @@index([userId, createdAt])
   @@index([status])
