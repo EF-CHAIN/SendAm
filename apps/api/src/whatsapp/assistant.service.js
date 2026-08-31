@@ -12,8 +12,8 @@ const defaultPrisma = require('../common/prisma');
 const { canonicalizePhoneNumber } = require('../utils/validators');
 const { parseConsentCommand, applyConsentKeyword, isMessageAllowed } = require('../compliance/consent.service');
 const { t, SUPPORTED_LOCALES } = require('../i18n/messages');
-const { formatDateByLocale, formatAmountByLocale } = require('../i18n/formatters');
-const { buildStandardReceipt, formatChannelReceiptMessage, recordReceiptDeliveryEvent } = require('../services/receipt.service');
+const { formatAmountByLocale } = require('../i18n/formatters');
+const { buildStandardReceipt, formatChannelReceiptMessage } = require('../services/receipt.service');
 
 const PENDING_SEND_TTL_MS = 10 * 60 * 1000;
 const NATIVE_ASSET = 'XLM';
@@ -166,7 +166,7 @@ const requestConfirmation = async ({ phoneNumber, user, intent, notify, db = def
     const memoLine = intent.memo ? `\nMemo (${intent.memoType || 'text'}): ${intent.memo}` : '';
     const quoteLine = quote?.expiresAt ? `Quote expires: ${new Date(quote.expiresAt).toISOString()}\n` : '';
     const confirmMsg = t('payment_confirm', {
-      amount: intent.amount,
+      amount: formattedAmount,
       asset: intent.asset,
       label: recipient.label,
       memoLine,

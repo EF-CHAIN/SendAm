@@ -1,9 +1,6 @@
 const { isValidPhoneNumber, canonicalizePhoneNumber } = require('../utils/validators');
 const StellarSdk = require('@stellar/stellar-sdk');
 
-const PHONE_SHAPE = /^\+?\d[\ds]-{4,17}$/;
-const looksLikePhoneNumber = (raw) => PHONE_SHAPE.test(raw) && isValidPhoneNumber(raw);
-
 const PREFLIGHT_CACHE_TTL_MS = 30 * 1000;
 const preflightCache = new Map();
 
@@ -60,7 +57,7 @@ async function preflightDestination({ stellarService, destination, asset, memo, 
         errors.push('Destination is a muxed account and requires a memo.');
       }
     }
-  } catch (error) {
+  } catch (_error) {
     errors.push('Unable to verify destination account.');
   }
 
@@ -90,8 +87,6 @@ const createRecipientResolver = ({ prisma, walletService }) => {
   return async (user, recipient) => {
     const raw = String(recipient || '').trim();
     const normalized = raw.toLowerCase();
-
-    let result;
 
     // 1. Saved contacts - exact alias match.
     const savedAlias = await prisma.alias.findUnique({

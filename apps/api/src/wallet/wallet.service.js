@@ -5,7 +5,6 @@ const prisma = require('../common/prisma');
 const { withIdAlias, withIdAliases } = require('../common/records');
 const logger = require('../utils/logger');
 const { canonicalizePhoneNumber } = require('../utils/validators');
-const { CATALOG } = require('../errors/catalog');
 const config = require('../config/env');
 const { assertAccountActive } = require('../compliance/account.service');
 const { appendEvent, EVENT_TYPES } = require('../common/event.service');
@@ -78,18 +77,6 @@ const classifyRecoverableError = (error) => {
   }
   const classification = stellarAdapter.classifyRecoverableError(error);
   return { ...classification, retryable: Boolean(classification.retryable) };
-};
-
-const isProvisioningRetryable = (wallet) => {
-  if (wallet.fundingState === 'succeeded' || wallet.funded) return false;
-  const classification = classifyRecoverableError(new Error(wallet.fundingError || ''));
-  return classification.retryable && wallet.fundingAttempts < MAX_PROVISIONING_ATTEMPTS;
-};
-
-const isTrustlineRetryable = (wallet) => {
-  if (wallet.trustlineState === 'succeeded') return false;
-  const classification = classifyRecoverableError(new Error(wallet.trustlineError || ''));
-  return classification.retryable && wallet.trustlineAttempts < MAX_TRUSTLINE_ATTEMPTS;
 };
 
 // Open the USDC trustline so a funded wallet can receive USDC immediately.
