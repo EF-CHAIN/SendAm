@@ -7,6 +7,7 @@ const logger = require("../utils/logger");
 const config = require("../config/env");
 const { assertValidAmount } = require("../utils/money");
 const { outboundHeaders } = require("../observability/context");
+const assetIdentity = require("./assetIdentity");
 
 const chain = "stellar";
 
@@ -316,29 +317,48 @@ const getFundingAccountHealth = async ({
   return report;
 };
 
-// Every relevant balance for a wallet: XLM plus USDC when the account holds
-// a trustline for it. Horizon lists all trustlines regardless of issuer, so
-// USDC is only reported when both the asset code *and* the configured
-// issuer match — a same-code trustline from another issuer is a different,
-// unrelated asset and must not be surfaced as USDC.
+// Every balance line for a wallet, each tagged with its canonical asset
+// identity (network + code + issuer) and whether this service recognises the
+// issuer. Horizon lists every trustline regardless of issuer — a same-code
+// trustline from another issuer (e.g. someone else's "USDC") is a different,
+// unrelated asset. It is still returned here (never dropped, so reconciliation
+// evidence isn't lost) but marked `trusted: false`; callers must never treat
+// an untrusted row as the real asset just because the code matches (#285).
 const getBalances = async (publicKey) => {
   try {
     const account = await server.loadAccount(publicKey);
+    const network = config.stellar.network;
     const balances = [];
 
     const xlmBalance = account.balances.find((b) => b.asset_type === "native");
+    const nativeIdentity = assetIdentity.describeAsset({ network, assetType: "native" });
     balances.push({
       asset: "XLM",
       value: xlmBalance ? xlmBalance.balance : "0",
+      issuer: nativeIdentity.issuer,
+      network: nativeIdentity.network,
+      assetId: nativeIdentity.assetId,
+      trusted: nativeIdentity.trusted,
     });
 
-    const usdcBalance = account.balances.find(
-      (b) =>
-        b.asset_code === "USDC" && b.asset_issuer === config.stellar.usdcIssuer,
-    );
-    if (usdcBalance) {
-      balances.push({ asset: "USDC", value: usdcBalance.balance });
-    }
+    account.balances
+      .filter((b) => b.asset_type !== "native")
+      .forEach((b) => {
+        const identity = assetIdentity.describeAsset({
+          network,
+          assetType: b.asset_type,
+          code: b.asset_code,
+          issuer: b.asset_issuer,
+        });
+        balances.push({
+          asset: identity.code,
+          value: b.balance,
+          issuer: identity.issuer,
+          network: identity.network,
+          assetId: identity.assetId,
+          trusted: identity.trusted,
+        });
+      });
 
     return balances;
   } catch (error) {
@@ -604,6 +624,7 @@ const submitPayment = async ({
                   return { txHash: hash, explorerUrl: getTransactionUrl(hash) };
                 }
               } catch (_) {
+                // lookup failed; fall through to the standard retry path
               }
             }
 
@@ -712,7 +733,9 @@ const establishTrustline = async ({ secretKey, assetCode }) => {
                   explorerUrl: getTransactionUrl(hash),
                 };
               }
-            } catch (_) {}
+            } catch (_) {
+              // lookup failed; resubmit the same envelope below
+            }
           }
           if (attempt < SEND_MAX_ATTEMPTS) {
             await sleep(attempt * 250);
@@ -732,7 +755,9 @@ const establishTrustline = async ({ secretKey, assetCode }) => {
                   explorerUrl: getTransactionUrl(hash),
                 };
               }
-            } catch (_) {}
+            } catch (_) {
+              // lookup failed; treat as bad sequence and retry below
+            }
           }
           if (attempt < SEND_MAX_ATTEMPTS) {
             lastError = error;
@@ -743,15 +768,12 @@ const establishTrustline = async ({ secretKey, assetCode }) => {
 
         logger.error("Error establishing trustline", error.message);
         const classification = classifyTrustlineError(error);
-        if (classification) {
-          throw Object.assign(new Error(classification.userMessage), {
-            code: classification.code,
-            retryable: classification.retryable,
-            alreadyExisted: classification.alreadyExisted || false,
-            raw: error,
-          });
-        }
-        throw new Error(`Could not establish ${asset.getCode()} trustline.`);
+        throw Object.assign(new Error(classification.userMessage), {
+          code: classification.code,
+          retryable: classification.retryable,
+          alreadyExisted: classification.alreadyExisted || false,
+          raw: error,
+        });
       }
     }
 

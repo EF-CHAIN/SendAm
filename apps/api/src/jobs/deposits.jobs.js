@@ -31,6 +31,7 @@ const { sendTextMessage } = require('../services/whatsapp.service');
 const { getExchangeRate } = require('../pricing/pricing.service');
 const logger = require('../utils/logger');
 const config = require('../config/env');
+const assetIdentity = require('../wallet/assetIdentity');
 
 // ---------------------------------------------------------------------------
 // Notification text — "You received 20 USDC (~₦31,000)"
@@ -41,12 +42,16 @@ const config = require('../config/env');
 /**
  * Format a deposit notification message.
  *
- * @param {string|number} amount  - e.g. "20.0000000"
- * @param {string}        asset   - e.g. "USDC" | "XLM" | "native"
+ * @param {string|number} amount   - e.g. "20.0000000"
+ * @param {string}        asset    - e.g. "USDC" | "XLM" | "native"
  * @param {number|null}   fiatRate - NGN per 1 unit of asset (may be null)
+ * @param {boolean}       [trusted=true] - whether the issuer matches this
+ *   service's configured issuer for `asset`. An untrusted deposit (e.g. a
+ *   same-code token from an unrecognised issuer) is never worded as if it
+ *   were the real, trusted asset — no fiat value is implied either (#285).
  * @returns {string}
  */
-const formatDepositMessage = (amount, asset, fiatRate) => {
+const formatDepositMessage = (amount, asset, fiatRate, trusted = true) => {
   const displayAsset = asset === 'native' ? 'XLM' : asset;
   const numericAmount = Number(amount);
 
@@ -62,6 +67,12 @@ const formatDepositMessage = (amount, asset, fiatRate) => {
     displayAmount = Number(stripped).toLocaleString('en-US', { maximumFractionDigits: 7 });
   } else {
     displayAmount = String(amount);
+  }
+
+  if (!trusted) {
+    return `You received ${displayAmount} ${displayAsset} from an unrecognized issuer. `
+      + `This is not verified ${displayAsset} and no value has been assigned to it. `
+      + 'Contact support if you were not expecting this.';
   }
 
   let hint = '';
@@ -221,14 +232,34 @@ const pollWallet = async (wallet, deps) => {
 
     for (const record of inbound) {
       const amount = record.amount;
-      const asset =
-        record.asset_type === 'native' ? 'native' : (record.asset_code || record.asset_type);
+      // Canonical identity — network + code + issuer, never code alone.
+      // Anyone can issue a token called "USDC"; only an issuer matching this
+      // service's configuration is ever labeled, valued, or notified as the
+      // trusted asset (#285).
+      const identity = assetIdentity.describeAsset({
+        network: config.stellar.network,
+        assetType: record.asset_type,
+        code: record.asset_code,
+        issuer: record.asset_issuer,
+      });
+      const asset = identity.code;
+
+      if (!identity.trusted) {
+        logger.warn(
+          `Deposit poller: untrusted asset ${identity.assetId} received by wallet ${publicKey}; `
+          + 'notifying without pricing or trusted labeling.',
+        );
+      }
+
+      // Policy: pricing only ever applies to an asset this service trusts —
+      // an unrecognised issuer never gets a fiat value attached.
+      const effectiveFiatRate = identity.trusted ? fiatRate : null;
 
       const newCursor = record.paging_token;
       // Key by stable Stellar identity for idempotency across restarts/replicas.
       // Prefer paging_token (Horizon's canonical paging key) then id.
       const stellarPaymentId = String(record.paging_token || record.id || record.transaction_hash);
-      const message = formatDepositMessage(amount, asset, fiatRate);
+      const message = formatDepositMessage(amount, asset, effectiveFiatRate, identity.trusted);
 
       let shouldNotify = true;
 
@@ -248,7 +279,10 @@ const pollWallet = async (wallet, deps) => {
               phoneNumber,
               amount: String(amount),
               asset,
-              fiatRate: fiatRate != null ? Number(fiatRate) : null,
+              assetIssuer: identity.issuer,
+              network: identity.network,
+              trusted: identity.trusted,
+              fiatRate: effectiveFiatRate != null ? Number(effectiveFiatRate) : null,
               message,
               status: 'pending',
             },
@@ -279,7 +313,7 @@ const pollWallet = async (wallet, deps) => {
           const res = await notify(phoneNumber, message, {
             notification: {
               userId: userId || null,
-              type: 'deposit_received',
+              type: identity.trusted ? 'deposit_received' : 'unverified_asset_received',
               referenceType: 'wallet',
               referenceId: id,
             },
