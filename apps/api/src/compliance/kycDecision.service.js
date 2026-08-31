@@ -9,11 +9,10 @@
 
 const config = require('../config/env');
 const prisma = require('../common/prisma');
-const logger = require('../utils/logger');
 const { writeAuditLog } = require('../common/audit.service');
 const { appendEvent, EVENT_TYPES } = require('../common/event.service');
-const { assertValidAmount, add, compare, formatUnits, getAssetRule, parseUnits, multiply } = require('../utils/money');
-const { getPolicyConversionSnapshot, PolicyError, POLICY_ERROR_CODES } = require('../pricing/policyRate');
+const { assertValidAmount, add, compare, formatUnits, getAssetRule, parseUnits } = require('../utils/money');
+const { getPolicyConversionSnapshot } = require('../pricing/policyRate');
 
 // ── Standardized KYC Lifecycle States ──────────────────────────────────────────
 const KYC_STATUSES = Object.freeze({
