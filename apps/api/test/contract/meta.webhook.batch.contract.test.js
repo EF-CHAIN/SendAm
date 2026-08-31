@@ -48,6 +48,7 @@ injectMock('queues/queue.service', {
 
 // --- Prisma in-memory stub with real idempotent state transitions ----------
 const state = new Map(); // messageId -> status
+const inboxState = new Map(); // provider:eventKey -> durable inbox row
 const prismaMock = {
   processedMessage: {
     create: async ({ data }) => {
@@ -65,6 +66,61 @@ const prismaMock = {
       if (state.get(where.messageId) !== where.status) return { count: 0 };
       state.set(where.messageId, data.status);
       return { count: 1 };
+    },
+  },
+  // Durable webhook inbox (#287). Delivery statuses are persisted here before
+  // the request is acknowledged, so the controller needs this delegate.
+  webhookInboxEvent: {
+    create: async ({ data }) => {
+      const key = `${data.provider || 'meta'}:${data.eventKey}`;
+      if (inboxState.has(key)) {
+        throw Object.assign(new Error('Unique constraint failed'), { code: 'P2002' });
+      }
+      const row = {
+        id: `inbox_${inboxState.size + 1}`,
+        provider: 'meta',
+        status: 'pending',
+        attempts: 0,
+        nextAttemptAt: new Date(0),
+        receivedAt: new Date(inboxState.size + 1),
+        processedAt: null,
+        claimedAt: null,
+        lastError: null,
+        ...data,
+      };
+      inboxState.set(key, row);
+      return row;
+    },
+    findUnique: async ({ where }) => {
+      const { provider, eventKey } = where.provider_eventKey;
+      return inboxState.get(`${provider}:${eventKey}`) || null;
+    },
+    findMany: async ({ where, take }) => {
+      const rows = [...inboxState.values()].filter((row) => {
+        if (where.status?.in && !where.status.in.includes(row.status)) return false;
+        if (where.nextAttemptAt?.lte && !(row.nextAttemptAt <= where.nextAttemptAt.lte)) return false;
+        return true;
+      }).sort((a, b) => a.receivedAt - b.receivedAt);
+      return take ? rows.slice(0, take) : rows;
+    },
+    updateMany: async ({ where, data }) => {
+      let count = 0;
+      for (const row of inboxState.values()) {
+        if (where.id && row.id !== where.id) continue;
+        if (where.status?.in && !where.status.in.includes(row.status)) continue;
+        if (where.nextAttemptAt?.lte && !(row.nextAttemptAt <= where.nextAttemptAt.lte)) continue;
+        for (const [key, value] of Object.entries(data)) {
+          row[key] = value && value.increment ? (row[key] || 0) + value.increment : value;
+        }
+        count += 1;
+      }
+      return { count };
+    },
+    update: async ({ where, data }) => {
+      for (const row of inboxState.values()) {
+        if (row.id === where.id) return Object.assign(row, data);
+      }
+      throw new Error('not found');
     },
   },
 };

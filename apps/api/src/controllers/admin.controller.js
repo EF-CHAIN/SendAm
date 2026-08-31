@@ -9,11 +9,16 @@ const prisma = require('../common/prisma');
 const { withIdAliases } = require('../common/records');
 const { parseLimit, cursorQuery, MAX_EXPORT_ROWS } = require('../utils/cursorPagination');
 const { listStuckPayments, operatorResolveStuckPayment, listLedgerDiscrepancies } = require('../payment/payment.reconciler');
+const { getWalletActivitySummary } = require('../services/wallet-activity-summary.service');
+const walletService = require('../wallet/wallet.service');
+const { getRotationStatus, rotateSecret: performSecretRotation, evaluateRotationHealth, SECRET_CATEGORIES } = require('../services/secret-rotation.service');
+const { writeAuditLog } = require('../common/audit.service');
+const { userDto, walletDto, transactionDto, kycProfileDto } = require('../admin/adminDtos');
 
 // Build an inclusive [gte, lte] range from `from`/`to` query params. Tolerant of
 // bare dates ("2024-01-01") and full ISO timestamps; invalid input is ignored
 // so a bad filter never returns a hard error.
-const parseDateRange = (query, field = 'createdAt') => {
+const  parseDateRange = (query, field = 'createdAt') => {
   const { from, to, [field]: fieldRange } = query;
   const start = from || (fieldRange ? fieldRange.split(',')[0] : null);
   const end = to || (fieldRange ? fieldRange.split(',')[1] : null);
@@ -85,6 +90,7 @@ const auditWhere = (query) => {
   const where = {};
   if (query.action) where.action = { equals: query.action };
   if (query.actorType) where.actorType = { equals: query.actorType };
+  if (query.actorId) where.actorId = { equals: query.actorId };
   if (query.entityType) where.entityType = { equals: query.entityType };
   Object.assign(where, parseDateRange(query, 'createdAt'));
   Object.assign(where, identifierWhere(query.identifier, ['id', 'entityId']));
@@ -266,12 +272,13 @@ const getStats = async (req, res, next) => {
 
 const getUsers = async (req, res, next) => {
   try {
-    const limit = parseLimit(req.query.limit);
-    const where = userWhere(req.query);
-    const [result, total] = await Promise.all([
-      cursorQuery({
-        delegate: prisma.user,
-        where,
+    const { page, limit, skip } = parsePagination(req.query);
+    const [users, total] = await Promise.all([
+      prisma.user.findMany({
+        select: {
+          id: true, phoneNumber: true, whatsappName: true, kycTier: true, createdAt: true,
+          wallets: { select: { chain: true, publicKey: true, network: true, funded: true } },
+        },
         orderBy: { createdAt: 'desc' },
         sortField: 'createdAt',
         include: { wallets: { select: { chain: true, publicKey: true, network: true, createdAt: true } } },
@@ -281,19 +288,21 @@ const getUsers = async (req, res, next) => {
       }),
       prisma.user.count({ where }),
     ]);
-    const items = withIdAliases(result.items.map((user) => ({ ...user, pinHash: undefined })));
-    sendCursorPaginated(res, items, { limit, nextCursor: result.nextCursor, prevCursor: result.prevCursor, total });
-  } catch (error) { return next(error); }
+    sendPaginated(res, withIdAliases(users.map(userDto)), { page, limit, total });
+  } catch (error) {
+    next(error);
+  }
 };
 
 const getWallets = async (req, res, next) => {
   try {
-    const limit = parseLimit(req.query.limit);
-    const where = walletWhere(req.query);
-    const [result, total] = await Promise.all([
-      cursorQuery({
-        delegate: prisma.wallet,
-        where,
+    const { page, limit, skip } = parsePagination(req.query);
+    const [wallets, total] = await Promise.all([
+      prisma.wallet.findMany({
+        select: {
+          id: true, chain: true, publicKey: true, funded: true, network: true, createdAt: true,
+          user: { select: { id: true, phoneNumber: true } },
+        },
         orderBy: { createdAt: 'desc' },
         sortField: 'createdAt',
         include: { user: { select: { phoneNumber: true, whatsappName: true } } },
@@ -303,20 +312,7 @@ const getWallets = async (req, res, next) => {
       }),
       prisma.wallet.count({ where }),
     ]);
-    const items = withIdAliases(result.items.map((wallet) => ({ ...wallet, encryptedSecretKey: undefined, userId: wallet.user })));
-    sendCursorPaginated(res, items, { limit, nextCursor: result.nextCursor, prevCursor: result.prevCursor, total });
-  } catch (error) { return next(error); }
-};
-
-const getTransaction = async (req, res, next) => {
-  try {
-    const tx = await prisma.transaction.findUnique({
-      where: { id: req.params.id },
-      include: { user: { select: { phoneNumber: true } } },
-    });
-    if (!tx) return sendError(res, 'Transaction not found', 404);
-    const item = withIdAliases([{ ...tx, userId: tx.user }])[0];
-    return sendSuccess(res, item);
+    sendPaginated(res, withIdAliases(wallets.map(walletDto)), { page, limit, total });
   } catch (error) {
     next(error);
   }
@@ -324,56 +320,15 @@ const getTransaction = async (req, res, next) => {
 
 const getTransactions = async (req, res, next) => {
   try {
-    const limit = parseLimit(req.query.limit);
-    const where = transactionWhere(req.query);
-    const [result, total] = await Promise.all([
-      cursorQuery({
-        delegate: prisma.transaction,
-        where,
-        orderBy: { createdAt: 'desc' },
-        sortField: 'createdAt',
-        include: { user: { select: { phoneNumber: true } } },
-        limit,
-        after: req.query.after,
-        before: req.query.before,
-      }),
-      prisma.transaction.count({ where }),
-    ]);
-    const items = withIdAliases(result.items.map((transaction) => ({ ...transaction, userId: transaction.user })));
-    sendCursorPaginated(res, items, { limit, nextCursor: result.nextCursor, prevCursor: result.prevCursor, total });
-  } catch (error) { return next(error); }
-};
-
-const getKycProfiles = async (req, res, next) => {
-  try {
-    const limit = parseLimit(req.query.limit);
-    const where = kycWhere(req.query);
-    const [result, total] = await Promise.all([
-      cursorQuery({
-        delegate: prisma.kycProfile,
-        where,
-        orderBy: { updatedAt: 'desc' },
-        sortField: 'updatedAt',
-        include: { user: { select: { phoneNumber: true, whatsappName: true } } },
-        limit,
-        after: req.query.after,
-        before: req.query.before,
-      }),
-      prisma.kycProfile.count({ where }),
-    ]);
-    const items = withIdAliases(result.items.map((profile) => ({ ...profile, userId: profile.user })));
-    sendCursorPaginated(res, items, { limit, nextCursor: result.nextCursor, prevCursor: result.prevCursor, total });
-  } catch (error) { return next(error); }
-};
-
-const getAuditLogs = async (req, res, next) => {
-  try {
-    const limit = parseLimit(req.query.limit);
-    const where = auditWhere(req.query);
-    const [result, total] = await Promise.all([
-      cursorQuery({
-        delegate: prisma.auditLog,
-        where,
+    const { page, limit, skip } = parsePagination(req.query);
+    const [transactions, total] = await Promise.all([
+      prisma.transaction.findMany({
+        select: {
+          id: true, type: true, amount: true, asset: true, rail: true, routeType: true,
+          status: true, destination: true, recipientPhoneNumber: true, txHash: true,
+          createdAt: true, updatedAt: true,
+          user: { select: { id: true, phoneNumber: true } },
+        },
         orderBy: { createdAt: 'desc' },
         sortField: 'createdAt',
         limit,
@@ -382,9 +337,10 @@ const getAuditLogs = async (req, res, next) => {
       }),
       prisma.auditLog.count({ where }),
     ]);
-    const items = withIdAliases(result.items);
-    sendCursorPaginated(res, items, { limit, nextCursor: result.nextCursor, prevCursor: result.prevCursor, total });
-  } catch (error) { return next(error); }
+    sendPaginated(res, withIdAliases(transactions.map(transactionDto)), { page, limit, total });
+  } catch (error) {
+    next(error);
+  }
 };
 
 // Sensitive exports: authorized (route-level requireAdmin), bounded so a single
@@ -393,36 +349,62 @@ const exportKyc = async (req, res, next) => {
   try {
     const where = kycWhere(req.query);
     const profiles = await prisma.kycProfile.findMany({
-      where,
-      include: { user: { select: { phoneNumber: true, whatsappName: true } } },
+      select: {
+        id: true, tier: true, status: true, country: true, riskScore: true,
+        sanctionsStatus: true, sanctionsScreenedAt: true, custodyStatus: true,
+        custodyReviewedAt: true, lastScreenedAt: true, createdAt: true, updatedAt: true,
+        user: { select: { id: true, phoneNumber: true } },
+      },
       orderBy: { updatedAt: 'desc' },
       take: MAX_EXPORT_ROWS,
     });
+    sendSuccess(res, withIdAliases(profiles.map(kycProfileDto)));
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Full identifiers are available only through an explicit, permission-gated,
+// single-record action. The response expires quickly and every reveal is
+// recorded. Secrets and raw provider metadata are never revealable.
+const revealSensitiveFields = async (req, res, next) => {
+  try {
+    const { resource, id } = req.params;
+    const queries = {
+      user: () => prisma.user.findUnique({ where: { id }, select: { phoneNumber: true, whatsappName: true } }),
+      wallet: () => prisma.wallet.findUnique({ where: { id }, select: { publicKey: true, phoneNumber: true } }),
+      transaction: () => prisma.transaction.findUnique({
+        where: { id },
+        select: { destination: true, recipientPhoneNumber: true, txHash: true, providerTransactionId: true },
+      }),
+      kyc: () => prisma.kycProfile.findUnique({
+        where: { id },
+        select: { providerReference: true, deniedReason: true },
+      }),
+    };
+    if (!queries[resource]) return sendError(res, 'Unsupported reveal resource', 400);
+    const fields = await queries[resource]();
+    if (!fields) return sendError(res, 'Record not found', 404);
+
     await writeAuditLog({
-      actorType: 'administrator',
-      actorId: req.admin.id,
-      action: 'admin.kyc.export',
-      entityType: 'KycProfile',
-      metadata: { filters: req.query, rows: profiles.length, capped: profiles.length >= MAX_EXPORT_ROWS },
+      actorType: 'admin',
+      actorId: req.admin?.role,
+      action: 'admin.sensitive.revealed',
+      entityType: resource,
+      entityId: id,
+      metadata: { fields: Object.keys(fields) },
       req,
     });
-    const csv = toCsv(
-      profiles.map((p) => ({ ...p, phoneNumber: p.user?.phoneNumber, whatsappName: p.user?.whatsappName })),
-      [
-        { header: 'id', accessor: 'id' },
-        { header: 'phoneNumber', accessor: 'phoneNumber' },
-        { header: 'provider', accessor: 'provider' },
-        { header: 'tier', accessor: 'tier' },
-        { header: 'status', accessor: 'status' },
-        { header: 'country', accessor: 'country' },
-        { header: 'riskScore', accessor: 'riskScore' },
-        { header: 'updatedAt', accessor: (r) => r.updatedAt?.toISOString?.() || r.updatedAt },
-      ]
-    );
-    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
-    res.setHeader('Content-Disposition', 'attachment; filename="kyc-export.csv"');
-    return res.status(200).send(csv);
-  } catch (error) { return next(error); }
+
+    return sendSuccess(res, {
+      resource,
+      id,
+      fields,
+      validUntil: new Date(Date.now() + 60_000).toISOString(),
+    }, 'Sensitive fields revealed for this response only');
+  } catch (error) {
+    next(error);
+  }
 };
 
 const exportAuditLogs = async (req, res, next) => {
@@ -533,6 +515,61 @@ const getLedgerDiscrepancies = async (req, res, next) => {
     return sendSuccess(res, report);
   } catch (error) {
     next(error);
+  }
+};
+
+const getWalletSummary = async (req, res, next) => {
+  try {
+    const summary = await getWalletActivitySummary({
+      userId: req.query.userId,
+      phoneNumber: req.query.phone,
+      windowDays: req.query.windowDays,
+      requestingAdminId: req.admin?.id || 'system',
+    });
+    return sendSuccess(res, summary);
+  } catch (error) {
+    if (error.statusCode) return sendError(res, error.message, error.statusCode);
+    return next(error);
+  }
+};
+
+const recoverWallet = async (req, res, next) => {
+  try {
+    const result = await walletService.recoverWallet({
+      walletId: req.params.id,
+      adminId: req.admin?.id || 'system',
+    });
+    return sendSuccess(res, { wallet: result }, 'Wallet recovery initiated');
+  } catch (error) {
+    if (error.statusCode) return sendError(res, error.message, error.statusCode);
+    return next(error);
+  }
+};
+
+const getSecretRotationStatus = async (req, res, next) => {
+  try {
+    const status = await getRotationStatus();
+    return sendSuccess(res, status);
+  } catch (error) {
+    next(error);
+  }
+};
+
+const rotateSecret = async (req, res, next) => {
+  try {
+    const category = req.body?.category;
+    if (!category || !SECRET_CATEGORIES[category]) {
+      return sendError(res, `Invalid secret category. Supported: ${Object.keys(SECRET_CATEGORIES).join(', ')}`, 400);
+    }
+    const result = await performSecretRotation({
+      category,
+      newValue: req.body?.newValue,
+      rotatedBy: req.admin?.id || 'system',
+    });
+    return sendSuccess(res, result, 'Secret rotation completed', 201);
+  } catch (error) {
+    if (error.statusCode) return sendError(res, error.message, error.statusCode);
+    return next(error);
   }
 };
 
@@ -757,6 +794,55 @@ const getUserAccountStatusHistory = async (req, res, next) => {
   }
 };
 
+const { buildStatementData, exportStatementCsv, exportStatementPdf } = require('../wallet/statement.service');
+
+const getUserStatement = async (req, res, next) => {
+  try {
+    const { startDate, endDate, asset, format = 'json' } = req.query;
+    const userId = req.params.userId;
+
+    if (format === 'csv') {
+      const { csv, statementId } = await exportStatementCsv({
+        userId,
+        startDate,
+        endDate,
+        asset,
+        actingActor: { type: 'administrator', id: req.admin.id },
+        req,
+      });
+      res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+      res.setHeader('Content-Disposition', `attachment; filename="statement-${userId}-${statementId}.csv"`);
+      return res.status(200).send(csv);
+    }
+
+    if (format === 'pdf') {
+      const { pdfBuffer, statementId } = await exportStatementPdf({
+        userId,
+        startDate,
+        endDate,
+        asset,
+        actingActor: { type: 'administrator', id: req.admin.id },
+        req,
+      });
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', `attachment; filename="statement-${userId}-${statementId}.pdf"`);
+      return res.status(200).send(pdfBuffer);
+    }
+
+    const statement = await buildStatementData({
+      userId,
+      startDate,
+      endDate,
+      asset,
+    });
+
+    return sendSuccess(res, statement, 'Customer account statement generated');
+  } catch (error) {
+    if (error.statusCode) return sendError(res, error.message, error.statusCode);
+    next(error);
+  }
+};
+
 module.exports = {
   login,
   acceptInvite,
@@ -786,19 +872,21 @@ module.exports = {
   escalateStuckPayment: actOnStuckPayment('escalate'),
   getLedgerDiscrepancies,
   verifyAuditLogs,
-  // #318 – Event ledger
+  getWalletSummary,
+  recoverWallet,
+  getSecretRotationStatus,
+  rotateSecret,
+  revealSensitiveFields,
   getWorkflowEvents,
   verifyEventChain,
   exportWorkflowEvents,
-  // #329 – Compliance evidence exports
   getUserEvidencePackage,
   downloadUserEvidencePackage,
   exportKycEvidence,
   exportAccountStatusHistory,
-  // #330 – Onboarding status
   getUserOnboardingStatus,
-  // #332 – Account deactivation/reactivation
   deactivateUserAccount,
   reactivateUserAccount,
   getUserAccountStatusHistory,
+  getUserStatement,
 };

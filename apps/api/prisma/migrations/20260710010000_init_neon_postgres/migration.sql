@@ -10,6 +10,8 @@ CREATE TABLE "User" (
     "riskScore" INTEGER NOT NULL DEFAULT 0,
     "pinHash" TEXT,
     "pinSetAt" TIMESTAMP(3),
+    "pinFailedAttempts" INTEGER NOT NULL DEFAULT 0,
+    "pinLockedUntil" TIMESTAMP(3),
     "pendingSend" JSONB,
     "contactsJson" JSONB,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,

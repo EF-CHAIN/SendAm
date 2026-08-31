@@ -4,8 +4,10 @@
 // found — an operator fixing ENCRYPTION_KEY only to hit JWT_SECRET on the
 // next boot is a bad debugging loop. This runs once, explicitly, before the
 // app starts accepting connections, and reports every violation at once.
-// Circle's Testnet USDC issuer — must never be used on mainnet.
-const TESTNET_USDC_ISSUER = 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5';
+// Circle's Testnet USDC issuer — must never be used on mainnet. Sourced from
+// the network profiles so this constant cannot drift from the one the rest of
+// the service resolves against.
+const { TESTNET_USDC_ISSUER } = require('./networkProfiles');
 
 const hasTls = (url, protocol) => {
   try {
@@ -94,6 +96,16 @@ const validateEnv = (config) => {
     problems.push(`MESSAGE_TRANSPORT must be either 'meta' or 'sim' (got '${config.messageTransport}').`);
   }
 
+  // Network coherence (#284). env.js resolves STELLAR_NETWORK into a full
+  // profile — passphrase, Horizon hosts, asset issuer, Friendbot availability —
+  // and collects every inconsistency rather than throwing on the first. An
+  // unrecognised network name, a Horizon endpoint belonging to another network,
+  // an issuer that does not match, or an unconfirmed mainnet selection all
+  // surface here and prevent startup.
+  if (Array.isArray(config.stellar?.networkProblems) && config.stellar.networkProblems.length) {
+    problems.push(...config.stellar.networkProblems);
+  }
+
   // Mainnet safety: the testnet USDC issuer must never be used on mainnet.
   // This prevents accidental misconfiguration that could cause funds to be
   // sent to or received from an uncontrolled testnet issuer.
@@ -166,4 +178,16 @@ const validateWorkerEnv = (config) => {
   if (problems.length) throw new Error(`Invalid worker configuration:\n  - ${problems.join('\n  - ')}`);
 };
 
-module.exports = { validateEnv, validateWorkerEnv };
+const validateDeploymentManifest = () => {
+  try {
+    const { validateManifestAtStartup } = require('./deploymentManifest');
+    const result = validateManifestAtStartup();
+    if (!result.skipped && !result.valid) {
+      throw new Error(result.reason || 'Deployment manifest verification failed.');
+    }
+  } catch (error) {
+    throw new Error(`Deployment manifest verification failed:\n  - ${error.message}`);
+  }
+};
+
+module.exports = { validateEnv, validateWorkerEnv, validateDeploymentManifest };

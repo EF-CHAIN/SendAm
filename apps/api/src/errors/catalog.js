@@ -70,6 +70,12 @@ const CATALOG = Object.freeze({
     safe: false,
     defaultMessage: 'An unexpected error occurred.',
   },
+  MISSING_ASSET: {
+    code: 'missing_asset',
+    statusCode: 422,
+    safe: true,
+    defaultMessage: 'The requested asset is not supported or not configured.',
+  },
 });
 
 const byCode = (code) => (

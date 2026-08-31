@@ -5,9 +5,6 @@
 const { CATALOG, keyForStatusCode } = require('./catalog');
 const { AppError } = require('./AppError');
 
-// Prisma exposes stable error codes. Unique/FK violations are conflicts; a
-// missing record is a not-found; constraint/type violations are validation
-// problems. Everything else from Prisma is internal.
 const PRISMA_CONFLICT_CODES = new Set(['P2002', 'P2003', 'P2014']);
 const PRISMA_NOT_FOUND_CODES = new Set(['P2001', 'P2025']);
 const PRISMA_VALIDATION_CODES = new Set([
@@ -15,8 +12,6 @@ const PRISMA_VALIDATION_CODES = new Set([
   'P2011', 'P2012', 'P2013', 'P2015', 'P2016', 'P2023',
 ]);
 
-// Axios and the Stellar/WhatsApp/Deepgram SDKs fail through request errors.
-// Those are all upstream provider failures from the client's perspective.
 const isProviderRequestError = (error) => (
   error && (error.isAxiosError === true || Boolean(error.response) || Boolean(error.config))
 );
@@ -35,9 +30,17 @@ const isBodyParserError = (error) => (
 
 const isPrismaError = (error) => typeof error?.code === 'string' && /^P\d{4}$/.test(error.code);
 
-// Build the normalized result. When an entry is not client-safe, the real
-// message is replaced with the catalog's generic message so secrets, stack
-// traces, and provider internals never reach a response body.
+const RECOVERABLE_ERROR_CODE_MAP = {
+  missing_trustline: 'CONFLICT',
+  unsupported_asset: 'VALIDATION',
+  account_not_funded: 'NOT_FOUND',
+  line_full: 'CONFLICT',
+  source_no_trust: 'CONFLICT',
+  source_not_authorized: 'FORBIDDEN',
+  insufficient_reserve: 'CONFLICT',
+  bad_sequence: 'UNAVAILABLE',
+};
+
 const toResult = (entryKey, error, overrides = {}) => {
   const entry = CATALOG[entryKey];
   const safe = overrides.safe !== undefined ? overrides.safe : entry.safe;
@@ -87,14 +90,19 @@ const normalizeError = (error) => {
     return toResult('VALIDATION', error);
   }
 
-  // Bare errors that already carry an HTTP status (not-found, admin auth,
-  // "not configured" service errors, cursor pagination, etc.) map by status.
   if (Number.isInteger(error?.statusCode)) {
     return toResult(keyForStatusCode(error.statusCode), error, { statusCode: error.statusCode });
   }
 
   if (isProviderRequestError(error)) {
     return toResult('PROVIDER', error);
+  }
+
+  if (error?.code && RECOVERABLE_ERROR_CODE_MAP[error.code]) {
+    return toResult(RECOVERABLE_ERROR_CODE_MAP[error.code], error, {
+      message: error.message || CATALOG[RECOVERABLE_ERROR_CODE_MAP[error.code]].defaultMessage,
+      details: { action: error.action, retryable: error.retryable },
+    });
   }
 
   return toResult('INTERNAL', error, { safe: false });

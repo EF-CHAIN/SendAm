@@ -26,6 +26,7 @@ const {
   operatorResolveStuckPayment,
 } = require('../src/payment/payment.reconciler');
 
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -75,11 +76,30 @@ const makeHorizon = ({ txResult, payments = [] } = {}) => ({
 
 const makePrisma = (txList) => {
   const updated = [];
+  const map = new Map(txList.map((t) => [t.id, { ...t }]));
   return {
     _updated: updated,
     transaction: {
-      findMany: async () => txList,
-      update: async (args) => { updated.push(args); return { ...args.where, ...args.data }; },
+      findMany: async () => Array.from(map.values()),
+      findUnique: async ({ where }) => map.get(where.id) || null,
+      update: async (args) => {
+        updated.push(args);
+        const cur = map.get(args.where.id) || {};
+        const res = { ...cur, ...args.data };
+        map.set(args.where.id, res);
+        return res;
+      },
+      updateMany: async (args) => {
+        updated.push(args);
+        const item = map.get(args.where.id);
+        if (item) {
+          Object.assign(item, args.data, {
+            metadata: { ...(item.metadata || {}), ...(args.data.metadata || {}) },
+          });
+          return { count: 1 };
+        }
+        return { count: 0 };
+      },
     },
   };
 };
@@ -289,13 +309,15 @@ test('operatorResolveStuckPayment requires reason and records retry action witho
   }), /reason/);
 
   const updates = [];
+  const stuckTx = { id: 'tx_stuck', status: 'pending', metadata: {} };
   const prismaMock = {
     $transaction: async (fn) => fn({
       transaction: {
-        findUnique: async () => ({ id: 'tx_stuck', status: 'pending', metadata: {} }),
-        update: async ({ data }) => {
+        findUnique: async ({ where }) => (where.id === stuckTx.id ? { ...stuckTx } : null),
+        updateMany: async ({ data }) => {
           updates.push(data);
-          return { id: 'tx_stuck', ...data };
+          Object.assign(stuckTx, data);
+          return { count: 1 };
         },
       },
     }),

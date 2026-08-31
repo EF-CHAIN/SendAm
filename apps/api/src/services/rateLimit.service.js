@@ -1,47 +1,47 @@
+const crypto = require('crypto');
 const prisma = require('../common/prisma');
 
 /**
- * Fixed-window counter backed by PostgreSQL and shared across instances. Used both
- * by the express-rate-limit store (REST) and the WhatsApp per-sender throttle.
- *
- * Returns { totalHits, resetTime } for the current window. Window handling has
- * a small boundary race (two requests can both start a fresh window), which is
- * acceptable for rate limiting and far better than the per-process default.
+ * Fixed windows use PostgreSQL time exclusively. A window is active while
+ * resetAt > CURRENT_TIMESTAMP; at resetAt (inclusive) the next hit starts a
+ * new window. The single UPSERT is the serialization point across replicas.
  */
 const consume = async (key, windowMs) => {
-  const now = Date.now();
+  const rows = await prisma.$queryRawUnsafe(
+    `INSERT INTO "RateLimitHit" ("id", "key", "count", "resetAt", "createdAt", "updatedAt")
+     VALUES ($1, $2, 1, CURRENT_TIMESTAMP + ($3 * INTERVAL '1 millisecond'), CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+     ON CONFLICT ("key") DO UPDATE SET
+       "count" = CASE
+         WHEN "RateLimitHit"."resetAt" <= CURRENT_TIMESTAMP THEN 1
+         ELSE "RateLimitHit"."count" + 1
+       END,
+       "resetAt" = CASE
+         WHEN "RateLimitHit"."resetAt" <= CURRENT_TIMESTAMP
+           THEN CURRENT_TIMESTAMP + ($3 * INTERVAL '1 millisecond')
+         ELSE "RateLimitHit"."resetAt"
+       END,
+       "updatedAt" = CURRENT_TIMESTAMP
+     RETURNING "count", "resetAt"`,
+    crypto.randomUUID(),
+    key,
+    windowMs
+  );
 
-  const liveWindow = await prisma.rateLimitHit.findUnique({ where: { key } });
-  if (liveWindow && liveWindow.resetAt > new Date(now)) {
-    const existing = await prisma.rateLimitHit.update({
-      where: { key },
-      data: { count: { increment: 1 } },
-    });
-    return { totalHits: existing.count, resetTime: existing.resetAt };
-  }
-
-  const resetTime = new Date(now + windowMs);
-
-  const fresh = await prisma.rateLimitHit.upsert({
-    where: { key },
-    update: { count: 1, resetAt: resetTime },
-    create: { key, count: 1, resetAt: resetTime },
-  });
-
-  return { totalHits: fresh.count, resetTime: fresh.resetAt };
+  return { totalHits: rows[0].count, resetTime: rows[0].resetAt };
 };
 
+// Atomic and saturating: concurrent decrements can never make count negative.
 const decrement = async (key) => {
-  const current = await prisma.rateLimitHit.findUnique({ where: { key } });
-  if (!current || current.resetAt <= new Date() || current.count <= 0) return;
-  await prisma.rateLimitHit.update({
-    where: { key },
-    data: { count: { decrement: 1 } },
-  });
+  await prisma.$executeRawUnsafe(
+    `UPDATE "RateLimitHit"
+       SET "count" = GREATEST("count" - 1, 0), "updatedAt" = CURRENT_TIMESTAMP
+     WHERE "key" = $1 AND "resetAt" > CURRENT_TIMESTAMP AND "count" > 0`,
+    key
+  );
 };
 
 const resetKey = async (key) => {
-  await prisma.rateLimitHit.delete({ where: { key } }).catch(() => null);
+  await prisma.$executeRawUnsafe('DELETE FROM "RateLimitHit" WHERE "key" = $1', key);
 };
 
 module.exports = {

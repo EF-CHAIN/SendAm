@@ -32,11 +32,57 @@ const prismaMock = {
       return null;
     },
   },
+  notification: {
+    create: async ({ data }) => ({ id: 'notif_1', ...data }),
+  },
 };
 
 injectMock('common/prisma', prismaMock);
 
 const { verifyReceipt } = require('../src/controllers/receipt.controller');
+const {
+  buildStandardReceipt,
+  formatChannelReceiptMessage,
+  recordReceiptDeliveryEvent,
+} = require('../src/services/receipt.service');
+
+test('buildStandardReceipt formats complete financial metadata', () => {
+  const receipt = buildStandardReceipt(mockTransaction, { mask: true });
+
+  assert.equal(receipt.receiptId, 'SDA-tx_abc123');
+  assert.equal(receipt.transactionHash, 'stellar_hash_xyz');
+  assert.equal(receipt.asset, 'XLM');
+  assert.equal(receipt.amount, '50.0000000');
+  assert.equal(receipt.fee, '0.5000000');
+  assert.equal(receipt.status, 'success');
+  assert.equal(receipt.timestamp, '2026-08-26T12:00:00.000Z');
+  assert.equal(receipt.parties.sender, '+234******4444');
+  assert.equal(receipt.parties.recipient, '+234******5678');
+});
+
+test('formatChannelReceiptMessage produces standard structured message', () => {
+  const receipt = buildStandardReceipt(mockTransaction, { mask: true });
+  const msg = formatChannelReceiptMessage(receipt);
+
+  assert.ok(msg.includes('Payment Successful'));
+  assert.ok(msg.includes('Receipt ID:'));
+  assert.ok(msg.includes('50.0000000 XLM'));
+  assert.ok(msg.includes('Fee:'));
+  assert.ok(msg.includes('+234******5678'));
+  assert.ok(msg.includes('https://send-am-web.vercel.app/receipt/SDA-tx_abc123'));
+});
+
+test('recordReceiptDeliveryEvent logs delivery event without throwing', async () => {
+  await recordReceiptDeliveryEvent({
+    receiptId: 'SDA-tx_abc123',
+    transactionId: 'tx_abc123',
+    userId: 'user_1',
+    channel: 'whatsapp',
+    status: 'delivered',
+    recipient: '+2348012345678',
+    db: prismaMock,
+  });
+});
 
 test('verifyReceipt resolves existing receipt with privacy-safe masking', async () => {
   const req = {

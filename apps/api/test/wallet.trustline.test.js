@@ -56,6 +56,8 @@ const fakeAdapter = {
     calls.trustline.push(args);
     return { established: true, alreadyExisted: false };
   },
+  classifyRecoverableError: (error) => ({ code: 'unknown', retryable: false, userMessage: String(error?.message || error || 'Unknown error') }),
+  classifyTrustlineError: (error) => ({ code: 'unknown', retryable: false, userMessage: String(error?.message || error || 'Unknown error') }),
 };
 injectMock('wallet/stellar.adapter', () => fakeAdapter);
 

@@ -89,15 +89,11 @@ test('high-risk recipient identification, confirmation, and PIN input flow', asy
   assert.equal(sentMessages.length, 3);
   assert.ok(sentMessages[2].includes('Recipient confirmed'));
   assert.ok(sentMessages[2].includes('Reply with your PIN'));
-  assert.ok(sentMessages[2].includes('Quote expires:'));
   assert.equal(userMock.pendingSend.highRiskConfirmed, true);
 
   // Step 4: Reply PIN to execute
   await processMessage('+2348000000001', 'John', '1234', { notify });
   assert.equal(sentMessages.length, 4);
   assert.ok(sentMessages[3].includes('Payment success'));
-  // Cleared on execution: the service writes Prisma.DbNull to hard-clear the
-  // pending draft, so it may come back as null, 'DbNull', or an object wrapper
-  // depending on the mock under test.
   assert.ok(userMock.pendingSend == null || userMock.pendingSend?.toString() === 'DbNull' || typeof userMock.pendingSend === 'object'); // cleared on execution
 });

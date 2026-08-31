@@ -1,4 +1,6 @@
 const { sendTextMessage, recordDeliveryStatus } = require('../services/whatsapp.service');
+const webhookInbox = require('../services/webhookInbox.service');
+const prismaClient = require('../common/prisma');
 const { replies } = require('../services/agent/replies');
 const { consume } = require('../services/rateLimit.service');
 const config = require('../config/env');
@@ -10,6 +12,7 @@ const { captureException } = require('../observability/errors');
 const { canonicalizePhoneNumber } = require('../utils/validators');
 
 const { validateWebhookEnvelope, validateInboundMessage, validateStatusEntry } = require('../whatsapp/webhook.validator');
+const { withIdempotency } = require('../webhooks/idempotency.service');
 
 /** Outcome labels for a single inbound message item within a batch. */
 const OUTCOMES = {
@@ -198,6 +201,9 @@ const handleIncomingMessage = async (req, res) => {
     }
 
     let retryableFailure = false;
+    // Set when delivery evidence could not be made durable; forces a non-2xx
+    // so the provider redelivers the batch.
+    let statusIngestionFailed = false;
 
     for (const entry of body.entry) {
       if (!entry?.changes || !Array.isArray(entry.changes)) continue;
@@ -214,18 +220,55 @@ const handleIncomingMessage = async (req, res) => {
         // callback never turns into a 5xx that makes Meta retry the whole batch.
         const statuses = value.statuses;
         if (Array.isArray(statuses) && statuses.length) {
+          // #287: delivery evidence is written to a durable inbox *before* this
+          // request is acknowledged. Previously a recording failure was logged
+          // and the webhook still returned 200 — Meta then considered the
+          // callback delivered and never sent it again, so a transient database
+          // error destroyed the evidence permanently.
+          //
+          // Each entry keeps its own identity, so a redelivered batch is
+          // idempotent per item and partial progress is never lost.
+          const wellFormed = [];
           for (const statusEntry of statuses) {
             const statusValidation = validateStatusEntry(statusEntry);
             if (!statusValidation.valid) {
+              // A payload that will never parse must not be retried forever.
               logger.warn('whatsapp_webhook_invalid_status_entry', { reason: statusValidation.reason, statusEntry });
               increment('sendam_webhook_events_total', { status: 'invalid_schema' });
               continue;
             }
+            wellFormed.push(statusEntry);
+          }
+
+          if (wellFormed.length) {
+            let ingestion;
             try {
-              await recordDeliveryStatus(statusEntry);
-            } catch (statusError) {
-              logger.error('whatsapp_status_processing_error', { message: statusError.message });
-              captureException(statusError, { source: 'webhook_status' });
+              ingestion = await webhookInbox.ingestStatusBatch(prismaClient, wellFormed);
+            } catch (ingestError) {
+              // Durable ingestion itself is unavailable. Refuse to acknowledge
+              // so the provider redelivers; do not drop the evidence.
+              logger.error('webhook_inbox_unavailable', { message: ingestError.message });
+              captureException(ingestError, { source: 'webhook_inbox' });
+              ingestion = { stored: [], duplicates: [], failed: wellFormed.map((e) => ({ eventKey: e.id })) };
+            }
+
+            if (ingestion.failed.length > 0) {
+              increment('sendam_webhook_events_total', { status: 'inbox_unavailable' });
+              statusIngestionFailed = true;
+            } else {
+              increment('sendam_webhook_events_total', { status: 'status_ingested' });
+              // Best-effort inline drain so the common case stays prompt. A
+              // failure here is not fatal: the event is already durable and
+              // the background drain will retry it.
+              try {
+                await webhookInbox.drainInbox(
+                  prismaClient,
+                  (event) => recordDeliveryStatus(event.payload),
+                  { limit: ingestion.stored.length + ingestion.duplicates.length },
+                );
+              } catch (drainError) {
+                logger.warn('webhook_inbox_inline_drain_failed', { message: drainError.message });
+              }
             }
           }
         }
@@ -253,6 +296,13 @@ const handleIncomingMessage = async (req, res) => {
     // error), return 503 so Meta redelivers the batch. Already accepted
     // message ids resolve to `duplicate` on the retry, so nothing is double
     // enqueued and only the failed items are reclaimed.
+    if (statusIngestionFailed) {
+      // Bounded refusal: 503 asks the provider to redeliver. Acknowledging
+      // here would tell Meta the evidence was accepted when it was not.
+      increment('sendam_webhook_events_total', { status: 'failed' });
+      if (!res.headersSent) return res.status(503).send('INBOX_UNAVAILABLE');
+    }
+
     if (retryableFailure) {
       increment('sendam_webhook_events_total', { status: 'failed' });
       if (!res.headersSent) return res.status(503).send('QUEUE_UNAVAILABLE');

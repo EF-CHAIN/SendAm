@@ -5,8 +5,9 @@ const http = require('http');
 const https = require('https');
 const app = require('./app');
 const config = require('./config/env');
+const { describeNetworkProfile } = require('./config/networkProfiles');
 const connectDB = require('./config/db');
-const { validateEnv } = require('./config/validateEnv');
+const { validateEnv, validateDeploymentManifest } = require('./config/validateEnv');
 const prisma = require('./common/prisma');
 const logger = require('./utils/logger');
 const { closeQueues } = require('./queues/queue.service');
@@ -34,6 +35,7 @@ function isBodyTooLarge(req) {
 
 const startServer = async () => {
   validateEnv(config);
+  validateDeploymentManifest();
   await connectDB();
 
   const server = http.createServer((req, res) => {
@@ -58,7 +60,13 @@ const startServer = async () => {
 
   server.listen(config.port, () => {
     app.markStartupComplete();
-    logger.info('api_started', { environment: config.env, port: config.port });
+    logger.info('api_started', {
+      environment: config.env,
+      port: config.port,
+      // Name the network at startup so a misdirected deployment is obvious in
+      // the first log line rather than after a transaction is signed.
+      ...describeNetworkProfile(config.stellar.networkProfile),
+    });
   });
 
   // Graceful shutdown: stop accepting new connections, let in-flight requests

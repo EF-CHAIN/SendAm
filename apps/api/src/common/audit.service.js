@@ -1,39 +1,21 @@
 const crypto = require('crypto');
 const logger = require('../utils/logger');
 const prisma = require('./prisma');
-const env = require('../config/env');
+const { getClientIp } = require('../config/proxy');
 
 const writeAuditLog = async ({ actorType = 'system', actorId, action, entityType, entityId, metadata = {}, req }) => {
   try {
-    const data = {
-      actorType,
-      actorId,
-      action,
-      entityType,
-      entityId,
-      ipAddress: req?.ip,
-      userAgent: req?.get?.('user-agent'),
-      metadata,
-    };
-
-    return await prisma.$transaction(async (tx) => {
-      const lastLog = await tx.auditLog.findFirst({
-        orderBy: { id: 'desc' },
-      });
-      const previousHash = lastLog?.hash || null;
-      
-      const payload = JSON.stringify({ previousHash, ...data });
-      // Use ENCRYPTION_KEY or a fallback if not available in dev, to hash the audit log.
-      const secret = env.encryptionKey || 'audit-secret-fallback';
-      const hash = crypto.createHmac('sha256', secret).update(payload).digest('hex');
-      
-      return await tx.auditLog.create({
-        data: {
-          ...data,
-          previousHash,
-          hash,
-        },
-      });
+    return await prisma.auditLog.create({
+      data: {
+        actorType,
+        actorId,
+        action,
+        entityType,
+        entityId,
+        ipAddress: getClientIp(req),
+        userAgent: req?.get?.('user-agent'),
+        metadata,
+      },
     });
   } catch (error) {
     logger.error('Failed to write audit log', error.message);

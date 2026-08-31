@@ -3,37 +3,27 @@ const router = express.Router();
 const verifyWebhook = require('../middlewares/verifyWebhook');
 const verifyWhatsappSignature = require('../middlewares/verifyWhatsappSignature');
 const webhookController = require('../controllers/webhook.controller');
-const { validateExternalPayload } = require('../common/validation');
+const { validateRequest } = require('../middlewares/validateRequest');
 
-// Parse JSON bodies with a size limit, preserving the raw request body for signature verification.
-router.use(
-  express.json({
-    limit: '1mb',
-    verify: (req, res, buf) => {
-      req.rawBody = buf.toString();
+// GET for verifying the webhook by WhatsApp
+router.get(
+  '/',
+  validateRequest({
+    query: {
+      allowedKeys: ['hub.mode', 'hub.verify_token', 'hub.challenge'],
+      required: ['hub.mode', 'hub.verify_token', 'hub.challenge'],
+      fields: {
+        'hub.mode': { type: 'string', trim: true, custom: (value) => value.length > 0, message: 'hub.mode is required' },
+        'hub.verify_token': { type: 'string', trim: true, custom: (value) => value.length > 0, message: 'hub.verify_token is required' },
+        'hub.challenge': { type: 'string', trim: true, custom: (value) => value.length > 0, message: 'hub.challenge is required' },
+      },
     },
-  })
+  }),
+  verifyWebhook,
+  (req, res) => {
+    res.status(200).send(req.query['hub.challenge']);
+  },
 );
-
-// Middleware to enforce an execution timeout for requests.
-function requestTimeout(milliseconds) {
-  return (req, res, next) => {
-    const timer = setTimeout(() => {
-      const err = new Error('Request timed out');
-      err.status = 408;
-      err.code = 'REQUEST_TIMEOUT';
-      next(err);
-    }, milliseconds);
-
-    res.once('finish', () => clearTimeout(timer));
-    next();
-  };
-}
-
-// GET endpoint for webhook verification (WhatsApp).
-router.get('/', verifyWebhook, (req, res) => {
-  res.status(200).send(req.query['hub.challenge']);
-});
 
 // POST endpoint for incoming messages.
 // Enforce a 30-second timeout, verify the WhatsApp signature, then validate the

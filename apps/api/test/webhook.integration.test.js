@@ -62,7 +62,13 @@ const prismaMock = {
     count: async () => 0,
     findMany: async () => [],
   },
-  alias: { findUnique: async () => null, findFirst: async () => ({ id: 'alias_1' }) },
+  wallet: {
+    findUnique: async () => null,
+    create: async ({ data }) => ({ id: `wallet_${Math.random().toString(36).slice(2, 9)}`, ...data }),
+    update: async ({ where, data }) => ({ id: where.id, ...data }),
+    findMany: async () => [],
+  },
+  alias: { findUnique: async () => null },
   processedMessage: {
     _seen: new Set(),
     _status: new Map(),
