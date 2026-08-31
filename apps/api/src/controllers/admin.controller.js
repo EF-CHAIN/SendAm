@@ -234,11 +234,11 @@ const me = async (req, res, next) => {
   } catch (error) { return next(error); }
 };
 
-// Unified balance/valuation summary: total settled volume per asset, plus a
+// Unified balance/valuation summary. Totals settled volume per asset, plus a
 // best-effort conversion to a single base currency so operators can compare
 // wallets holding different assets. Each row carries the FX source and
 // precision so a stale or unavailable rate is visible rather than silently
-// wrong — `baseAmount` stays null when no rate can be sourced.
+// wrong. `baseAmount` stays null when no rate can be sourced.
 const BALANCE_SUMMARY_BASE_CURRENCY = 'USD';
 
 const getBalanceSummary = async () => {
