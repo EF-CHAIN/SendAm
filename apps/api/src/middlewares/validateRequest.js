@@ -37,7 +37,7 @@ const applyValidation = ({ section, payload, schema }) => {
     }
   }
 
-  for (const [key, value] of Object.entries(fieldDefs)) {
+  for (const key of Object.keys(fieldDefs)) {
     if (payload[key] === undefined) continue;
 
     const fieldValue = schema.fields[key].trim ? String(payload[key]).trim() : payload[key];

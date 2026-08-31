@@ -8,7 +8,7 @@ const config = require('../config/env');
 const logger = require('../utils/logger');
 
 const registerSecretRotationJobs = () => {
-  registerProcessor(JOB_NAME, async (job, token) => {
+  registerProcessor(JOB_NAME, async (job, _token) => {
     const action = job.name;
     if (action === 'health-check') {
       return runRotationHealthCheck();

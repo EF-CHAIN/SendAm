@@ -1,5 +1,4 @@
 const prisma = require('../common/prisma');
-const logger = require('../utils/logger');
 const { writeAuditLog } = require('../common/audit.service');
 
 const DEFAULT_SUMMARY_WINDOW_DAYS = 30;
@@ -95,7 +94,7 @@ const buildWalletSummary = async ({ userId, phoneNumber, windowDays }) => {
 };
 
 const getWalletActivitySummary = async ({ userId, phoneNumber, windowDays, requestingAdminId }) => {
-  const resolvedUserId = userId;
+  let resolvedUserId = userId;
   if (!resolvedUserId && phoneNumber) {
     const user = await prisma.user.findUnique({ where: { phoneNumber } });
     if (!user) throw Object.assign(new Error('User not found'), { statusCode: 404 });

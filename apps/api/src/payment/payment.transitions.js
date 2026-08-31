@@ -199,7 +199,9 @@ async function transitionPaymentState({
       entityId: String(transactionId),
       metadata: { status: toState, fromState: current.status, toState, reason, ...metadata },
     });
-  } catch {}
+  } catch {
+    // Audit logging is best-effort; the state transition already committed.
+  }
 
   try {
     const eventService = require('../common/event.service');
@@ -213,7 +215,9 @@ async function transitionPaymentState({
         payload: { fromState: current.status, toState, reason },
       });
     }
-  } catch {}
+  } catch {
+    // Event emission is best-effort; the state transition already committed.
+  }
 
   return updatedTx;
 }

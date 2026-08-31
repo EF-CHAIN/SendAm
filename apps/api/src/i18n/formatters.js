@@ -24,7 +24,7 @@ const formatDateByLocale = (dateInput, locale = 'en', options = {}) => {
 
   try {
     return new Intl.DateTimeFormat(targetLocale, defaultOptions).format(date);
-  } catch (err) {
+  } catch (_err) {
     return date.toISOString();
   }
 };
@@ -68,7 +68,7 @@ const formatAmountByLocale = (amountStr, currencyOrAsset = 'USDC', locale = 'en'
       return `${sym}${formattedNum}`;
     }
     return `${formattedNum} ${currencyOrAsset.toUpperCase()}`;
-  } catch (err) {
+  } catch (_err) {
     return `${amountStr} ${currencyOrAsset}`;
   }
 };

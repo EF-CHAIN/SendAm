@@ -1,6 +1,5 @@
 const { evaluateRotationHealth, rotateSecret, generateSecretValue, SECRET_CATEGORIES } = require('../services/secret-rotation.service');
 const logger = require('../utils/logger');
-const config = require('../config/env');
 
 const JOB_NAME = 'secret-rotation-health-check';
 
