@@ -15,10 +15,19 @@ const loginLimiter = rateLimit({
 
 router.post('/login', loginLimiter, adminController.login);
 router.post('/invitations/accept', loginLimiter, adminController.acceptInvite);
-
 router.post('/logout', requireAdmin('admin.read'), adminController.logout);
+// Identity of the authenticated operator. Needs an authenticated session but
+// must be reachable even when a password change is pending.
+router.get('/me', typeof requireAdmin.authenticate === 'function' ? requireAdmin.authenticate : requireAdmin('admin.read'), adminController.me);
+// Self-serve password rotation. Explicitly exempt from the PASSWORD_CHANGE_REQUIRED
+// gate so a bootstrap/temporary credential can be replaced with a private one.
+router.post('/password', typeof requireAdmin.permission === 'function' ? requireAdmin.permission('*', { allowPasswordChangePending: true }) : requireAdmin('*'), adminController.changePassword);
 router.post('/change-password', requireAdmin('admin.read'), adminController.changePassword);
-router.get('/me', requireAdmin('admin.read'), adminController.me);
+router.get('/wallets/summary', requireAdmin('compliance.read'), adminController.getWalletSummary);
+router.post('/wallets/:id/recover', requireAdmin('operations.write'), adminController.recoverWallet);
+router.get('/security/rotation/status', requireAdmin('admin.read'), adminController.getSecretRotationStatus);
+router.post('/security/rotation/rotate', requireAdmin('*'), adminController.rotateSecret);
+
 router.get('/stats', requireAdmin('admin.read'), adminController.getStats);
 router.get('/users', requireAdmin('admin.read'), adminController.getUsers);
 router.get('/wallets', requireAdmin('admin.read'), adminController.getWallets);

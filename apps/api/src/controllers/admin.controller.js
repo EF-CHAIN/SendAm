@@ -8,6 +8,10 @@ const { buildUserEvidencePackage, exportWorkflowEventsCsv, exportKycEvidenceCsv,
 const prisma = require('../common/prisma');
 const { withIdAliases } = require('../common/records');
 const { parseLimit, cursorQuery, MAX_EXPORT_ROWS } = require('../utils/cursorPagination');
+const { listStuckPayments, operatorResolveStuckPayment, listLedgerDiscrepancies } = require('../payment/payment.reconciler');
+const { getWalletActivitySummary } = require('../services/wallet-activity-summary.service');
+const walletService = require('../wallet/wallet.service');
+const { getRotationStatus, rotateSecret: performSecretRotation, evaluateRotationHealth, SECRET_CATEGORIES } = require('../services/secret-rotation.service');
 const { userDto, walletDto, transactionDto, kycProfileDto } = require('../admin/adminDtos');
 
 // Build an inclusive [gte, lte] range from `from`/`to` query params. Tolerant of
@@ -571,6 +575,61 @@ const getLedgerDiscrepancies = async (req, res, next) => {
   }
 };
 
+const getWalletSummary = async (req, res, next) => {
+  try {
+    const summary = await getWalletActivitySummary({
+      userId: req.query.userId,
+      phoneNumber: req.query.phone,
+      windowDays: req.query.windowDays,
+      requestingAdminId: req.admin?.id || 'system',
+    });
+    return sendSuccess(res, summary);
+  } catch (error) {
+    if (error.statusCode) return sendError(res, error.message, error.statusCode);
+    return next(error);
+  }
+};
+
+const recoverWallet = async (req, res, next) => {
+  try {
+    const result = await walletService.recoverWallet({
+      walletId: req.params.id,
+      adminId: req.admin?.id || 'system',
+    });
+    return sendSuccess(res, { wallet: result }, 'Wallet recovery initiated');
+  } catch (error) {
+    if (error.statusCode) return sendError(res, error.message, error.statusCode);
+    return next(error);
+  }
+};
+
+const getSecretRotationStatus = async (req, res, next) => {
+  try {
+    const status = await getRotationStatus();
+    return sendSuccess(res, status);
+  } catch (error) {
+    next(error);
+  }
+};
+
+const rotateSecret = async (req, res, next) => {
+  try {
+    const category = req.body?.category;
+    if (!category || !SECRET_CATEGORIES[category]) {
+      return sendError(res, `Invalid secret category. Supported: ${Object.keys(SECRET_CATEGORIES).join(', ')}`, 400);
+    }
+    const result = await performSecretRotation({
+      category,
+      newValue: req.body?.newValue,
+      rotatedBy: req.admin?.id || 'system',
+    });
+    return sendSuccess(res, result, 'Secret rotation completed', 201);
+  } catch (error) {
+    if (error.statusCode) return sendError(res, error.message, error.statusCode);
+    return next(error);
+  }
+};
+
 const verifyAuditLogs = async (req, res, next) => {
   try {
     const { verifyAuditLogIntegrity } = require('../common/audit.service');
@@ -961,7 +1020,6 @@ module.exports = {
   exportKyc,
   exportAuditLogs,
   getSystemHealth,
-  revealSensitiveFields,
   refundTransaction,
   getStuckPayments,
   retryStuckPayment: actOnStuckPayment('retry'),
@@ -969,6 +1027,11 @@ module.exports = {
   escalateStuckPayment: actOnStuckPayment('escalate'),
   getLedgerDiscrepancies,
   verifyAuditLogs,
+  getWalletSummary,
+  recoverWallet,
+  getSecretRotationStatus,
+  rotateSecret,
+  revealSensitiveFields,
   getWorkflowEvents,
   verifyEventChain,
   exportWorkflowEvents,

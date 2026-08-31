@@ -2,10 +2,136 @@ const axios = require('axios');
 const { randomUUID } = require('node:crypto');
 const config = require('../config/env');
 const logger = require('../utils/logger');
-const outbox = require('./notificationOutbox.service');
+const prisma = require('../common/prisma');
+const { enqueue } = require('../queues/queue.service');
 const { increment } = require('../observability/metrics');
-const { getContext, outboundHeaders } = require('../observability/context');
-const { ProviderSkippedError } = require('../compliance/providerErrors');
+
+const RETRYABLE_META_STATUS_CODES = new Set([429, 500, 502, 503, 504]);
+
+const isRetryableMetaFailure = (error) => {
+  const status = Number(error?.response?.status || error?.status || 0);
+  if (RETRYABLE_META_STATUS_CODES.has(status)) return true;
+  const haystack = `${error?.message || ''} ${JSON.stringify(error?.response?.data || {})}`.toLowerCase();
+  return /(timeout|temporar|rate limit|too many|throttl|network|unavailable|busy)/i.test(haystack);
+};
+
+const deliverMetaTextMessage = async (to, body, axiosImpl = axios) => {
+  const url = `https://graph.facebook.com/v19.0/${config.whatsapp.phoneNumberId}/messages`;
+  const payload = {
+    messaging_product: 'whatsapp',
+    recipient_type: 'individual',
+    to,
+    type: 'text',
+    text: {
+      preview_url: false,
+      body,
+    },
+  };
+
+  const response = await axiosImpl.post(url, payload, {
+    headers: {
+      Authorization: `Bearer ${config.whatsapp.token}`,
+      'Content-Type': 'application/json',
+    },
+  });
+
+  return response.data;
+};
+
+const persistOutboundNotification = async ({ to, body, prismaClient = prisma, error = null, retryable = false }) => {
+  const notificationClient = prismaClient.notification;
+  if (!notificationClient?.create) return null;
+
+  const created = await notificationClient.create({
+    data: {
+      userId: null,
+      channel: 'whatsapp',
+      type: 'outbound_message',
+      recipient: to,
+      body,
+      status: retryable ? 'queued' : 'failed',
+      error: error ? String(error.message || error.response?.data || error) : null,
+      metadata: {
+        retryable,
+        errorCode: error?.response?.data?.error?.code || error?.response?.data?.error?.error_subcode || null,
+        retryCount: 0,
+      },
+    },
+  });
+
+  if (retryable) {
+    await enqueue('whatsapp-outbound-retry', 'notification.retry', {
+      notificationId: created.id,
+      to,
+      body,
+      attempts: 0,
+    });
+  }
+
+  return created;
+};
+
+const retryOutboundNotification = async ({ notificationId, to, body, attempts = 0, axiosImpl = axios, prismaClient = prisma }) => {
+  const notification = await prismaClient.notification.findUnique({ where: { id: notificationId } });
+  if (!notification) return { status: 'missing' };
+
+  if (['failed', 'dead_letter', 'sent'].includes(notification.status)) {
+    return { status: notification.status, notification };
+  }
+
+  try {
+    const response = await deliverMetaTextMessage(to, body, axiosImpl);
+    const providerMessageId = response?.messages?.[0]?.id || response?.message_id || null;
+
+    await prismaClient.notification.update({
+      where: { id: notificationId },
+      data: {
+        status: 'sent',
+        providerMessageId,
+        metadata: {
+          ...(notification.metadata || {}),
+          lastAttemptAt: new Date().toISOString(),
+          retryCount: Number(attempts || 0),
+        },
+      },
+    });
+
+    return { status: 'sent', notificationId, providerMessageId };
+  } catch (error) {
+    const retryable = isRetryableMetaFailure(error);
+    const nextAttempts = attempts + 1;
+    const isTerminal = nextAttempts >= 4;
+
+    await prismaClient.notification.update({
+      where: { id: notificationId },
+      data: {
+        status: isTerminal ? 'dead_letter' : 'queued',
+        error: String(error.message || error.response?.data || error),
+        metadata: {
+          ...(notification.metadata || {}),
+          retryable,
+          lastAttemptAt: new Date().toISOString(),
+          retryCount: nextAttempts,
+          lastError: String(error.message || error.response?.data || error),
+        },
+      },
+    });
+
+    if (retryable && !isTerminal) {
+      await enqueue('whatsapp-outbound-retry', 'notification.retry', {
+        notificationId,
+        to,
+        body,
+        attempts: nextAttempts,
+      }, {
+        attempts: 3,
+        backoff: { type: 'exponential', delay: 15000 },
+      });
+    }
+
+    return { status: isTerminal ? 'dead_letter' : 'queued', notificationId, retryable };
+  }
+};
 
 // ---------------------------------------------------------------------------
 // Delivery status state machine (#159)
@@ -114,26 +240,25 @@ const isWithinConversationWindow = (lastCustomerInteractionAt) => {
 const sendTemplateMessage = async (to, templateName, languageCode = 'en', components = [], options = {}) => {
   const {
     messageTransport = config.messageTransport,
-    prisma = null,
+    prisma: prismaClient = null,
     axiosImpl = axios,
     notification = null,
   } = options;
 
-  const db = notification ? (prisma || require('../common/prisma')) : null;
+  const db = notification ? (prismaClient || prisma || require('../common/prisma')) : null;
 
   try {
     if (messageTransport === 'sim') {
-      const simDb = prisma || require('../common/prisma');
-      const body = `[Template: ${templateName}] ${JSON.stringify(components)}`;
+      const simDb = prismaClient || prisma || require('../common/prisma');
       const result = await simDb.simMessage.create({
         data: {
           phoneNumber: to,
           direction: 'out',
-          text: body,
+          text: `[Template: ${templateName}]`,
         },
       });
       if (db && notification) {
-        await recordNotificationCreated(db, notification, { to, body, providerMessageId: null, status: 'sent' });
+        await recordNotificationCreated(db, notification, { to, body: `[Template: ${templateName}]`, providerMessageId: null, status: 'sent' });
       }
       return result;
     }
@@ -196,7 +321,7 @@ const sendTemplateMessage = async (to, templateName, languageCode = 'en', compon
 const sendTextMessage = async (to, body, options = {}) => {
   const {
     messageTransport = config.messageTransport,
-    prisma = null,
+    prisma: prismaClient = null,
     axiosImpl = axios,
     notification = null,
     enforceWindow = false,
@@ -208,6 +333,8 @@ const sendTextMessage = async (to, body, options = {}) => {
     correlationId: providedCorrelationId = null,
     sleepImpl = sleep,
   } = options;
+  const { getContext } = require('../observability/context');
+  const outbox = require('./notificationOutbox.service');
   const correlationId = providedCorrelationId
     || getContext().correlationId
     || (notification?.referenceType && notification?.referenceId
@@ -222,7 +349,7 @@ const sendTextMessage = async (to, body, options = {}) => {
       return { outcome: data ? 'accepted' : 'unknown', providerMessageId, correlationId, attempts: 1, data };
     }
     logger.warn('whatsapp_window_expired', { to, lastCustomerInteractionAt });
-    const db = notification ? (prisma || require('../common/prisma')) : null;
+    const db = notification ? (prismaClient || prisma || require('../common/prisma')) : null;
     if (db && notification) {
       await recordNotificationCreated(db, notification, {
         to,
@@ -242,7 +369,7 @@ const sendTextMessage = async (to, body, options = {}) => {
   // lifecycle (financial receipts, deposit alerts, voice replies) pass
   // `notification`; low-stakes replies (menus, throttle warnings) don't pay
   // the write. Only touch prisma when there's something to record.
-  const db = notification ? (prisma || require('../common/prisma')) : null;
+  const db = notification ? (prismaClient || prisma || require('../common/prisma')) : null;
 
   // #286: the durable intent is written *before* the provider is called, so a
   // crash after Meta accepts but before we record still leaves a row to
@@ -269,7 +396,7 @@ const sendTextMessage = async (to, body, options = {}) => {
 
   if (messageTransport === 'sim') {
     try {
-      const simDb = prisma || require('../common/prisma');
+      const simDb = prismaClient || prisma || require('../common/prisma');
       const result = await simDb.simMessage.create({
         data: {
           phoneNumber: to,
@@ -314,6 +441,7 @@ const sendTextMessage = async (to, body, options = {}) => {
   try {
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
       try {
+        const { outboundHeaders } = require('../observability/context');
         const response = await axiosImpl.post(url, payload, {
           headers: {
             'Authorization': `Bearer ${config.whatsapp.token}`,
@@ -385,6 +513,17 @@ const sendTextMessage = async (to, body, options = {}) => {
 
   if (finalResult.outcome !== 'accepted') {
     logger.error('whatsapp_send_failed', { correlationId, ...finalResult.error, attempts: finalResult.attempts });
+    if (finalResult.outcome === 'transient_failure' || finalResult.retryable) {
+      const dbClient = prismaClient || (options.prisma !== undefined ? options.prisma : (prisma || require('../common/prisma')));
+      await persistOutboundNotification({
+        to,
+        body,
+        prismaClient: dbClient,
+        error: finalResult.error?.message || finalResult.error,
+        retryable: true,
+      });
+      return null;
+    }
   }
 
   return finalResult;
@@ -576,6 +715,8 @@ const deleteUserData = async (phoneNumber) => {
 module.exports = {
   sendTextMessage,
   sendTemplateMessage,
+  retryOutboundNotification,
+  isRetryableMetaFailure,
   isWithinConversationWindow,
   CONVERSATION_WINDOW_MS,
   recordDeliveryStatus,

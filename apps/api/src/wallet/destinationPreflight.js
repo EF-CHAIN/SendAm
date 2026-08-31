@@ -4,7 +4,7 @@
 // destinations before they are asked to confirm with a PIN.
 const { server, StellarSdk } = require("../config/stellar");
 const config = require("../config/env");
-const { validateAddress } = require("./stellar.adapter");
+const { validateAddress, classifyRecoverableError } = require("./stellar.adapter");
 
 const PREFLIGHT_CACHE_TTL_MS = 30 * 1000;
 const preflightCache = new Map();
@@ -71,6 +71,7 @@ const checkDestinationReadiness = async ({ destination, asset = "XLM" }) => {
       ok: false,
       reason: "account_not_found",
       message: "Destination account does not exist or is not funded.",
+      action: "fund_account",
     };
   }
 
@@ -90,20 +91,22 @@ const checkDestinationReadiness = async ({ destination, asset = "XLM" }) => {
     const trustline = (account.balances || []).find(
       (b) => b.asset_code === code && b.asset_issuer === issuer,
     );
-    if (!trustline) {
-      return {
-        ok: false,
-        reason: "missing_trustline",
-        message: `The recipient can't receive ${code} yet.`,
-      };
-    }
-    if (trustline.is_authorized === false) {
-      return {
-        ok: false,
-        reason: "not_authorized",
-        message: `The recipient isn't authorized to receive ${code} yet.`,
-      };
-    }
+  if (!trustline) {
+    return {
+      ok: false,
+      reason: "missing_trustline",
+      message: `The recipient can't receive ${code} yet.`,
+      action: "open_trustline",
+    };
+  }
+  if (trustline.is_authorized === false) {
+    return {
+      ok: false,
+      reason: "not_authorized",
+      message: `The recipient isn't authorized to receive ${code} yet.`,
+      action: "contact_support",
+    };
+  }
   }
 
   const result = {

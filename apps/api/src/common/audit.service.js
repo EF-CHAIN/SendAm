@@ -1,6 +1,8 @@
 const crypto = require('crypto');
 const logger = require('../utils/logger');
 const prisma = require('./prisma');
+const { getClientIp } = require('../config/proxy');
+
 const env = require('../config/env');
 
 const writeAuditLog = async ({ actorType = 'system', actorId, action, entityType, entityId, metadata = {}, req }) => {
@@ -11,29 +13,34 @@ const writeAuditLog = async ({ actorType = 'system', actorId, action, entityType
       action,
       entityType,
       entityId,
-      ipAddress: req?.ip,
+      ipAddress: getClientIp(req),
       userAgent: req?.get?.('user-agent'),
       metadata,
     };
 
-    return await prisma.$transaction(async (tx) => {
-      const lastLog = await tx.auditLog.findFirst({
-        orderBy: { id: 'desc' },
+    if (typeof prisma.$transaction === 'function') {
+      return await prisma.$transaction(async (tx) => {
+        const lastLog = await tx.auditLog.findFirst({
+          orderBy: { id: 'desc' },
+        });
+        const previousHash = lastLog?.hash || null;
+        
+        const payload = JSON.stringify({ previousHash, ...data });
+        const secret = env.encryptionKey || 'audit-secret-fallback';
+        const hash = crypto.createHmac('sha256', secret).update(payload).digest('hex');
+        
+        return await tx.auditLog.create({
+          data: {
+            ...data,
+            previousHash,
+            hash,
+          },
+        });
       });
-      const previousHash = lastLog?.hash || null;
-      
-      const payload = JSON.stringify({ previousHash, ...data });
-      // Use ENCRYPTION_KEY or a fallback if not available in dev, to hash the audit log.
-      const secret = env.encryptionKey || 'audit-secret-fallback';
-      const hash = crypto.createHmac('sha256', secret).update(payload).digest('hex');
-      
-      return await tx.auditLog.create({
-        data: {
-          ...data,
-          previousHash,
-          hash,
-        },
-      });
+    }
+
+    return await prisma.auditLog.create({
+      data,
     });
   } catch (error) {
     logger.error('Failed to write audit log', error.message);

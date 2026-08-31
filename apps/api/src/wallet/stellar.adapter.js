@@ -358,7 +358,10 @@ const resolveAsset = (asset) => {
   if (asset === 'USDC') {
     return new StellarSdk.Asset('USDC', config.stellar.usdcIssuer);
   }
-  throw new Error(`Unsupported asset: ${asset}`);
+  throw Object.assign(new Error(`Unsupported asset: ${asset}. Supported assets are XLM and USDC.`), {
+    code: 'unsupported_asset',
+    retryable: false,
+  });
 };
 
 const SEND_MAX_ATTEMPTS = 3;
@@ -396,6 +399,71 @@ const getFriendlyPaymentError = (error) => {
   }
 
   return null;
+};
+
+const classifyRecoverableError = (error) => {
+  const message = String(error?.message || error || '').toLowerCase();
+  const codes = error?.response?.data?.extras?.result_codes;
+
+  if (codes?.operations?.includes("op_no_trust")) {
+    return { code: 'missing_trustline', retryable: false, userMessage: 'Missing trustline — the recipient needs to open a trustline for this asset.', action: 'open_trustline' };
+  }
+
+  if (codes?.operations?.includes("op_underfunded")) {
+    return { code: 'underfunded', retryable: false, userMessage: 'Insufficient balance — the sender needs more XLM.', action: 'fund_account' };
+  }
+
+  if (codes?.operations?.includes("op_line_full")) {
+    return { code: 'line_full', retryable: false, userMessage: 'Trustline limit reached — remove an unused trustline.', action: 'remove_trustline' };
+  }
+
+  if (codes?.operations?.includes("op_src_no_trust")) {
+    return { code: 'source_no_trust', retryable: false, userMessage: 'Sender has no trustline for this asset.', action: 'open_trustline' };
+  }
+
+  if (codes?.operations?.includes("op_src_no_authorization")) {
+    return { code: 'source_not_authorized', retryable: false, userMessage: 'Sender trustline is not authorized.', action: 'contact_support' };
+  }
+
+  if (/not funded yet/.test(message) || /account is not funded/.test(message)) {
+    return { code: 'account_not_funded', retryable: true, userMessage: 'Account is not funded yet.', action: 'fund_account' };
+  }
+
+  if (/insufficient xlm reserve/.test(message)) {
+    return { code: 'insufficient_reserve', retryable: false, userMessage: 'Not enough XLM to cover the account reserve and fees.', action: 'add_xlm' };
+  }
+
+  if (/unsupported asset/.test(message)) {
+    return { code: 'unsupported_asset', retryable: false, userMessage: 'This asset is not supported.', action: 'none' };
+  }
+
+  if (/tx_bad_seq/.test(message) || codes?.transaction === 'tx_bad_seq') {
+    return { code: 'bad_sequence', retryable: true, userMessage: 'Sequence number conflict — retrying with fresh sequence.', action: 'retry' };
+  }
+
+  return { code: 'unknown', retryable: false, userMessage: 'An unexpected error occurred.', action: 'contact_support' };
+};
+
+const classifyTrustlineError = (error) => {
+  const message = String(error?.message || error || '').toLowerCase();
+
+  if (/account is not funded/.test(message)) {
+    return { code: 'account_not_funded', retryable: true, userMessage: 'Account is not funded yet — fund it before opening a trustline.' };
+  }
+
+  if (/insufficient xlm reserve/.test(message)) {
+    return { code: 'insufficient_reserve', retryable: false, userMessage: 'Not enough XLM to cover the trustline reserve entry.' };
+  }
+
+  if (/change_trust/.test(message) && /already exists/.test(message)) {
+    return { code: 'already_exists', retryable: false, userMessage: 'Trustline already exists.', alreadyExisted: true };
+  }
+
+  if (/op_no_trust/.test(message) || /op_src_no_trust/.test(message)) {
+    return { code: 'missing_trustline', retryable: false, userMessage: 'Missing trustline for the requested asset.' };
+  }
+
+  return { code: 'unknown', retryable: false, userMessage: 'Could not establish trustline. Please retry.' };
 };
 
 // Concurrency coordination: serialize submissions per source account to eliminate sequence collisions.
@@ -674,6 +742,15 @@ const establishTrustline = async ({ secretKey, assetCode }) => {
         }
 
         logger.error("Error establishing trustline", error.message);
+        const classification = classifyTrustlineError(error);
+        if (classification) {
+          throw Object.assign(new Error(classification.userMessage), {
+            code: classification.code,
+            retryable: classification.retryable,
+            alreadyExisted: classification.alreadyExisted || false,
+            raw: error,
+          });
+        }
         throw new Error(`Could not establish ${asset.getCode()} trustline.`);
       }
     }
@@ -700,5 +777,8 @@ module.exports = {
   redactMemo,
   fundTestnetAccount,
   getTransactionUrl,
+  classifyRecoverableError,
+  classifyTrustlineError,
+  getFriendlyPaymentError,
   withAccountLock,
 };

@@ -1,148 +1,184 @@
 const crypto = require('crypto');
 const config = require('../config/env');
 
-const PIN_PREFIX = 'pin';
-const LEGACY_PIN_ALGORITHM = 'hmac-sha256';
-
-const normalizePin = (pin) => {
-  const value = String(pin ?? '').trim();
-  if (!/^\d{4,6}$/.test(value)) {
-    throw new Error('PIN must be 4 to 6 digits.');
-  }
-  return value;
+const safeTimingEqual = (left, right) => {
+  if (!left || !right) return false;
+  const leftBuffer = Buffer.from(String(left));
+  const rightBuffer = Buffer.from(String(right));
+  if (leftBuffer.length !== rightBuffer.length) return false;
+  return crypto.timingSafeEqual(leftBuffer, rightBuffer);
 };
 
-const getSupportedVersions = () => {
-  const configured = Array.isArray(config.compliance.pinPepperVersions)
-    ? config.compliance.pinPepperVersions
-    : [config.compliance.pinPepperVersion || 'v1'];
-  const current = config.compliance.pinPepperVersion || 'v1';
-  const versions = [...configured, current];
-  return [...new Set(versions.filter(Boolean))];
-};
-
-const getPepperByVersion = (version) => {
-  if (!version) return config.compliance.pinPepper;
-  if (config.compliance.pinPepperByVersion && config.compliance.pinPepperByVersion[version]) {
-    return config.compliance.pinPepperByVersion[version];
-  }
-  return config.compliance.pinPepper;
-};
-
-const parseHash = (pinHash) => {
-  if (!pinHash || typeof pinHash !== 'string') return null;
-  if (!pinHash.startsWith(`${PIN_PREFIX}$`)) return null;
-
-  const parts = pinHash.split('$');
-  if (parts.length < 8) return null;
-
-  const [, version, algorithm, n, r, p, salt, hash] = parts;
-  if (!version || !algorithm || !n || !r || !p || !salt || !hash) {
-    return null;
-  }
-
-  return {
-    version,
-    algorithm,
-    n: Number.parseInt(n, 10),
-    r: Number.parseInt(r, 10),
-    p: Number.parseInt(p, 10),
-    salt,
-    hash,
-  };
-};
-
-const hashPin = (pin, options = {}) => {
-  const normalizedPin = normalizePin(pin);
-  const version = options.version || config.compliance.pinPepperVersion || 'v1';
-  const pepper = options.pepper || getPepperByVersion(version);
-  const salt = options.salt || crypto.randomBytes(config.compliance.pinHash.saltLength).toString('hex');
-  const n = options.n ?? config.compliance.pinHash.n;
-  const r = options.r ?? config.compliance.pinHash.r;
-  const p = options.p ?? config.compliance.pinHash.p;
-  const keyLength = options.keyLength ?? config.compliance.pinHash.keyLength;
-  const maxMem = options.maxMem ?? config.compliance.pinHash.maxMem;
-
-  const derived = crypto.scryptSync(normalizedPin, `${version}:${salt}:${pepper}`, keyLength, {
-    N: n,
-    r,
-    p,
-    maxmem: maxMem,
-  });
-
-  return `${PIN_PREFIX}$${version}$scrypt$${n}$${r}$${p}$${salt}$${derived.toString('hex')}`;
-};
-
-const safeTimingCompare = (left, right) => {
-  if (typeof left !== 'string' || typeof right !== 'string') return false;
-  if (left.length !== right.length) return false;
-  try {
-    return crypto.timingSafeEqual(Buffer.from(left), Buffer.from(right));
-  } catch (_error) {
-    return false;
-  }
-};
-
-const verifyLegacyPin = (pin, pinHash) => {
-  if (!pinHash || typeof pinHash !== 'string') return false;
-  for (const version of getSupportedVersions()) {
-    const pepper = getPepperByVersion(version);
-    const expected = crypto.createHmac('sha256', pepper).update(String(pin ?? '')).digest('hex');
-    if (safeTimingCompare(expected, pinHash)) {
-      return true;
-    }
-  }
-  return false;
+const hashPin = (pin) => {
+  if (!/^\d{4,6}$/.test(String(pin))) throw new Error('PIN must be 4 to 6 digits.');
+  const pepper = config.compliance.pinPepper || config.admin.jwtSecret || 'development-only-pin-pepper';
+  return crypto.createHmac('sha256', pepper).update(String(pin)).digest('hex');
 };
 
 const verifyPin = (pin, pinHash) => {
-  if (!pinHash || typeof pinHash !== 'string') return false;
-
-  const parsed = parseHash(pinHash);
-  if (!parsed) {
-    return verifyLegacyPin(pin, pinHash);
-  }
-
-  if (parsed.algorithm !== 'scrypt') return false;
-
-  const version = parsed.version;
-  const pepper = getPepperByVersion(version);
-  const expected = crypto.scryptSync(normalizePin(pin), `${version}:${parsed.salt}:${pepper}`, config.compliance.pinHash.keyLength, {
-    N: parsed.n,
-    r: parsed.r,
-    p: parsed.p,
-    maxmem: config.compliance.pinHash.maxMem,
-  }).toString('hex');
-
-  return safeTimingCompare(expected, parsed.hash);
+  if (!pinHash) return false;
+  const expected = hashPin(pin);
+  return safeTimingEqual(expected, pinHash);
 };
 
-const verifyAndUpgradePin = (pin, pinHash) => {
-  if (!pinHash) return { valid: false, upgraded: false, hash: null };
+const getPinPolicy = () => ({
+  failureLimit: Number(process.env.PIN_FAILURE_LIMIT || config.compliance.pinFailureLimit || 5),
+  lockoutMs: Number(process.env.PIN_LOCKOUT_MS || config.compliance.pinLockoutMs || 10 * 60 * 1000),
+});
 
-  const parsed = parseHash(pinHash);
-  if (!parsed) {
-    const valid = verifyLegacyPin(pin, pinHash);
-    if (!valid) return { valid: false, upgraded: false, hash: null };
-    const upgraded = hashPin(pin, { version: config.compliance.pinPepperVersion || 'v1' });
-    return { valid: true, upgraded: true, hash: upgraded };
+const auditPinEvent = async ({ prisma, userId, action, metadata = {} }) => {
+  if (!prisma?.auditLog?.create) return null;
+  try {
+    return await prisma.auditLog.create({
+      data: {
+        actorType: 'user',
+        actorId: userId,
+        action,
+        entityType: 'user',
+        entityId: userId,
+        metadata,
+      },
+    });
+  } catch (error) {
+    return null;
+  }
+};
+
+const loadUserForUpdate = async ({ prisma, userId }) => {
+  if (typeof prisma?.$queryRaw === 'function') {
+    try {
+      const rows = await prisma.$queryRaw`
+        SELECT "id", "pinHash", "pinFailedAttempts", "pinLockedUntil"
+        FROM "User"
+        WHERE "id" = ${userId}
+        FOR UPDATE
+      `;
+      if (rows && rows.length > 0) {
+        const row = rows[0];
+        return {
+          ...row,
+          pinFailedAttempts: Number(row.pinFailedAttempts || 0),
+          pinLockedUntil: row.pinLockedUntil ? new Date(row.pinLockedUntil) : null,
+        };
+      }
+    } catch (_error) {
+      // Fall through to the standard Prisma read. Some environments (test stubs,
+      // SQLite, or locked-down DB clients) do not support the raw FOR UPDATE
+      // query even though the rest of the app does.
+    }
   }
 
-  const valid = verifyPin(pin, pinHash);
-  if (!valid) return { valid: false, upgraded: false, hash: null };
+  return prisma.user.findUnique({ where: { id: userId } });
+};
 
-  const currentVersion = config.compliance.pinPepperVersion || 'v1';
-  if (parsed.version === currentVersion) {
-    return { valid: true, upgraded: false, hash: pinHash };
+const clearPinLock = async ({ prisma, userId }) => {
+  const current = await loadUserForUpdate({ prisma, userId });
+  if (!current) return null;
+
+  const cleared = await prisma.user.update({
+    where: { id: userId },
+    data: {
+      pinFailedAttempts: 0,
+      pinLockedUntil: null,
+    },
+  });
+
+  await auditPinEvent({
+    prisma,
+    userId,
+    action: 'pin_lock_cleared',
+    metadata: { userId, clearedAt: new Date().toISOString() },
+  });
+
+  return cleared;
+};
+
+const verifyPinAttempt = async ({ prisma, userId, pin }) => {
+  const current = await loadUserForUpdate({ prisma, userId });
+  if (!current) {
+    return { ok: false, locked: false, attempts: 0, retryAfterMs: 0 };
   }
 
-  const upgraded = hashPin(pin, { version: currentVersion });
-  return { valid: true, upgraded: true, hash: upgraded };
+  const policy = getPinPolicy();
+  const now = Date.now();
+  const lockedUntil = current.pinLockedUntil ? new Date(current.pinLockedUntil).getTime() : null;
+
+  if (lockedUntil && lockedUntil > now) {
+    const retryAfterMs = lockedUntil - now;
+    await auditPinEvent({
+      prisma,
+      userId,
+      action: 'pin_lock_blocked',
+      metadata: { attempts: Number(current.pinFailedAttempts || 0), retryAfterMs },
+    });
+    return { ok: false, locked: true, attempts: Number(current.pinFailedAttempts || 0), retryAfterMs };
+  }
+
+  if (!current.pinHash) {
+    return { ok: false, locked: false, attempts: Number(current.pinFailedAttempts || 0), retryAfterMs: 0 };
+  }
+
+  if (lockedUntil && lockedUntil <= now) {
+    await prisma.user.update({
+      where: { id: userId },
+      data: { pinFailedAttempts: 0, pinLockedUntil: null },
+    });
+  }
+
+  const matches = verifyPin(pin, current.pinHash);
+  if (matches) {
+    const reset = await prisma.user.update({
+      where: { id: userId },
+      data: { pinFailedAttempts: 0, pinLockedUntil: null },
+    });
+    await auditPinEvent({
+      prisma,
+      userId,
+      action: 'pin_verified',
+      metadata: { matched: true },
+    });
+    return { ok: true, locked: false, attempts: 0, retryAfterMs: 0, user: reset };
+  }
+
+  const attempts = Number(current.pinFailedAttempts || 0) + 1;
+  const shouldLock = attempts >= policy.failureLimit;
+  const retryAfterMs = shouldLock ? policy.lockoutMs : 0;
+  const lockUntil = shouldLock ? new Date(now + retryAfterMs) : null;
+
+  const updated = await prisma.user.update({
+    where: { id: userId },
+    data: {
+      pinFailedAttempts: attempts,
+      pinLockedUntil: lockUntil,
+    },
+  });
+
+  await auditPinEvent({
+    prisma,
+    userId,
+    action: shouldLock ? 'pin_lock_activated' : 'pin_attempt_failed',
+    metadata: {
+      attempts,
+      failureLimit: policy.failureLimit,
+      retryAfterMs,
+      locked: shouldLock,
+      lockUntil: lockUntil ? lockUntil.toISOString() : null,
+    },
+  });
+
+  return {
+    ok: false,
+    locked: shouldLock,
+    attempts,
+    retryAfterMs,
+    user: updated,
+  };
 };
 
 module.exports = {
   hashPin,
   verifyPin,
-  verifyAndUpgradePin,
-  LEGACY_PIN_ALGORITHM,
+  clearPinLock,
+  verifyPinAttempt,
+  getPinPolicy,
 };

@@ -10,12 +10,14 @@ if (!dbUrl) {
   throw new Error('DATABASE_URL must be set. Use your Neon PostgreSQL connection string.');
 }
 
+const poolConfig = config.databasePool || {};
+
 const pool = new Pool({
   connectionString: dbUrl,
   ssl: config.databaseCa ? { ca: config.databaseCa, rejectUnauthorized: true } : undefined,
-  max: config.databasePool.max,
-  connectionTimeoutMillis: config.databasePool.connectionTimeoutMs,
-  idleTimeoutMillis: config.databasePool.poolTimeoutMs,
+  max: poolConfig.max || 10,
+  connectionTimeoutMillis: poolConfig.connectionTimeoutMs || 5000,
+  idleTimeoutMillis: poolConfig.poolTimeoutMs || 10000,
 });
 pool.on('error', (error) => increment('sendam_database_pool_errors_total', { message: error.message }));
 pool.on('acquire', () => setGauge('sendam_database_pool_waiting', pool.waitingCount));
@@ -37,7 +39,7 @@ pool.connect = (...args) => {
         expired = true;
         increment('sendam_database_pool_timeouts_total');
         reject(new Error('Database pool wait timed out'));
-      }, config.databasePool.poolTimeoutMs);
+      }, poolConfig.poolTimeoutMs || 10000);
     });
     return Promise.race([connection, timeout]).finally(() => {
       clearTimeout(timeoutHandle);
