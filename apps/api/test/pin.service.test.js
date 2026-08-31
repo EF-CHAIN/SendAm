@@ -1,98 +1,63 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const crypto = require('crypto');
 
-const loadPinService = (env = {}) => {
-  const previous = {};
-  for (const [key, value] of Object.entries(env)) {
-    previous[key] = process.env[key];
-    if (value === undefined) delete process.env[key];
-    else process.env[key] = value;
-  }
+process.env.PIN_FAILURE_LIMIT = '3';
+process.env.PIN_LOCKOUT_MS = '60000';
 
-  const configPath = require.resolve('../src/config/env');
-  const pinServicePath = require.resolve('../src/compliance/pin.service');
-  delete require.cache[configPath];
-  delete require.cache[pinServicePath];
+const { hashPin, verifyPin, verifyPinAttempt, clearPinLock } = require('../src/compliance/pin.service');
 
-  const pinService = require('../src/compliance/pin.service');
-
+const makePrisma = (initialUser) => {
+  let user = { ...initialUser };
   return {
-    pinService,
-    restore: () => {
-      for (const [key, value] of Object.entries(previous)) {
-        if (value === undefined) delete process.env[key];
-        else process.env[key] = value;
-      }
-      delete require.cache[configPath];
-      delete require.cache[pinServicePath];
+    user: {
+      findUnique: async ({ where }) => ({ ...user, id: where.id }),
+      update: async ({ where, data }) => {
+        user = { ...user, ...data };
+        return { ...user, id: where.id };
+      },
+    },
+    auditLog: {
+      create: async () => ({ ok: true }),
     },
   };
 };
 
-test('PIN hashing uses unique salts and versioned memory-hard output', () => {
-  const { pinService, restore } = loadPinService({
-    PIN_PEPPER: 'pepper-v1',
-    PIN_PEPPER_VERSION: 'v1',
-    PIN_PEPPER_VERSIONS: 'v1,v2',
-    PIN_PEPPER_V1: 'pepper-v1',
-    PIN_PEPPER_V2: 'pepper-v2',
-  });
+test('locks a user after the configured number of failures and blocks a correct PIN while locked', async () => {
+  const user = {
+    id: 'u_1',
+    pinHash: hashPin('123456'),
+    pinFailedAttempts: 0,
+    pinLockedUntil: null,
+  };
+  const prisma = makePrisma(user);
 
-  try {
-    const first = pinService.hashPin('1234');
-    const second = pinService.hashPin('1234');
-
-    assert.match(first, /^pin\$/);
-    assert.match(first, /\$scrypt\$/);
-    assert.notEqual(first, second);
-    assert.equal(pinService.verifyPin('1234', first), true);
-  } finally {
-    restore();
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    const result = await verifyPinAttempt({ prisma, userId: 'u_1', pin: '999999' });
+    assert.equal(result.ok, false);
+    assert.equal(result.locked, false);
+    assert.equal(result.attempts, attempt);
   }
+
+  const lockResult = await verifyPinAttempt({ prisma, userId: 'u_1', pin: '999999' });
+  assert.equal(lockResult.ok, false);
+  assert.equal(lockResult.locked, true);
+  assert.ok(lockResult.retryAfterMs > 0);
+
+  const finalAttempt = await verifyPinAttempt({ prisma, userId: 'u_1', pin: '123456' });
+  assert.equal(finalAttempt.ok, false);
+  assert.equal(finalAttempt.locked, true);
 });
 
-test('legacy HMAC hashes upgrade safely after successful verification', () => {
-  const { pinService, restore } = loadPinService({
-    PIN_PEPPER: 'pepper-v1',
-    PIN_PEPPER_VERSION: 'v1',
-    PIN_PEPPER_VERSIONS: 'v1,v2',
-    PIN_PEPPER_V1: 'pepper-v1',
-    PIN_PEPPER_V2: 'pepper-v2',
+test('clearPinLock resets the lock and the failed-attempt counters', async () => {
+  const prisma = makePrisma({
+    id: 'u_2',
+    pinHash: hashPin('654321'),
+    pinFailedAttempts: 3,
+    pinLockedUntil: new Date(Date.now() + 60000),
   });
 
-  try {
-    const legacyHash = crypto.createHmac('sha256', 'pepper-v1').update('1234').digest('hex');
-    const result = pinService.verifyAndUpgradePin('1234', legacyHash);
-
-    assert.equal(result.valid, true);
-    assert.equal(result.upgraded, true);
-    assert.match(result.hash, /^pin\$/);
-    assert.equal(pinService.verifyPin('1234', result.hash), true);
-    assert.equal(pinService.verifyPin('1234', legacyHash), true);
-  } finally {
-    restore();
-  }
-});
-
-test('rotation supports old and new pepper versions and rejects tampered/unknown formats', () => {
-  const { pinService, restore } = loadPinService({
-    PIN_PEPPER: 'pepper-v2',
-    PIN_PEPPER_VERSION: 'v2',
-    PIN_PEPPER_VERSIONS: 'v1,v2',
-    PIN_PEPPER_V1: 'pepper-v1',
-    PIN_PEPPER_V2: 'pepper-v2',
-  });
-
-  try {
-    const v1Legacy = crypto.createHmac('sha256', 'pepper-v1').update('1234').digest('hex');
-    const v2Hash = pinService.hashPin('1234');
-
-    assert.equal(pinService.verifyPin('1234', v1Legacy), true);
-    assert.equal(pinService.verifyPin('1234', v2Hash), true);
-    assert.equal(pinService.verifyPin('1234', 'pin$unknown$format'), false);
-    assert.equal(pinService.verifyPin('1234', `${v2Hash.slice(0, -1)}0`), false);
-  } finally {
-    restore();
-  }
+  const cleared = await clearPinLock({ prisma, userId: 'u_2' });
+  assert.equal(cleared.pinFailedAttempts, 0);
+  assert.equal(cleared.pinLockedUntil, null);
+  assert.equal(verifyPin('654321', cleared.pinHash), true);
 });

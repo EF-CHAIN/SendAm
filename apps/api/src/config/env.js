@@ -74,11 +74,9 @@ module.exports = {
     botWindowMs: Number(process.env.BOT_RATE_WINDOW_SEC || 60) * 1000,
     botMax: Number(process.env.BOT_RATE_MAX || 20),
   },
-  // Redis is the backbone of BullMQ queues, the WhatsApp DLQ and per-sender
-  // message ordering. These settings drive the connection policy in
-  // config/redis.js — TLS, reconnect backoff, command timeouts and Sentinel
-  // topology — so failures surface as metrics/alerts instead of silently
-  // dropping accepted work. See config/redis.js and the *.redis* tests.
+  proxy: {
+    trust: process.env.TRUST_PROXY || (env === 'production' ? '1' : 'false'),
+  },
   redis: {
     url: process.env.REDIS_URL || process.env.UPSTASH_REDIS_URL,
     ca: process.env.REDIS_CA,
@@ -215,21 +213,9 @@ module.exports = {
       appId: process.env.DOJAH_APP_ID,
       secretKey: process.env.DOJAH_SECRET_KEY,
     },
-    pinPepper: process.env.PIN_PEPPER || process.env.PIN_PEPPER_V1 || 'development-only-pin-pepper',
-    pinPepperVersion: process.env.PIN_PEPPER_VERSION || 'v1',
-    pinPepperVersions: (process.env.PIN_PEPPER_VERSIONS || 'v1').split(',').map((v) => v.trim()).filter(Boolean),
-    pinPepperByVersion: {
-      v1: process.env.PIN_PEPPER_V1 || process.env.PIN_PEPPER || 'development-only-pin-pepper',
-      v2: process.env.PIN_PEPPER_V2 || process.env.PIN_PEPPER || 'development-only-pin-pepper',
-    },
-    pinHash: {
-      n: Number(process.env.PIN_SCRYPT_N || 16384),
-      r: Number(process.env.PIN_SCRYPT_R || 8),
-      p: Number(process.env.PIN_SCRYPT_P || 1),
-      keyLength: Number(process.env.PIN_SCRYPT_KEY_LENGTH || 32),
-      saltLength: Number(process.env.PIN_HASH_SALT_LENGTH || 16),
-      maxMem: Number(process.env.PIN_SCRYPT_MAXMEM || 128 * 1024 * 1024),
-    },
+    pinPepper: process.env.PIN_PEPPER,
+    pinFailureLimit: Number(process.env.PIN_FAILURE_LIMIT || 5),
+    pinLockoutMs: Number(process.env.PIN_LOCKOUT_MS || 10 * 60 * 1000),
   },
   voice: {
     provider: process.env.VOICE_PROVIDER || 'deepgram',

@@ -1,6 +1,8 @@
 const walletService = require('../wallet/wallet.service');
 const { validateAddress } = require('../wallet/stellar.adapter');
-const { verifyAndUpgradePin } = require('../compliance/pin.service');
+const { executePayment } = require('../payment/payment.orchestrator');
+const { enforceTransactionPolicy } = require('../compliance/compliance.service');
+const { verifyPinAttempt } = require('../compliance/pin.service');
 const { sendTextMessage } = require('../services/whatsapp.service');
 const { confirmationService } = require('./paymentConfirmation.service');
 const { createRecipientResolver } = require('./recipientResolver');
@@ -177,10 +179,14 @@ const handlePendingPin = async ({ phoneNumber, user, text, notify }) => {
     return true;
   }
 
-  const userWithPin = await prisma.user.findUnique({ where: { id: user.id } });
-  const pin = String(text).trim().split(/\s+/)[0];
-  if (!verifyPin(pin, userWithPin.pinHash)) {
-    await notify(phoneNumber, `PIN verification failed. Try again with "<PIN> ${reference}" or cancel ${reference}.`);
+  const pinAttempt = await verifyPinAttempt({ prisma, userId: user.id, pin: text });
+  if (!pinAttempt.ok) {
+    if (pinAttempt.locked) {
+      const retrySeconds = Math.max(1, Math.ceil(pinAttempt.retryAfterMs / 1000));
+      await notify(phoneNumber, `PIN verification failed. Your account is temporarily locked. Please try again in ${retrySeconds} seconds, or reply "no" to cancel.`);
+    } else {
+      await notify(phoneNumber, 'PIN verification failed. Please try again or reply "no" to cancel.');
+    }
     return true;
   }
 

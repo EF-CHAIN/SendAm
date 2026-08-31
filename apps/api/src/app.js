@@ -18,18 +18,19 @@ const errorHandler = require('./middlewares/errorHandler');
 const notFound = require('./middlewares/notFound');
 const PostgresRateStore = require('./middlewares/postgresRateStore');
 const config = require('./config/env');
-const { describeNetworkProfile } = require('./config/networkProfiles');
+const { getTrustProxySetting, sanitizeForwardingHeaders } = require('./config/proxy');
 const logger = require('./utils/logger');
 const prisma = require('./common/prisma');
-const { correlationMiddleware } = require('./observability/context');
-const { requestMetrics, metricsHandler, increment } = require('./observability/metrics');
-const { AppError } = require('./errors');
-const { getContext } = require('./observability/context');
-const { pingRedis } = require('./queues/queue.service');
-const { checkAll, httpStatusFor } = require('./observability/dependencies');
+const { requestMetrics, getMetricSnapshot } = require('./observability/metrics');
 
 const app = express();
 let startupComplete = false;
+
+app.set('trust proxy', getTrustProxySetting());
+app.use((req, _res, next) => {
+  sanitizeForwardingHeaders(req);
+  next();
+});
 
 // Middlewares
 app.use(correlationMiddleware);
@@ -94,51 +95,8 @@ app.use((err, req, res, next) => {
 // Access logs: the verbose, colorized 'dev' format is great locally but unfit
 // for production log aggregation. Use the standard Apache 'combined' format in
 // production so hosted log drains get parseable, complete request lines.
-if (!config.isProduction) app.use(morgan('dev'));
-app.use((req, res, next) => {
-  const started = process.hrtime.bigint();
-  res.on('finish', () => logger.info('http_request_completed', {
-    method: req.method,
-    path: req.path,
-    statusCode: res.statusCode,
-    durationMs: Number(process.hrtime.bigint() - started) / 1e6,
-  }));
-  next();
-});
-
-// Server-side request timeout. Protects workers from stalled or slow requests.
-const requestTimeoutMs = config.requestTimeoutMs || 30000;
-app.use((req, res, next) => {
-  req.setTimeout(requestTimeoutMs, () => {
-    increment('sendam_request_timeouts_total', { route: req.path });
-    if (!res.headersSent) {
-      res.status(408).json({ error: 'request_timeout' });
-    }
-    req.destroy();
-  });
-  next();
-});
-
-// Body parsing with route-appropriate size limits. The WhatsApp webhook can
-// receive media payloads, so it gets a larger limit; the rest of the API stays
-// conservative. Exceeding the limit is metered and returns a safe 413.
-const jsonBodyDefaults = { verify: (req, _res, buf) => { req.rawBody = buf; } };
-const defaultBodyLimit = config.bodyLimit ? config.bodyLimit.api : '100kb';
-const webhookBodyLimit = config.bodyLimit ? config.bodyLimit.webhook : '10mb';
-const jsonParserDefault = express.json({ ...jsonBodyDefaults, limit: defaultBodyLimit });
-const urlencodedParserDefault = express.urlencoded({ extended: true, limit: defaultBodyLimit });
-const jsonParserWebhook = express.json({ ...jsonBodyDefaults, limit: webhookBodyLimit });
-const urlencodedParserWebhook = express.urlencoded({ extended: true, limit: webhookBodyLimit });
-
-app.use((req, res, next) => {
-  const useWebhookLimit = req.path.startsWith('/webhook');
-  const jsonParser = useWebhookLimit ? jsonParserWebhook : jsonParserDefault;
-  const urlencodedParser = useWebhookLimit ? urlencodedParserWebhook : urlencodedParserDefault;
-  jsonParser(req, res, (err) => {
-    if (err) return next(err);
-    urlencodedParser(req, res, next);
-  });
-});
+app.use(morgan(config.isProduction ? 'combined' : 'dev'));
+app.use(requestMetrics);
 
 // Body limit breaches are safe and observable.
 app.use((err, req, res, next) => {
@@ -203,11 +161,8 @@ app.get(['/health', '/health/ready'], async (req, res) => {
   }
 });
 
-const path = require('path');
-const openapiSpecPath = path.join(__dirname, '../openapi.json');
-
-app.get(['/api/docs/openapi.json', '/api/docs'], (req, res) => {
-  res.sendFile(openapiSpecPath);
+app.get('/metrics', (_req, res) => {
+  res.status(200).json(getMetricSnapshot());
 });
 
 // Routes
