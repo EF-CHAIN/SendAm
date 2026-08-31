@@ -57,6 +57,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   transitions emit Prometheus metrics and operator logs, and an inline fallback
   path is explicitly alarmed rather than silent. Tests:
   `apps/api/test/redis.safeguards.test.js`.
+- Continuous alert-delivery verification (issue #228): a worker poller
+  dispatches clearly-marked synthetic alerts through the real WhatsApp outbound
+  pipeline on a schedule, confirms end-to-end delivery from the provider's
+  status webhook, uses a configured template route as a bounded fallback when
+  the primary text route fails, and surfaces missed tests as actionable
+  failures. A persisted singleton exposes the last successful verification via
+  the admin API (`GET /api/admin/alert-delivery`) and `system-health`, with
+  Prometheus gauges and alert rules for failed/degraded/never-verified states.
+  Tests: `apps/api/test/alertDelivery.service.test.js`,
+  `apps/api/test/alertDelivery.jobs.test.js`. See
+  `docs/ALERT-DELIVERY-VERIFICATION.md`.
 
 ### Changed
 

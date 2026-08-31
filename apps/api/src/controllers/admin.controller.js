@@ -459,12 +459,21 @@ const exportAuditLogs = async (req, res, next) => {
 
 const getSystemHealth = async (_req, res, next) => {
   try {
+    const { getStatus: getAlertDeliveryStatus } = require('../observability/alertDelivery.service');
+    let alertDelivery = 'disabled';
+    try {
+      const status = await getAlertDeliveryStatus({ db: prisma });
+      alertDelivery = status.overallStatus || 'unknown';
+    } catch (_error) {
+      alertDelivery = 'unavailable';
+    }
     sendSuccess(res, {
       api: 'ok',
       database: 'ok',
       queues: process.env.REDIS_URL || process.env.UPSTASH_REDIS_URL ? 'redis-configured' : 'unavailable',
       settlementRail: 'stellar',
       custodyModel: 'direct',
+      alertDelivery,
       timestamp: new Date().toISOString(),
     });
   } catch (error) {

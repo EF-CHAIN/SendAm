@@ -223,6 +223,20 @@ module.exports = {
     // Default timeout in milliseconds for outgoing upstream HTTP calls.
     upstreamTimeoutMs: Number(process.env.UPSTREAM_TIMEOUT_MS || 10000),
   },
+  // Continuous alert-delivery verification (issue #228). Enabled automatically
+  // when ALERT_TEST_RECIPIENT is set; ALERT_DELIVERY_ENABLED=false is the hard
+  // kill switch. See docs/ALERT-DELIVERY-VERIFICATION.md.
+  alertDelivery: {
+    enabled: process.env.ALERT_DELIVERY_ENABLED != null
+      ? process.env.ALERT_DELIVERY_ENABLED === 'true'
+      : Boolean(process.env.ALERT_TEST_RECIPIENT),
+    recipient: process.env.ALERT_TEST_RECIPIENT,
+    intervalMs: Number(process.env.ALERT_DELIVERY_INTERVAL_MS || 3600000),
+    ackTimeoutMs: Number(process.env.ALERT_DELIVERY_ACK_TIMEOUT_MS || 600000),
+    missedFactor: Number(process.env.ALERT_DELIVERY_MISSED_FACTOR || 3),
+    templateName: process.env.ALERT_TEST_TEMPLATE_NAME,
+    templateLanguage: process.env.ALERT_TEST_TEMPLATE_LANGUAGE || 'en',
+  },
   features: {
     // Rollout/incident kill switch for SEP-10-authenticated REST operations.
     // WhatsApp remains independently protected by verified webhook identity.

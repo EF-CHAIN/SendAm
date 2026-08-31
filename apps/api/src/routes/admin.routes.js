@@ -5,6 +5,7 @@ const adminController = require('../controllers/admin.controller');
 const privacyController = require('../compliance/privacy.controller');
 const reconciliationController = require('../payment/reconciliation.controller');
 const supportController = require('../support/support.controller');
+const alertDeliveryController = require('../controllers/alertDelivery.controller');
 const requireAdmin = require('../middlewares/requireAdmin');
 
 // Tighter limiter on the credential endpoint to slow password brute-forcing,
@@ -55,6 +56,10 @@ router.post('/legal-holds', requireAdmin('compliance.write'), privacyController.
 router.delete('/legal-holds/:userId', requireAdmin('compliance.write'), privacyController.releaseLegalHold);
 
 router.get('/system-health', requireAdmin('operations.write'), adminController.getSystemHealth);
+
+// ── Issue #228: Continuous alert-delivery verification ──────────────────────
+// Operational status of the synthetic end-to-end alert-routing checks.
+router.get('/alert-delivery', requireAdmin('operations.read'), alertDeliveryController.getAlertDeliveryStatus);
 router.get('/administrators', requireAdmin('*'), adminController.listAdministrators);
 router.post('/administrators/invite', requireAdmin('*'), adminController.inviteAdministrator);
 router.patch('/administrators/:id/role', requireAdmin('*'), adminController.updateAdministratorRole);

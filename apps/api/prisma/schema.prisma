@@ -801,6 +801,55 @@ model AccountStatusRecord {
   @@index([status, createdAt])
 }
 
+// ─── Issue #228: Continuous alert-delivery verification ─────────────────────
+// Synthetic end-to-end alert-delivery test runs. A test is dispatched on a
+// configured schedule to an internal test recipient through the real outbound
+// pipeline (primary WhatsApp text route with an optional template fallback),
+// then confirmed from the linked Notification's provider delivery status
+// (delivered/read) or marked failed/timed-out. `testId` is deterministic per
+// interval epoch so duplicate scheduler executions collide on the unique key
+// and can never create an alert storm.
+model AlertDeliveryTest {
+  id                String    @id @default(cuid())
+  testId            String    @unique
+  status            String    @default("dispatched") // dispatched|accepted|confirmed|failed|timed_out
+  recipient         String
+  routes            Json      @default("[]") // per-route outcome: [{name,outcome,providerMessageId?,error?,attemptedAt}]
+  primaryRoute      String    @default("whatsapp-text")
+  fallbackUsed      Boolean   @default(false)
+  providerMessageId String?
+  syncOutcome       String?   // accepted|failed|unknown
+  attemptedAt       DateTime  @default(now())
+  acceptedAt        DateTime?
+  confirmedAt       DateTime?
+  failedAt          DateTime?
+  timeoutAt         DateTime?
+  failureReason     String?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  @@index([status])
+  @@index([attemptedAt])
+}
+
+// Singleton operational state exposed to operators via the admin API. Keeps the
+// last successful end-to-end verification and current health so a failed test
+// never overwrites the last successful timestamp (a missed verification stays
+// actionable).
+model AlertDeliveryState {
+  id                   String    @id @default("main")
+  enabled              Boolean   @default(false)
+  overallStatus        String    @default("unknown") // healthy|degraded|failed|unknown|disabled
+  lastSuccessfulTestAt DateTime?
+  lastTestId           String?
+  lastDispatchAt       DateTime?
+  lastFailureAt        DateTime?
+  lastFailureReason    String?
+  lastFailureDetail    Json      @default("{}")
+  routesDiagnostics    Json      @default("{}")
+  updatedAt            DateTime  @updatedAt
+}
+
 // Multi-tenant / partner isolation marker for routing and authorization scoping.
 // Allows future onboarding of partners while enforcing data isolation server-side.
 model Partner {
