@@ -66,8 +66,11 @@ describe('admin dashboard accessibility', () => {
       expect(screen.getAllByRole('main')).toHaveLength(1);
     });
 
-    it('gives every sidebar link and the logout button a meaningful accessible name', () => {
+    it('gives every sidebar link and the logout button a meaningful accessible name', async () => {
       renderAdmin('/');
+      // Sidebar links are gated on the admin identity resolving (getAdminMe),
+      // so await the first link before asserting the full set.
+      await screen.findByRole('link', { name: 'Overview' });
       const expectedLinks = [
         ['Overview', '/'],
         ['Users', '/users'],
@@ -153,7 +156,7 @@ describe('admin dashboard accessibility', () => {
       );
       renderAdmin('/');
       await waitFor(() => {
-        expect(screen.getByRole('alert')).toHaveTextContent(/request failed/i);
+        expect(screen.getByRole('alert')).toHaveTextContent(/server error/i);
       });
     });
   });
@@ -214,9 +217,11 @@ describe('admin dashboard accessibility', () => {
   });
 
   describe('forms', () => {
-    it('associates login labels with their controls and marks them required', () => {
+    it('associates login labels with their controls and marks them required', async () => {
       renderLogin();
-      expect(screen.getByLabelText('Email')).toBeRequired();
+      // Login is code-split (React.lazy), so await the chunk before querying.
+      const email = await screen.findByLabelText('Email');
+      expect(email).toBeRequired();
       expect(screen.getByLabelText('Password')).toBeRequired();
       expect(screen.getByRole('button', { name: /sign in/i })).toBeInTheDocument();
     });
@@ -224,6 +229,7 @@ describe('admin dashboard accessibility', () => {
     it('completes the login form using only the keyboard', async () => {
       const user = userEvent.setup();
       renderLogin();
+      await screen.findByLabelText('Email');
       await user.tab();
       expect(screen.getByLabelText('Email')).toHaveFocus();
       await user.keyboard('operator@example.com');
@@ -239,6 +245,7 @@ describe('admin dashboard accessibility', () => {
     it('announces failed login errors via an alert', async () => {
       const user = userEvent.setup();
       renderLogin();
+      await screen.findByLabelText('Email');
       await user.type(screen.getByLabelText('Email'), 'operator@example.com');
       await user.type(screen.getByLabelText('Password'), 'wrong_password');
       await user.click(screen.getByRole('button', { name: /sign in/i }));
@@ -260,7 +267,7 @@ describe('admin dashboard accessibility', () => {
       const statusSelect = screen.getByLabelText('Status');
       await userEvent.selectOptions(statusSelect, 'success');
       expect(statusSelect).toHaveValue('success');
-      const phoneInput = screen.getByLabelText('User Phone');
+      const phoneInput = screen.getByLabelText('Customer Phone');
       await userEvent.type(phoneInput, '+1');
       expect(phoneInput).toHaveValue('+1');
     });
@@ -297,7 +304,7 @@ describe('admin dashboard accessibility', () => {
       );
       renderAdmin('/audit-logs');
       await waitForTable();
-      await userEvent.click(screen.getByRole('button', { name: /export csv/i }));
+      await userEvent.click(screen.getByRole('button', { name: /export audit csv/i }));
       await waitFor(() => {
         expect(screen.getByRole('alert')).toHaveTextContent(/failed to export audit logs/i);
       });

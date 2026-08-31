@@ -24,7 +24,6 @@ let sessionSeq = 0;
 let adminSeq = 0;
 
 const now = () => new Date();
-const future = () => new Date(Date.now() + 12 * 60 * 60 * 1000);
 const roleByName = (name) => Object.values(db.roles).find((r) => r.name === name);
 const roleById = (id) => db.roles[id] || roleByName(id);
 const storeAdmin = (a) => { db.admins[a.id] = a; return a; };

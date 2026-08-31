@@ -4,7 +4,7 @@ const { Pool } = require('pg');
 const config = require('../config/env');
 const { increment, observeDuration, setGauge } = require('../observability/metrics');
 
-const dbUrl = config.databaseUrl || process.env.DATABASE_URL || 'postgresql://user:pass@localhost:5432/sendam_dev';
+const dbUrl = config.databaseUrl || process.env.DATABASE_URL || 'postgresql://localhost:5432/sendam_dev';
 
 if (!dbUrl) {
   throw new Error('DATABASE_URL must be set. Use your Neon PostgreSQL connection string.');
@@ -23,26 +23,33 @@ const connectFromPool = pool.connect.bind(pool);
 pool.connect = (...args) => {
   const started = process.hrtime.bigint();
   let expired = false;
+  // pg-pool invokes connect() both promise-style (no args) and callback-style
+  // (a callback argument, e.g. from Pool#query). Callback mode returns
+  // undefined and resolves the callback later, so the timeout race below only
+  // applies to the promise path.
   const connection = connectFromPool(...args);
-  connection.then((client) => {
-    if (expired) client.release();
-  }).catch(() => {});
-  let timeoutHandle;
-  const timeout = new Promise((_, reject) => {
-    timeoutHandle = setTimeout(() => {
-      expired = true;
-      increment('sendam_database_pool_timeouts_total');
-      reject(new Error('Database pool wait timed out'));
-    }, config.databasePool.poolTimeoutMs);
-  });
-  return Promise.race([connection, timeout]).finally(() => {
-    clearTimeout(timeoutHandle);
-    observeDuration(
-      'sendam_database_pool_wait_seconds',
-      {},
-      Number(process.hrtime.bigint() - started) / 1e9,
-    );
-  });
+  if (connection && typeof connection.then === 'function') {
+    connection.then((client) => {
+      if (expired) client.release();
+    }).catch(() => {});
+    let timeoutHandle;
+    const timeout = new Promise((_, reject) => {
+      timeoutHandle = setTimeout(() => {
+        expired = true;
+        increment('sendam_database_pool_timeouts_total');
+        reject(new Error('Database pool wait timed out'));
+      }, config.databasePool.poolTimeoutMs);
+    });
+    return Promise.race([connection, timeout]).finally(() => {
+      clearTimeout(timeoutHandle);
+      observeDuration(
+        'sendam_database_pool_wait_seconds',
+        {},
+        Number(process.hrtime.bigint() - started) / 1e9,
+      );
+    });
+  }
+  return connection;
 };
 
 const adapter = new PrismaPg(pool, { disposeExternalPool: true });

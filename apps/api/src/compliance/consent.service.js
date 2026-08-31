@@ -53,7 +53,7 @@ const updateUserConsent = async ({ userId, phoneNumber, consent, source = 'whats
         },
       },
     });
-  } catch (auditError) {
+  } catch (_auditError) {
     // Non-blocking for notification workflow, log failure if needed
   }
 

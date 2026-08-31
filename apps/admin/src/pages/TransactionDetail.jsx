@@ -5,6 +5,15 @@ import { formatDate } from '@shared/formatDate';
 import StatusBadge from '@/components/StatusBadge';
 import Loader from '@shared/Loader';
 
+const Field = ({ label, value, mono = false, children }) => (
+  <div className="py-3 sm:grid sm:grid-cols-3 sm:gap-4">
+    <dt className="text-sm font-medium text-gray-500">{label}</dt>
+    <dd className={`mt-1 text-sm text-gray-900 sm:mt-0 sm:col-span-2 ${mono ? 'font-mono break-all' : ''}`}>
+      {children ?? (value !== undefined && value !== null ? String(value) : <span className="text-gray-400">—</span>)}
+    </dd>
+  </div>
+);
+
 /**
  * Transaction detail / drill-down page.
  * Route: /transactions/:id
@@ -59,15 +68,6 @@ export default function TransactionDetail() {
   }
 
   if (!tx) return null;
-
-  const Field = ({ label, value, mono = false, children }) => (
-    <div className="py-3 sm:grid sm:grid-cols-3 sm:gap-4">
-      <dt className="text-sm font-medium text-gray-500">{label}</dt>
-      <dd className={`mt-1 text-sm text-gray-900 sm:mt-0 sm:col-span-2 ${mono ? 'font-mono break-all' : ''}`}>
-        {children ?? (value !== undefined && value !== null ? String(value) : <span className="text-gray-400">—</span>)}
-      </dd>
-    </div>
-  );
 
   return (
     <div className="min-w-0">

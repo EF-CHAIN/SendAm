@@ -1,16 +1,16 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect } from 'react';
 import { getAdminStats } from '@/lib/adminApi';
 import StatCard from '@/components/StatCard';
 import Loader from '@shared/Loader';
 import { normalizeError } from '@shared/normalizeError.js';
-import { Users, Wallet, ArrowRightLeft, CheckCircle2, XCircle, FileSearch } from 'lucide-react';
+import { Users, Wallet, ArrowRightLeft, CheckCircle2, XCircle, FileSearch, RefreshCw } from 'lucide-react';
 
 export default function Dashboard() {
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  // retryCount is incremented by the retry button to trigger a re-fetch via
-  // the effect dependency. Safe: incrementing doesn't mutate data.
+  // retryCount drives a re-fetch via the effect dependency when the retry
+  // button is clicked after a failed load.
   const [retryCount, setRetryCount] = useState(0);
 
   useEffect(() => {
@@ -22,7 +22,7 @@ export default function Dashboard() {
         const res = await getAdminStats();
         if (active) setStats(res.data);
       } catch (err) {
-        // normalizeError ensures raw error.message / stack never reaches the UI
+        // normalizeError keeps raw error.message / stack out of the UI
         if (active) setError(normalizeError(err));
       } finally {
         if (active) setLoading(false);
@@ -32,10 +32,27 @@ export default function Dashboard() {
     return () => { active = false; };
   }, [retryCount]);
 
-  const handleRetry = useCallback(() => setRetryCount((c) => c + 1), []);
+  const handleRetry = () => setRetryCount((c) => c + 1);
 
   if (loading) return <div className="flex justify-center py-20"><Loader size={32} /></div>;
-  if (error) return <div className="text-red-500 p-4 bg-red-50 rounded-lg" role="alert">{error}</div>;
+  if (error) {
+    return (
+      <div
+        className="p-4 bg-red-50 text-red-600 border border-red-200 rounded shadow-sm"
+        role="alert"
+      >
+        <p className="font-medium">{error.userMessage || 'Something went wrong. Please try again.'}</p>
+        <button
+          type="button"
+          onClick={handleRetry}
+          className="mt-3 inline-flex items-center gap-2 rounded-md bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2"
+        >
+          <RefreshCw className="h-4 w-4" aria-hidden="true" />
+          Try again
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div className="min-w-0">

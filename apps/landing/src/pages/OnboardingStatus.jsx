@@ -49,7 +49,9 @@ export default function OnboardingStatus() {
   };
 
   useEffect(() => {
-    fetchStatus();
+    // Defer out of the synchronous effect body to avoid cascading re-renders.
+    const timer = setTimeout(fetchStatus, 0);
+    return () => clearTimeout(timer);
   }, []);
 
   const getStageBadge = (stage) => {

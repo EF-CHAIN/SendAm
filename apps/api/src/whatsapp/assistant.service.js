@@ -10,7 +10,6 @@ const defaultPrisma = require('../common/prisma');
 const { canonicalizePhoneNumber } = require('../utils/validators');
 const { parseConsentCommand, applyConsentKeyword, isMessageAllowed } = require('../compliance/consent.service');
 const { t, SUPPORTED_LOCALES } = require('../i18n/messages');
-const { formatDateByLocale, formatAmountByLocale } = require('../i18n/formatters');
 const { buildStandardReceipt, formatChannelReceiptMessage, recordReceiptDeliveryEvent } = require('../services/receipt.service');
 
 const NATIVE_ASSET = 'XLM';

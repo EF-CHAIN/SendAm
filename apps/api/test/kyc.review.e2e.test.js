@@ -304,8 +304,6 @@ test('KYC Review Approval and Denial E2E', async (t) => {
       },
     });
 
-    const adminId = 'admin-1';
-
     // Resubmit for review
     const resubmitted = await prisma.$transaction(async (tx) => {
       const updated = await tx.kycProfile.update({

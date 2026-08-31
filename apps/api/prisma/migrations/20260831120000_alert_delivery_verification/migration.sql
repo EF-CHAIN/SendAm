@@ -40,7 +40,7 @@ CREATE INDEX "AlertDeliveryTest_attemptedAt_idx" ON "AlertDeliveryTest"("attempt
 -- last successful end-to-end verification timestamp. A failed test updates
 -- failure fields but never clears lastSuccessfulTestAt.
 CREATE TABLE "AlertDeliveryState" (
-    "id" TEXT NOT NULL,
+    "id" TEXT NOT NULL DEFAULT 'main',
     "enabled" BOOLEAN NOT NULL DEFAULT false,
     "overallStatus" TEXT NOT NULL DEFAULT 'unknown',
     "lastSuccessfulTestAt" TIMESTAMP(3),

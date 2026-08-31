@@ -12,10 +12,6 @@ const {
   KYC_STATUS_TRANSITIONS,
   SANCTIONS_STATUS_TRANSITIONS,
   CUSTODY_STATUS_TRANSITIONS,
-  TIER_MIN,
-  TIER_MAX,
-  RISK_SCORE_MIN,
-  RISK_SCORE_MAX,
   POLICY_VERSION,
 } = require('../src/compliance/kyc.transitions');
 
@@ -282,9 +278,8 @@ describe('makerCheckerRequired', () => {
   test('returns true for sanctions unblock (blocked → cleared)', () => {
     const profile = baseProfile({ sanctionsStatus: 'blocked' });
     const { required } = makerCheckerRequired(profile, { sanctionsStatus: 'cleared' });
-    // blocked → cleared is invalid in matrix, but if it were to slip through, it should require maker-checker.
-    // Actually blocked can only go to review, so let's test blocked → review.
-    // blocked → review is the only valid transition and should NOT require maker-checker.
+    // Unblocking a sanctions-blocked profile (other than to review) is a high-impact override.
+    assert.equal(required, true);
   });
 
   test('returns false for sanctions blocked → review (the only valid path)', () => {

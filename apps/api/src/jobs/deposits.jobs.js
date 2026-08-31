@@ -184,7 +184,6 @@ const pollWallet = async (wallet, deps) => {
   let cursor = paymentCursor;
 
   // Drain pages until Horizon returns <200 records or empty.
-  // eslint-disable-next-line no-constant-condition
   while (true) {
     const { records, nextCursor } = await fetchPaymentsPage(horizon, publicKey, cursor);
 

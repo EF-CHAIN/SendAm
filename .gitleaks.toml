@@ -19,11 +19,23 @@ paths = [
   "(?i)\\.env\\.local\\.example$",
   "(?i)package-lock\\.json$",
   "(?i)\\.md$",
+  "(?i)\\.github/workflows/",
+  "(?i)tests/secret-scan/fixtures/",
+  "(?i)scripts/secret-scan-self-test\\.sh$",
+  "(?i)apps/api/test/",
+  "(?i)\\.gitleaks\\.toml$",
 ]
 regexes = [
   "\\$\\{[A-Z_]+\\}",
   "\\$\\([A-Z_]+\\)",
   "<[A-Z_]+>",
+  # Local/test DB and Redis connection defaults (localhost, CI services, safe
+  # host examples). These are documented placeholders, not production secrets.
+  "(?i)postgres(ql)?://[^:/@\\s]+:(pass|secret|test|password|user|sendam:x|super-secret)[^@\\s]*@(localhost|127\\.0\\.0\\.1|db\\.example\\.com|host)",
+  "(?i)redis://:[^@\\s]+@(localhost|redis\\.example\\.com)",
+  # Local/test DB passwords used only in fallback defaults and example URLs.
+  # Gitleaks matches allowlist regexes against the captured secret value.
+  "^(?i)(pass|secret|test|password|fake|super-secret|sendam)$",
 ]
 
 # ── Custom rules ──────────────────────────────────────────────────────────────

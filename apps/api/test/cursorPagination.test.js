@@ -4,6 +4,10 @@ const { encodeCursor, decodeCursor, cursorQuery, parseLimit, MAX_PAGE_SIZE } = r
 
 // Minimal in-memory Prisma delegate that honours the where/orderBy/take subset
 // the cursor helper emits, so we can assert real pagination behaviour.
+const eq = (a, b) => (a instanceof Date || b instanceof Date)
+  ? new Date(a).getTime() === new Date(b).getTime()
+  : a === b;
+
 const matches = (row, where) => {
   if (!where || Object.keys(where).length === 0) return true;
   return Object.entries(where).every(([key, cond]) => {
@@ -13,9 +17,6 @@ const matches = (row, where) => {
     const value = row[key];
     if (cond && typeof cond === 'object' && !Array.isArray(cond)) {
       return Object.entries(cond).every(([op, operand]) => {
-        const eq = (a, b) => (a instanceof Date || b instanceof Date)
-          ? new Date(a).getTime() === new Date(b).getTime()
-          : a === b;
         switch (op) {
           case 'equals': return eq(value, operand);
           case 'contains': return String(value).toLowerCase().includes(String(operand).toLowerCase());

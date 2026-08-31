@@ -1,6 +1,5 @@
 const logger = require('../utils/logger');
 const { response } = require('../utils/response');
-const { v4: uuidv4 } = require('uuid');
 
 const generateCaseNumber = () => {
   const prefix = 'CASE';

@@ -10,6 +10,18 @@ export const handlers = [
     return HttpResponse.json({ message: 'Invalid credentials' }, { status: 401 });
   }),
 
+  // Current admin identity + permissions — required by the sidebar to render
+  // its authorized links.
+  http.get('*/api/admin/me', () => {
+    return HttpResponse.json({
+      data: {
+        id: 'a11y-admin',
+        email: 'operator@example.com',
+        permissions: ['admin.read', 'compliance.read', 'operations.write'],
+      },
+    });
+  }),
+
   // Dashboard stats
   http.get('*/api/admin/stats', () => {
     return HttpResponse.json({

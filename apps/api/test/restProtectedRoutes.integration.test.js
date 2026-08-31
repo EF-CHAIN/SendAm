@@ -123,13 +123,24 @@ test('all customer operations use only the authenticated owner despite caller ph
 
 test('Smile ID callback route reaches verification and rejects an invalid signature', async () => {
   await withServer(async (base) => {
+    // The route enforces the smileid.callback payload schema before handing
+    // off to signature verification, so include the full set of required
+    // fields.
+    const baseBody = {
+      ResultCode: '1020',
+      ResultText: 'Success',
+      SmileJobID: '0000000001',
+      PartnerParams: { job_id: 'job-1', user_id: 'user-1' },
+      signature: 'valid',
+      timestamp: new Date().toISOString(),
+    };
     const valid = await request(base, '/api/compliance/kyc/callback/smileid', {
-      method: 'POST', body: { signature: 'valid', ResultCode: '1020' },
+      method: 'POST', body: baseBody,
     });
     assert.equal(valid.status, 200);
     assert.equal(calls.callback.ResultCode, '1020');
     const invalid = await request(base, '/api/compliance/kyc/callback/smileid', {
-      method: 'POST', body: { signature: 'invalid' },
+      method: 'POST', body: { ...baseBody, signature: 'invalid' },
     });
     assert.equal(invalid.status, 401);
   });

@@ -60,7 +60,7 @@ info "Created seeded fake secrets in $TMPDIR/fake-secrets.env"
 
 info "Running gitleaks detect..."
 set +e
-OUTPUT="$(gitleaks detect --source="$TMPDIR" --no-banner --redact 2>&1)"
+OUTPUT="$(gitleaks detect --source="$TMPDIR" --no-banner --redact --no-git 2>&1)"
 EXIT_CODE=$?
 set -e
 
