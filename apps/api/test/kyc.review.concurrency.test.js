@@ -107,7 +107,7 @@ const makeReq = (overrides = {}) => ({
   body: {},
   admin: { id: 'admin_1', role: 'compliance_officer' },
   ip: '127.0.0.1',
-  get: (h) => 'test-agent',
+  get: (_h) => 'test-agent',
   ...overrides,
 });
 

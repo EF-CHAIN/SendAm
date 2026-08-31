@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 
 process.env.ENCRYPTION_KEY = process.env.ENCRYPTION_KEY || 'a'.repeat(64);
 
-const { t, catalog, SUPPORTED_LOCALES } = require('../src/i18n/messages');
+const { t } = require('../src/i18n/messages');
 const { formatDateByLocale, formatAmountByLocale } = require('../src/i18n/formatters');
 
 test('t returns correct translations and replaces template params', () => {
