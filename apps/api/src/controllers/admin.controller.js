@@ -12,7 +12,6 @@ const { listStuckPayments, operatorResolveStuckPayment, listLedgerDiscrepancies 
 const { getWalletActivitySummary } = require('../services/wallet-activity-summary.service');
 const walletService = require('../wallet/wallet.service');
 const { getRotationStatus, rotateSecret: performSecretRotation, evaluateRotationHealth, SECRET_CATEGORIES } = require('../services/secret-rotation.service');
-const { writeAuditLog } = require('../common/audit.service');
 const { userDto, walletDto, transactionDto, kycProfileDto } = require('../admin/adminDtos');
 
 // Build an inclusive [gte, lte] range from `from`/`to` query params. Tolerant of
@@ -272,13 +271,12 @@ const getStats = async (req, res, next) => {
 
 const getUsers = async (req, res, next) => {
   try {
-    const { page, limit, skip } = parsePagination(req.query);
-    const [users, total] = await Promise.all([
-      prisma.user.findMany({
-        select: {
-          id: true, phoneNumber: true, whatsappName: true, kycTier: true, createdAt: true,
-          wallets: { select: { chain: true, publicKey: true, network: true, funded: true } },
-        },
+    const limit = parseLimit(req.query.limit);
+    const where = userWhere(req.query);
+    const [result, total] = await Promise.all([
+      cursorQuery({
+        delegate: prisma.user,
+        where,
         orderBy: { createdAt: 'desc' },
         sortField: 'createdAt',
         include: { wallets: { select: { chain: true, publicKey: true, network: true, createdAt: true } } },
@@ -288,21 +286,19 @@ const getUsers = async (req, res, next) => {
       }),
       prisma.user.count({ where }),
     ]);
-    sendPaginated(res, withIdAliases(users.map(userDto)), { page, limit, total });
-  } catch (error) {
-    next(error);
-  }
+    const items = withIdAliases(result.items.map((user) => ({ ...user, pinHash: undefined })));
+    sendCursorPaginated(res, items, { limit, nextCursor: result.nextCursor, prevCursor: result.prevCursor, total });
+  } catch (error) { return next(error); }
 };
 
 const getWallets = async (req, res, next) => {
   try {
-    const { page, limit, skip } = parsePagination(req.query);
-    const [wallets, total] = await Promise.all([
-      prisma.wallet.findMany({
-        select: {
-          id: true, chain: true, publicKey: true, funded: true, network: true, createdAt: true,
-          user: { select: { id: true, phoneNumber: true } },
-        },
+    const limit = parseLimit(req.query.limit);
+    const where = walletWhere(req.query);
+    const [result, total] = await Promise.all([
+      cursorQuery({
+        delegate: prisma.wallet,
+        where,
         orderBy: { createdAt: 'desc' },
         sortField: 'createdAt',
         include: { user: { select: { phoneNumber: true, whatsappName: true } } },
@@ -312,7 +308,20 @@ const getWallets = async (req, res, next) => {
       }),
       prisma.wallet.count({ where }),
     ]);
-    sendPaginated(res, withIdAliases(wallets.map(walletDto)), { page, limit, total });
+    const items = withIdAliases(result.items.map((wallet) => ({ ...wallet, encryptedSecretKey: undefined, userId: wallet.user })));
+    sendCursorPaginated(res, items, { limit, nextCursor: result.nextCursor, prevCursor: result.prevCursor, total });
+  } catch (error) { return next(error); }
+};
+
+const getTransaction = async (req, res, next) => {
+  try {
+    const tx = await prisma.transaction.findUnique({
+      where: { id: req.params.id },
+      include: { user: { select: { phoneNumber: true } } },
+    });
+    if (!tx) return sendError(res, 'Transaction not found', 404);
+    const item = withIdAliases([{ ...tx, userId: tx.user }])[0];
+    return sendSuccess(res, item);
   } catch (error) {
     next(error);
   }
@@ -320,15 +329,56 @@ const getWallets = async (req, res, next) => {
 
 const getTransactions = async (req, res, next) => {
   try {
-    const { page, limit, skip } = parsePagination(req.query);
-    const [transactions, total] = await Promise.all([
-      prisma.transaction.findMany({
-        select: {
-          id: true, type: true, amount: true, asset: true, rail: true, routeType: true,
-          status: true, destination: true, recipientPhoneNumber: true, txHash: true,
-          createdAt: true, updatedAt: true,
-          user: { select: { id: true, phoneNumber: true } },
-        },
+    const limit = parseLimit(req.query.limit);
+    const where = transactionWhere(req.query);
+    const [result, total] = await Promise.all([
+      cursorQuery({
+        delegate: prisma.transaction,
+        where,
+        orderBy: { createdAt: 'desc' },
+        sortField: 'createdAt',
+        include: { user: { select: { phoneNumber: true } } },
+        limit,
+        after: req.query.after,
+        before: req.query.before,
+      }),
+      prisma.transaction.count({ where }),
+    ]);
+    const items = withIdAliases(result.items.map((transaction) => ({ ...transaction, userId: transaction.user })));
+    sendCursorPaginated(res, items, { limit, nextCursor: result.nextCursor, prevCursor: result.prevCursor, total });
+  } catch (error) { return next(error); }
+};
+
+const getKycProfiles = async (req, res, next) => {
+  try {
+    const limit = parseLimit(req.query.limit);
+    const where = kycWhere(req.query);
+    const [result, total] = await Promise.all([
+      cursorQuery({
+        delegate: prisma.kycProfile,
+        where,
+        orderBy: { updatedAt: 'desc' },
+        sortField: 'updatedAt',
+        include: { user: { select: { phoneNumber: true, whatsappName: true } } },
+        limit,
+        after: req.query.after,
+        before: req.query.before,
+      }),
+      prisma.kycProfile.count({ where }),
+    ]);
+    const items = withIdAliases(result.items.map((profile) => ({ ...profile, userId: profile.user })));
+    sendCursorPaginated(res, items, { limit, nextCursor: result.nextCursor, prevCursor: result.prevCursor, total });
+  } catch (error) { return next(error); }
+};
+
+const getAuditLogs = async (req, res, next) => {
+  try {
+    const limit = parseLimit(req.query.limit);
+    const where = auditWhere(req.query);
+    const [result, total] = await Promise.all([
+      cursorQuery({
+        delegate: prisma.auditLog,
+        where,
         orderBy: { createdAt: 'desc' },
         sortField: 'createdAt',
         limit,
@@ -337,10 +387,9 @@ const getTransactions = async (req, res, next) => {
       }),
       prisma.auditLog.count({ where }),
     ]);
-    sendPaginated(res, withIdAliases(transactions.map(transactionDto)), { page, limit, total });
-  } catch (error) {
-    next(error);
-  }
+    const items = withIdAliases(result.items);
+    sendCursorPaginated(res, items, { limit, nextCursor: result.nextCursor, prevCursor: result.prevCursor, total });
+  } catch (error) { return next(error); }
 };
 
 // Sensitive exports: authorized (route-level requireAdmin), bounded so a single
@@ -349,19 +398,36 @@ const exportKyc = async (req, res, next) => {
   try {
     const where = kycWhere(req.query);
     const profiles = await prisma.kycProfile.findMany({
-      select: {
-        id: true, tier: true, status: true, country: true, riskScore: true,
-        sanctionsStatus: true, sanctionsScreenedAt: true, custodyStatus: true,
-        custodyReviewedAt: true, lastScreenedAt: true, createdAt: true, updatedAt: true,
-        user: { select: { id: true, phoneNumber: true } },
-      },
+      where,
+      include: { user: { select: { phoneNumber: true, whatsappName: true } } },
       orderBy: { updatedAt: 'desc' },
       take: MAX_EXPORT_ROWS,
     });
-    sendSuccess(res, withIdAliases(profiles.map(kycProfileDto)));
-  } catch (error) {
-    next(error);
-  }
+    await writeAuditLog({
+      actorType: 'administrator',
+      actorId: req.admin.id,
+      action: 'admin.kyc.export',
+      entityType: 'KycProfile',
+      metadata: { filters: req.query, rows: profiles.length, capped: profiles.length >= MAX_EXPORT_ROWS },
+      req,
+    });
+    const csv = toCsv(
+      profiles.map((p) => ({ ...p, phoneNumber: p.user?.phoneNumber, whatsappName: p.user?.whatsappName })),
+      [
+        { header: 'id', accessor: 'id' },
+        { header: 'phoneNumber', accessor: 'phoneNumber' },
+        { header: 'provider', accessor: 'provider' },
+        { header: 'tier', accessor: 'tier' },
+        { header: 'status', accessor: 'status' },
+        { header: 'country', accessor: 'country' },
+        { header: 'riskScore', accessor: 'riskScore' },
+        { header: 'updatedAt', accessor: (r) => r.updatedAt?.toISOString?.() || r.updatedAt },
+      ]
+    );
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename="kyc-export.csv"');
+    return res.status(200).send(csv);
+  } catch (error) { return next(error); }
 };
 
 // Full identifiers are available only through an explicit, permission-gated,
@@ -843,6 +909,104 @@ const getUserStatement = async (req, res, next) => {
   }
 };
 
+const getKycExpiryStatus = async (req, res, next) => {
+  try {
+    const { getVerificationExpiryStatus } = require('../compliance/verification.expiry');
+    const profile = await prisma.kycProfile.findUnique({
+      where: { id: req.params.id },
+    });
+    if (!profile) return sendError(res, 'KYC profile not found', 404);
+    return sendSuccess(res, getVerificationExpiryStatus(profile));
+  } catch (error) {
+    next(error);
+  }
+};
+
+const getComplianceExpirySummary = async (req, res, next) => {
+  try {
+    const { isSanctionExpired, isKycStale, isEscalationDue } = require('../compliance/verification.expiry');
+    const profiles = await prisma.kycProfile.findMany({
+      where: { status: { in: ['approved', 'not_started'] } },
+      select: {
+        id: true,
+        status: true,
+        updatedAt: true,
+        lastScreenedAt: true,
+        sanctionsStatus: true,
+        metadata: true,
+        user: { select: { anonymizedAt: true } },
+      },
+    });
+
+    const active = profiles.filter((p) => !p.user?.anonymizedAt);
+    const summary = {
+      total: active.length,
+      sanctionExpired: active.filter(isSanctionExpired).length,
+      kycStale: active.filter(isKycStale).length,
+      escalationDue: active.filter(isEscalationDue).length,
+      missingVerification: active.filter((p) => p.status === 'not_started').length,
+    };
+
+    return sendSuccess(res, summary);
+  } catch (error) {
+    next(error);
+  }
+};
+
+const {
+  listDeadLetterJobs,
+  getDeadLetterJob,
+  replayDeadLetterJob: replayDlqJob,
+  discardDeadLetterJob: discardDlqJob,
+} = require('../queues/dlq.service');
+
+const getDeadLetterJobs = async (req, res, next) => {
+  try {
+    const { status, limit } = req.query;
+    const jobs = await listDeadLetterJobs({
+      status,
+      limit: limit ? Number(limit) : 50,
+    });
+    return sendSuccess(res, { jobs });
+  } catch (error) {
+    next(error);
+  }
+};
+
+const getDeadLetterJobById = async (req, res, next) => {
+  try {
+    const job = await getDeadLetterJob(req.params.id);
+    if (!job) return sendError(res, 'Dead letter job not found', 404);
+    return sendSuccess(res, { job });
+  } catch (error) {
+    next(error);
+  }
+};
+
+const replayDeadLetterJobHandler = async (req, res, next) => {
+  try {
+    const adminId = req.admin?.id || 'system';
+    const result = await replayDlqJob(req.params.id, {
+      actorId: adminId,
+    });
+    return sendSuccess(res, result, 'Dead letter job replay processed');
+  } catch (error) {
+    next(error);
+  }
+};
+
+const discardDeadLetterJobHandler = async (req, res, next) => {
+  try {
+    const adminId = req.admin?.id || 'system';
+    const result = await discardDlqJob(req.params.id, {
+      actorId: adminId,
+    });
+    return sendSuccess(res, result, 'Dead letter job discarded');
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   login,
   acceptInvite,
@@ -889,4 +1053,13 @@ module.exports = {
   reactivateUserAccount,
   getUserAccountStatusHistory,
   getUserStatement,
+  getKycExpiryStatus,
+  getComplianceExpirySummary,
+  getDeadLetterJobs,
+  getDeadLetterJobById,
+  replayDeadLetterJob: replayDeadLetterJobHandler,
+  discardDeadLetterJob: discardDeadLetterJobHandler,
 };
+
+
+

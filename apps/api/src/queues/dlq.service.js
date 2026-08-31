@@ -252,6 +252,20 @@ async function replayDeadLetterJob(dlqJobId, options = {}) {
 }
 
 /**
+ * Discard/archive a DLQ job.
+ */
+async function discardDeadLetterJob(dlqJobId, options = {}) {
+  const record = await getDeadLetterJob(dlqJobId);
+  if (!record) {
+    throw new Error(`DLQ record not found: ${dlqJobId}`);
+  }
+  record.status = 'discarded';
+  record.discardedAt = new Date().toISOString();
+  await saveDlqRecord(record);
+  return { discarded: true, record };
+}
+
+/**
  * Clear DLQ state (testing helper)
  */
 async function clearDlq() {
@@ -274,6 +288,8 @@ module.exports = {
   listDeadLetterJobs,
   getDeadLetterJob,
   replayDeadLetterJob,
+  discardDeadLetterJob,
   clearDlq,
   sanitizePayload,
 };
+

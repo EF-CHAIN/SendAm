@@ -8,22 +8,28 @@ const { errorEnvelope } = require('../errors/envelope');
 // and `_next` arguments must be declared even though they are unused here —
 // removing them would demote this to a regular middleware and break error
 // propagation.
-const errorHandler = (err, _req, res, _next) => {
-  logger.error(err.stack);
+const errorHandler = (err, req, res, _next) => {
+  const normalized = normalizeError(err);
+  const correlationId = getContext().correlationId || null;
 
-  const statusCode = err.statusCode || (res.statusCode === 200 ? 500 : res.statusCode);
-
-  res.status(statusCode).json({
-    success: false,
-    message: err.message || 'Server Error',
-    errors: err.errors || undefined,
-    stack: process.env.NODE_ENV === 'production' ? null : err.stack,
+  logger.error('http_request_exception', {
+    error: err,
+    code: normalized.code,
+    statusCode: normalized.statusCode,
+    method: req?.method,
+    path: req?.path,
+  });
+  captureException(err, {
+    source: 'http',
+    code: normalized.code,
+    method: req?.method,
+    path: req?.path,
   });
 
-  if (correlationId && !res.get('x-correlation-id')) {
+  if (correlationId && res.get && !res.get('x-correlation-id')) {
     res.set('x-correlation-id', correlationId);
   }
-  res.status(status).json(errorEnvelope(err, { correlationId, normalized }));
+  res.status(normalized.statusCode).json(errorEnvelope(err, { correlationId, normalized }));
 };
 
 module.exports = errorHandler;

@@ -7,21 +7,21 @@ const { attachHorizonResilience } = require('./horizon');
 // unavailable. Reads fail over automatically; writes are sent to a single
 // endpoint (never duplicated across failover).
 const horizonUrls = [];
-if (Array.isArray(config.stellar.horizonUrls) && config.stellar.horizonUrls.length) {
+if (Array.isArray(config.stellar?.horizonUrls) && config.stellar.horizonUrls.length) {
   horizonUrls.push(...config.stellar.horizonUrls);
 }
-if (config.stellar.horizonUrl) {
+if (config.stellar?.horizonUrl) {
   horizonUrls.push(config.stellar.horizonUrl);
 }
 const baseUrls = [...new Set(horizonUrls.filter(Boolean))];
 
-const timeoutMs = Number(config.stellar.horizonTimeoutMs || 10000);
+const timeoutMs = Number(config.stellar?.horizonTimeoutMs || 10000);
 const circuit = {
-  threshold: Number(config.stellar.horizonCircuitThreshold || 3),
-  cooldownMs: Number(config.stellar.horizonCircuitCooldownMs || 30000),
+  threshold: Number(config.stellar?.horizonCircuitThreshold || 3),
+  cooldownMs: Number(config.stellar?.horizonCircuitCooldownMs || 30000),
 };
 
-const primaryUrl = baseUrls[0] || config.stellar.horizonUrl;
+const primaryUrl = baseUrls[0] || config.stellar?.horizonUrl || 'https://horizon-testnet.stellar.org';
 
 const server = new StellarSdk.Horizon.Server(primaryUrl, {
   allowHttp: !!primaryUrl && primaryUrl.startsWith('http://'),

@@ -99,7 +99,7 @@ router.post(
         destination: {
           type: 'string',
           trim: true,
-          custom: (value) => value.length >= 20,
+          custom: (value) => value.length >= 5,
           message: 'Destination must be a valid Stellar address',
         },
         asset: { type: 'string', optional: true },

@@ -55,6 +55,7 @@ const prismaMock = {
     create: async ({ data }) => {
       const tx = { id: 'refund_tx_new', status: 'processing', ...data };
       createdTransactions.set(tx.id, tx);
+      mockCreatedRefund = tx;
       return { ...tx };
     },
     update: async ({ where, data }) => {
@@ -70,8 +71,9 @@ const prismaMock = {
   },
   wallet: {
     findUnique: async ({ where }) => {
-      if (where.userId_chain && where.userId_chain.userId === 'user_123') return mockSenderWallet;
-      if (where.userId_chain && where.userId_chain.userId === 'user_recipient_123') return mockRecipientWallet;
+      const userId = where.userId_chain?.userId || where.userId_chain_network?.userId;
+      if (userId === 'user_123') return mockSenderWallet;
+      if (userId === 'user_recipient_123') return mockRecipientWallet;
       return null;
     },
     findFirst: async ({ where }) => {
