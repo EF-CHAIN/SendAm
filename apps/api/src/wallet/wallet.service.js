@@ -1,13 +1,14 @@
 const stellarAdapter = require('./stellar.adapter');
 const { encrypt, decrypt } = require('../services/crypto.service');
+const { writeAuditLog } = require('../common/audit.service');
+const prisma = require('../common/prisma');
 const { withIdAlias, withIdAliases } = require('../common/records');
 const logger = require('../utils/logger');
 const { canonicalizePhoneNumber } = require('../utils/validators');
 const { CATALOG } = require('../errors/catalog');
 const config = require('../config/env');
-
-const getPrisma = () => require('../common/prisma');
-const getWriteAuditLog = () => require('../common/audit.service').writeAuditLog;
+const { assertAccountActive } = require('../compliance/account.service');
+const { appendEvent, EVENT_TYPES } = require('../common/event.service');
 
 const CHAIN = 'stellar';
 
@@ -220,9 +221,6 @@ const recoverWallet = async ({ walletId, adminId }) => {
 // secret key is encrypted (crypto.service.js) before it ever touches the
 // database. Callers never see a plaintext secret key.
 const createOrGetWallet = async ({ user, phoneNumber }) => {
-  const prisma = getPrisma();
-  const writeAuditLog = getWriteAuditLog();
-
   let owner = user;
   if (!owner) {
     const canonicalPhone = canonicalizePhoneNumber(phoneNumber);
@@ -305,8 +303,9 @@ const ensureWalletsForUser = async ({ user }) => {
 
 const getWalletsByPhoneNumber = async (phoneNumber) => {
   const canonicalPhone = canonicalizePhoneNumber(phoneNumber);
+  const network = activeNetwork();
   const wallets = await prisma.wallet.findMany({
-    where: { phoneNumber: canonicalPhone, chain: CHAIN, network: activeNetwork() },
+    where: { phoneNumber: canonicalPhone, chain: CHAIN, network },
   });
   return withIdAliases(wallets);
 };
@@ -319,18 +318,11 @@ const getWalletByUserAndChain = async ({ userId, chain = CHAIN, network = null }
 };
 
 const fundWallet = async ({ wallet }) => {
-  const prisma = getPrisma();
-  const result = await stellarAdapter.fundTestnetAccount(wallet.publicKey);
-  if (result.funded) {
-    // Retry the (idempotent) trustline so a wallet that missed it at creation
-    // — e.g. funding succeeded but the trustline call failed — recovers here.
-    await ensureUsdcTrustline({
-      secretKey: decrypt(wallet.encryptedSecretKey),
-      publicKey: wallet.publicKey,
-    });
-    return { wallet: withIdAlias(await prisma.wallet.update({ where: { id: wallet.id }, data: { funded: true } })), result };
-  }
-  return { wallet: withIdAlias(wallet), result };
+  const provisioned = await provisionWallet(wallet.id);
+  return {
+    wallet: withIdAlias(provisioned),
+    result: { funded: provisioned.funded, fundingState: provisioned.fundingState, trustlineState: provisioned.trustlineState },
+  };
 };
 
 const balance = async ({ wallet }) => {
@@ -344,7 +336,6 @@ const balance = async ({ wallet }) => {
 // one wallet sets error and leaves assets empty rather than blanking the whole
 // reply. Legacy non-Stellar rows are excluded by query.
 const balancesForUser = async ({ userId, phoneNumber }) => {
-  const prisma = getPrisma();
   const network = activeNetwork();
   const wallets = userId
     ? await prisma.wallet.findMany({ where: { userId, chain: CHAIN, network } })
@@ -370,7 +361,6 @@ const submitPayment = async ({ wallet, destination, amount, asset, memo, memoTyp
 };
 
 const transactionHistory = async ({ userId }) => {
-  const prisma = getPrisma();
   const history = await prisma.transaction.findMany({
     where: { userId },
     orderBy: { createdAt: 'desc' },

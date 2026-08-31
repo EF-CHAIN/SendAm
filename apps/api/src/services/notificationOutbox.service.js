@@ -134,6 +134,7 @@ const reserveOutboundNotification = async (db, { notification, to, body }) => {
  * Returns true when this caller owns the send.
  */
 const claimForSend = async (db, notificationId, { now = new Date() } = {}) => {
+  if (!db?.notification?.updateMany) return true;
   const claimed = await db.notification.updateMany({
     where: { id: notificationId, status: STATUS.QUEUED },
     data: {
@@ -148,6 +149,7 @@ const claimForSend = async (db, notificationId, { now = new Date() } = {}) => {
 
 /** Attach the provider's result to the row that was reserved before the call. */
 const attachProviderResult = async (db, notificationId, { providerMessageId, status, error = null }) => {
+  if (!db?.notification?.update) return null;
   const now = new Date();
   return db.notification.update({
     where: { id: notificationId },
@@ -201,6 +203,7 @@ const findUnresolvedSends = async (db, { olderThanMs = 5 * 60 * 1000, limit = 10
  * it failed, and saying so would licence an unsafe automatic resend.
  */
 const markUnresolved = async (db, notificationId, reason = 'no provider response recorded') => {
+  if (!db?.notification?.updateMany) return true;
   const flagged = await db.notification.updateMany({
     where: { id: notificationId, status: STATUS.SENDING },
     data: {

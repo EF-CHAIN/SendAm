@@ -411,23 +411,11 @@ const getFriendlyPaymentError = (error) => {
   const codes = error?.response?.data?.extras?.result_codes;
 
   if (codes?.operations?.includes("op_no_trust")) {
-    return "The recipient can't receive this asset yet. They need to open a trustline first.";
+    return "The recipient can't receive USDC yet.";
   }
 
   if (codes?.operations?.includes("op_underfunded")) {
-    return "Insufficient balance for this payment. The sender needs more XLM to cover the transfer and fees.";
-  }
-
-  if (codes?.operations?.includes("op_line_full")) {
-    return "The sender has too many trustlines. Remove an unused trustline and retry.";
-  }
-
-  if (codes?.operations?.includes("op_src_no_trust")) {
-    return "The sender doesn't trust the asset they're trying to send. Open a trustline for it first.";
-  }
-
-  if (codes?.operations?.includes("op_src_no_authorization")) {
-    return "The sender's trustline for this asset is not authorized. Contact support.";
+    return "Insufficient balance for this payment.";
   }
 
   return null;

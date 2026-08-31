@@ -60,7 +60,7 @@ test('submitPayment returns a friendly error for op_no_trust', async () => {
       asset: 'XLM',
     }),
     {
-      message: "The recipient can't receive this asset yet. They need to open a trustline first.",
+      message: "The recipient can't receive USDC yet.",
     },
   );
 });
@@ -94,7 +94,7 @@ test('submitPayment returns a friendly error for op_underfunded', async () => {
       asset: 'XLM',
     }),
     {
-      message: 'Insufficient balance for this payment. The sender needs more XLM to cover the transfer and fees.',
+      message: 'Insufficient balance for this payment.',
     },
   );
 });

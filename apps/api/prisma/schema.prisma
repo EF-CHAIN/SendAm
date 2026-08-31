@@ -7,20 +7,25 @@ datasource db {
 }
 
 model User {
-  id           String    @id @default(cuid())
-  phoneNumber  String    @unique
-  whatsappName String?
-  kycTier      Int       @default(0)
-  riskScore    Int       @default(0)
-  pinHash            String?
-  pinSetAt           DateTime?
-  pinFailedAttempts  Int       @default(0)
-  pinLockedUntil     DateTime?
-  pendingSend        Json?
-  welcomeSentAt      DateTime?
-  contactsJson       Json?
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
+  id                  String    @id @default(cuid())
+  phoneNumber         String    @unique
+  whatsappName        String?
+  kycTier             Int       @default(0)
+  riskScore           Int       @default(0)
+  pinHash             String?
+  pinSetAt            DateTime?
+  pinFailedAttempts   Int       @default(0)
+  pinLockedUntil      DateTime?
+  pendingSend         Json?
+  confirmationVersion Int       @default(0)
+  welcomeSentAt       DateTime?
+  contactsJson        Json?
+  deletedAt           DateTime?
+  deletionStatus      String?
+  anonymizedAt        DateTime?
+  legalHold           Boolean?  @default(false)
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
 
   wallets       Wallet[]
   aliases       Alias[]
@@ -33,14 +38,16 @@ model User {
   restSessions  RestSession[]
   supportCases  SupportCase[]
 
-  privacyRequests PrivacyRequest[]
-  legalHolds     LegalHold[]
-  anonymizedAt   DateTime?
-  deactivatedAt  DateTime?   // set when account is deactivated (#332)
+  privacyRequests    PrivacyRequest[]
+  legalHolds         LegalHold[]
+  deactivatedAt      DateTime? // set when account is deactivated (#332)
   deactivationReason String? // last deactivation reason code
 
-  accountStatusRecords AccountStatusRecord[]
+  accountStatusRecords    AccountStatusRecord[]
   messagingConsentRecords MessagingConsentRecord[]
+  paymentIdempotencies    PaymentIdempotency[]
+  paymentConfirmations    PaymentConfirmation[]
+  userErasures            UserErasure[]
 
   @@index([anonymizedAt])
   @@index([createdAt, id])
@@ -153,10 +160,12 @@ model Transaction {
   createdAt             DateTime @default(now())
   updatedAt             DateTime @updatedAt
 
-  user  User   @relation(fields: [userId], references: [id], onDelete: Restrict)
-  quote Quote? @relation(fields: [quoteId], references: [id])
-  idempotencyRequest PaymentIdempotency?
-  confirmation PaymentConfirmation?
+  user                      User                       @relation(fields: [userId], references: [id], onDelete: Restrict)
+  quote                     Quote?                     @relation(fields: [quoteId], references: [id])
+  idempotencyRequest        PaymentIdempotency?
+  confirmation              PaymentConfirmation?
+  journalEntries            JournalEntry[]
+  reconciliationCheckpoints ReconciliationCheckpoint[]
 
   @@index([userId, createdAt])
   @@index([status])
@@ -202,10 +211,10 @@ model LedgerPosting {
   id             String   @id @default(cuid())
   journalEntryId String
   accountId      String
-  asset           String
+  asset          String
   /// Signed canonical decimal string. The sum of postings per journal entry and asset must be zero.
-  amount          String
-  createdAt       DateTime @default(now())
+  amount         String
+  createdAt      DateTime @default(now())
 
   journalEntry JournalEntry  @relation(fields: [journalEntryId], references: [id], onDelete: Restrict)
   account      LedgerAccount @relation(fields: [accountId], references: [id], onDelete: Restrict)
@@ -216,19 +225,19 @@ model LedgerPosting {
 }
 
 model PaymentIdempotency {
-  id             String   @id @default(cuid())
-  userId         String
-  operation      String
-  key            String
-  fingerprint    String
-  state          String   @default("processing")
-  response       Json?
+  id                    String   @id @default(cuid())
+  userId                String
+  operation             String
+  key                   String
+  fingerprint           String
+  state                 String   @default("processing")
+  response              Json?
   reservedTransactionId String   @unique
-  transactionId  String?  @unique
-  leaseExpiresAt DateTime
-  expiresAt      DateTime
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  transactionId         String?  @unique
+  leaseExpiresAt        DateTime
+  expiresAt             DateTime
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
 
   user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
   transaction Transaction? @relation(fields: [transactionId], references: [id], onDelete: SetNull)
@@ -239,9 +248,9 @@ model PaymentIdempotency {
 }
 
 model PaymentConfirmation {
-  id             String   @id @default(cuid())
+  id             String    @id @default(cuid())
   userId         String
-  nonce          String   @unique
+  nonce          String    @unique
   reference      String
   version        Int
   summaryHash    String
@@ -250,13 +259,13 @@ model PaymentConfirmation {
   destination    String
   recipientLabel String?
   routeType      String
-  state          String   @default("pending")
+  state          String    @default("pending")
   expiresAt      DateTime
   authorizedAt   DateTime?
   cancelledAt    DateTime?
-  transactionId  String?  @unique
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  transactionId  String?   @unique
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
 
   user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
   transaction Transaction? @relation(fields: [transactionId], references: [id], onDelete: SetNull)
@@ -298,25 +307,26 @@ model Alias {
 }
 
 model KycProfile {
-  id                String    @id @default(cuid())
-  userId            String    @unique
-  provider          String    @default("smileid")
-  providerReference String?
-  tier              Int       @default(0)
-  status            String    @default("not_started")
-  country           String?
-  riskScore         Int       @default(0)
-  sanctionsStatus   String    @default("not_screened")
+  id                  String    @id @default(cuid())
+  userId              String    @unique
+  provider            String    @default("smileid")
+  providerReference   String?
+  tier                Int       @default(0)
+  status              String    @default("not_started")
+  country             String?
+  riskScore           Int       @default(0)
+  sanctionsStatus     String    @default("not_screened")
   sanctionsScreenedAt DateTime?
-  custodyStatus     String    @default("not_reviewed")
-  custodyReviewedAt DateTime?
-  deniedReason      String?
-  lastScreenedAt    DateTime?
-  metadata          Json      @default("{}")
-  createdAt         DateTime  @default(now())
-  updatedAt         DateTime  @updatedAt
+  custodyStatus       String    @default("not_reviewed")
+  custodyReviewedAt   DateTime?
+  deniedReason        String?
+  lastScreenedAt      DateTime?
+  metadata            Json      @default("{}")
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
 
-  user User @relation(fields: [userId], references: [id], onDelete: Restrict)
+  user                      User                       @relation(fields: [userId], references: [id], onDelete: Restrict)
+  sanctionsScreeningResults SanctionsScreeningResult[]
 
   @@index([status])
   @@index([sanctionsStatus])
@@ -328,20 +338,20 @@ model KycProfile {
 // Auditable sanctions/PEP screening results per subject (customer, beneficial owner, recipient)
 // Links to KycProfile for traceability and periodic re-screening workflows.
 model SanctionsScreeningResult {
-  id            String   @id @default(cuid())
+  id            String    @id @default(cuid())
   profileId     String
-  subjectId     String   // e.g., "customer:userId", "recipient:phoneNumber"
-  subjectType   String   // "customer" | "beneficial_owner" | "recipient"
-  provider      String   // screening provider name (e.g., "static", "complyadvantage")
-  listVersion   String   // provider list version/date
-  status        String   // "cleared" | "review" | "blocked" | "error"
-  reason        String   // human-readable reason for the status
-  matches       Json     @default("[]") // structured match evidence from provider
-  screenedAt    DateTime @default(now())
-  decisionOwner String?  // who resolved a "review" case (null = pending)
+  subjectId     String // e.g., "customer:userId", "recipient:phoneNumber"
+  subjectType   String // "customer" | "beneficial_owner" | "recipient"
+  provider      String // screening provider name (e.g., "static", "complyadvantage")
+  listVersion   String // provider list version/date
+  status        String // "cleared" | "review" | "blocked" | "error"
+  reason        String // human-readable reason for the status
+  matches       Json      @default("[]") // structured match evidence from provider
+  screenedAt    DateTime  @default(now())
+  decisionOwner String? // who resolved a "review" case (null = pending)
   resolvedAt    DateTime?
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
 
   profile KycProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
 
@@ -368,14 +378,14 @@ model KycWebhookEvent {
 
 // Maker-checker approval record for high-impact KYC overrides.
 model KycApproval {
-  id              String   @id @default(cuid())
+  id              String    @id @default(cuid())
   profileId       String
   proposedChanges Json
   requestedBy     String
-  status          String   @default("pending") // pending | approved | rejected | superseded
+  status          String    @default("pending") // pending | approved | rejected | superseded
   approvedBy      String?
   decidedAt       DateTime?
-  createdAt       DateTime @default(now())
+  createdAt       DateTime  @default(now())
 
   @@index([profileId])
   @@index([status])
@@ -403,19 +413,19 @@ model VoiceCommand {
 }
 
 model AuditLog {
-  id         String   @id @default(cuid())
-  actorType  String   @default("system")
-  actorId    String?
-  action     String
-  entityType String?
-  entityId   String?
-  ipAddress  String?
-  userAgent  String?
-  metadata   Json     @default("{}")
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
-  previousHash String? @unique
-  hash         String? @unique
+  id           String   @id @default(cuid())
+  actorType    String   @default("system")
+  actorId      String?
+  action       String
+  entityType   String?
+  entityId     String?
+  ipAddress    String?
+  userAgent    String?
+  metadata     Json     @default("{}")
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  previousHash String?  @unique
+  hash         String?  @unique
 
   @@index([actorType])
   @@index([action])
@@ -429,26 +439,26 @@ model AuditLog {
 }
 
 model AdminUser {
-  id                String    @id @default(cuid())
-  email             String    @unique
-  name              String
-  passwordHash      String
-  roleId            String
-  partnerId         String?   // Tenant/partner isolation for multi-tenant deployments
-  disabledAt        DateTime?
+  id                 String    @id @default(cuid())
+  email              String    @unique
+  name               String
+  passwordHash       String
+  roleId             String
+  partnerId          String? // Tenant/partner isolation for multi-tenant deployments
+  disabledAt         DateTime?
   // Set when an administrator was provisioned from the legacy shared
   // ADMIN_PASSWORD bootstrap (or any other temporary credential). The account
   // is blocked from admin work until the operator rotates to a private password
   // via POST /api/admin/password. This is what makes "shared credentials
   // cannot authenticate after migration" hold for the bootstrap admin too.
   mustChangePassword Boolean   @default(false)
-  passwordChangedAt DateTime   @default(now())
-  lastLoginAt       DateTime?
-  createdAt         DateTime   @default(now())
-  updatedAt         DateTime   @updatedAt
+  passwordChangedAt  DateTime  @default(now())
+  lastLoginAt        DateTime?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
 
-  role    AdminRole    @relation(fields: [roleId], references: [id])
-  partner Partner?     @relation(fields: [partnerId], references: [id], onDelete: SetNull)
+  role        AdminRole         @relation(fields: [roleId], references: [id])
+  partner     Partner?          @relation(fields: [partnerId], references: [id], onDelete: SetNull)
   sessions    AdminSession[]
   invitations AdminInvitation[] @relation("InvitationCreator")
 
@@ -564,39 +574,39 @@ model WhatsappStatusEvent {
 }
 
 model Quote {
-  id             String   @id @default(cuid())
-  userId         String?
-  sourceCurrency String
-  targetCurrency String
+  id               String    @id @default(cuid())
+  userId           String?
+  sourceCurrency   String
+  targetCurrency   String
   /// Canonical decimal string in sourceCurrency precision.
-  sourceAmount   String
+  sourceAmount     String
   /// Canonical decimal string in targetCurrency precision.
-  targetAmount   String?
+  targetAmount     String?
   /// Decimal string exchange rate; do not use Float for quote math.
-  rate           String?
-  sourceTimestamp DateTime?
-  spread         String   @default("0")
-  feePolicyVersion String @default("standard-v1")
+  rate             String?
+  sourceTimestamp  DateTime?
+  spread           String    @default("0")
+  feePolicyVersion String    @default("standard-v1")
   /// Canonical decimal string in sourceCurrency precision.
-  fee            String?
-  provider       String?
+  fee              String?
+  provider         String?
   providerResponse Json?
-  route          String?
+  route            String?
   /// Lifecycle state of the quote. `active` quotes can be submitted; `consumed`
   /// quotes have already settled a payment; `expired`/`replaced`/`orphaned`
   /// quotes must be rejected at execution. See pricing.service.js.
-  status         String   @default("active")
+  status           String    @default("active")
   /// Client-supplied idempotency key. Reusing it returns the existing active
   /// quote instead of creating a duplicate on retry.
-  idempotencyKey String?  @unique
+  idempotencyKey   String?   @unique
   /// Set when this quote supersedes an earlier one via requote().
-  replacedById   String?
-  replacedBy     Quote?   @relation("QuoteReplacement", fields: [replacedById], references: [id])
-  replaces       Quote[]  @relation("QuoteReplacement")
-  expiresAt      DateTime
-  metadata       Json     @default("{}")
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  replacedById     String?
+  replacedBy       Quote?    @relation("QuoteReplacement", fields: [replacedById], references: [id])
+  replaces         Quote[]   @relation("QuoteReplacement")
+  expiresAt        DateTime
+  metadata         Json      @default("{}")
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
 
   user         User?         @relation(fields: [userId], references: [id], onDelete: Restrict)
   transactions Transaction[]
@@ -607,12 +617,12 @@ model Quote {
 }
 
 model AdminRole {
-  id          String   @id @default(cuid())
-  name        String   @unique
-  permissions String[] @default([])
+  id          String            @id @default(cuid())
+  name        String            @unique
+  permissions String[]          @default([])
   description String?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
   users       AdminUser[]
   invitations AdminInvitation[]
 }
@@ -652,16 +662,16 @@ model RateLimitHit {
 }
 
 model UserErasure {
-  id          String   @id @default(cuid())
-  userId      String
-  actorType   String   @default("system")
-  actorId     String?
-  reason      String
-  jurisdiction String? 
-  legalHold   Boolean  @default(false)
-  status      String   @default("completed")
-  executedAt  DateTime @default(now())
-  createdAt   DateTime @default(now())
+  id           String   @id @default(cuid())
+  userId       String
+  actorType    String   @default("system")
+  actorId      String?
+  reason       String
+  jurisdiction String?
+  legalHold    Boolean  @default(false)
+  status       String   @default("completed")
+  executedAt   DateTime @default(now())
+  createdAt    DateTime @default(now())
 
   user User @relation(fields: [userId], references: [id], onDelete: Restrict)
 
@@ -684,20 +694,20 @@ model SimMessage {
 // blocked while a legal hold is active. `result` holds a redacted summary
 // (counts + provider task statuses) — never the customer's personal data.
 model PrivacyRequest {
-  id            String   @id @default(cuid())
-  userId        String
-  type          String   // 'export' | 'erasure'
-  status        String   @default("pending") // pending|approved|denied|in_progress|completed|failed
-  reason        String?
-  requestedBy   String?  // admin id, or 'self' for customer-initiated
-  approvedBy    String?
-  approvedAt    DateTime?
-  completedAt   DateTime?
-  result        Json?
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  id          String    @id @default(cuid())
+  userId      String
+  type        String // 'export' | 'erasure'
+  status      String    @default("pending") // pending|approved|denied|in_progress|completed|failed
+  reason      String?
+  requestedBy String? // admin id, or 'self' for customer-initiated
+  approvedBy  String?
+  approvedAt  DateTime?
+  completedAt DateTime?
+  result      Json?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
 
-  user  User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user  User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
   tasks PrivacyProviderTask[]
 
   @@index([userId, status])
@@ -726,16 +736,16 @@ model LegalHold {
 // voice/media, monitoring). Failures are recorded with `lastError` and can be
 // retried via the admin retry endpoint.
 model PrivacyProviderTask {
-  id              String   @id @default(cuid())
+  id               String    @id @default(cuid())
   privacyRequestId String
-  provider        String   // smileid | whatsapp | voice | monitoring
-  status          String   @default("pending") // pending | success | skipped | failed
-  attempts        Int      @default(0)
-  lastError       String?
-  startedAt       DateTime?
-  completedAt     DateTime?
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  provider         String // smileid | whatsapp | voice | monitoring
+  status           String    @default("pending") // pending | success | skipped | failed
+  attempts         Int       @default(0)
+  lastError        String?
+  startedAt        DateTime?
+  completedAt      DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
 
   privacyRequest PrivacyRequest @relation(fields: [privacyRequestId], references: [id], onDelete: Cascade)
 
@@ -782,20 +792,20 @@ model DepositOutboxRecord {
 // Reconciliation checkpoint for transaction state alignment across wallet, ledger, and database.
 // Tracks mismatches and reconciliation jobs for operator review and manual correction.
 model ReconciliationCheckpoint {
-  id                String   @id @default(cuid())
-  transactionId     String
-  walletId          String?
-  checkpointType    String   // 'wallet_ledger' | 'ledger_database' | 'full_cycle'
-  status            String   @default("pending") // pending | in_progress | success | mismatch | failed
-  walletBalance     String?  // Decimal string of wallet balance at checkpoint
-  ledgerBalance     String?  // Decimal string of ledger balance at checkpoint
-  databaseBalance   String?  // Decimal string of database balance at checkpoint
-  mismatchDetails   Json     @default("{}")
-  evidence          Json     @default("{}") // Checkpoint evidence and audit trail
-  resolvedBy        String?  // Admin ID who resolved the mismatch
-  resolvedAt        DateTime?
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
+  id              String    @id @default(cuid())
+  transactionId   String
+  walletId        String?
+  checkpointType  String // 'wallet_ledger' | 'ledger_database' | 'full_cycle'
+  status          String    @default("pending") // pending | in_progress | success | mismatch | failed
+  walletBalance   String? // Decimal string of wallet balance at checkpoint
+  ledgerBalance   String? // Decimal string of ledger balance at checkpoint
+  databaseBalance String? // Decimal string of database balance at checkpoint
+  mismatchDetails Json      @default("{}")
+  evidence        Json      @default("{}") // Checkpoint evidence and audit trail
+  resolvedBy      String? // Admin ID who resolved the mismatch
+  resolvedAt      DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
 
   transaction Transaction @relation(fields: [transactionId], references: [id], onDelete: Cascade)
 
@@ -807,26 +817,26 @@ model ReconciliationCheckpoint {
 // Support case for tracking disputed payments, KYC issues, and error investigations.
 // Provides structured case lifecycle and full audit trail of operator actions.
 model SupportCase {
-  id                 String   @id @default(cuid())
-  caseNumber         String   @unique // Human-readable case ID (e.g., CASE-001, auto-generated)
-  userId             String?
-  status             String   @default("open") // open | in_progress | resolved | closed
-  priority           String   @default("normal") // low | normal | high | critical
-  category           String   // payment_dispute | kyc_issue | error_investigation | account_access | other
-  title              String
-  description        String
-  transactionId      String?
-  walletId           String?
-  linkedCases        String[] @default([])  // Array of related case IDs
-  assignedTo         String?  // Admin user ID
-  resolution         String?
-  resolvedBy         String?  // Admin user ID
-  resolvedAt         DateTime?
-  closedAt           DateTime?
-  createdAt          DateTime @default(now())
-  updatedAt          DateTime @updatedAt
+  id            String    @id @default(cuid())
+  caseNumber    String    @unique // Human-readable case ID (e.g., CASE-001, auto-generated)
+  userId        String?
+  status        String    @default("open") // open | in_progress | resolved | closed
+  priority      String    @default("normal") // low | normal | high | critical
+  category      String // payment_dispute | kyc_issue | error_investigation | account_access | other
+  title         String
+  description   String
+  transactionId String?
+  walletId      String?
+  linkedCases   String[]  @default([]) // Array of related case IDs
+  assignedTo    String? // Admin user ID
+  resolution    String?
+  resolvedBy    String? // Admin user ID
+  resolvedAt    DateTime?
+  closedAt      DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
 
-  user      User?                @relation(fields: [userId], references: [id], onDelete: SetNull)
+  user      User?                 @relation(fields: [userId], references: [id], onDelete: SetNull)
   comments  SupportCaseComment[]
   snapshots SupportCaseSnapshot[]
 
@@ -838,14 +848,14 @@ model SupportCase {
 
 // Immutable audit trail for support case actions and decisions.
 model SupportCaseComment {
-  id           String   @id @default(cuid())
-  caseId       String
-  authorType   String   // 'admin' | 'system' | 'customer'
-  authorId     String?
-  actionType   String   // 'comment' | 'status_change' | 'assignment' | 'escalation'
-  body         String?
-  metadata     Json     @default("{}")
-  createdAt    DateTime @default(now())
+  id         String   @id @default(cuid())
+  caseId     String
+  authorType String // 'admin' | 'system' | 'customer'
+  authorId   String?
+  actionType String // 'comment' | 'status_change' | 'assignment' | 'escalation'
+  body       String?
+  metadata   Json     @default("{}")
+  createdAt  DateTime @default(now())
 
   case SupportCase @relation(fields: [caseId], references: [id], onDelete: Cascade)
 
@@ -856,14 +866,14 @@ model SupportCaseComment {
 // Point-in-time snapshot of customer, wallet, and transaction context at case creation.
 // Enables historical audit and prevents data loss if related records are modified.
 model SupportCaseSnapshot {
-  id           String   @id @default(cuid())
-  caseId       String
-  snapshotType String   // 'creation' | 'escalation' | 'resolution'
-  userData     Json     // User profile at snapshot time
-  walletData   Json?    // Wallet state at snapshot time
+  id              String   @id @default(cuid())
+  caseId          String
+  snapshotType    String // 'creation' | 'escalation' | 'resolution'
+  userData        Json // User profile at snapshot time
+  walletData      Json? // Wallet state at snapshot time
   transactionData Json? // Transaction details at snapshot time
-  context      Json     @default("{}")
-  createdAt    DateTime @default(now())
+  context         Json     @default("{}")
+  createdAt       DateTime @default(now())
 
   case SupportCase @relation(fields: [caseId], references: [id], onDelete: Cascade)
 
@@ -880,11 +890,11 @@ model SupportCaseSnapshot {
 // `payload` holds structured event data: who triggered it, what changed, why.
 model WorkflowEvent {
   id            String   @id @default(cuid())
-  eventType     String   // e.g. payment.submitted, kyc.approved, account.deactivated
-  aggregateType String?  // Domain model name (Transaction, Wallet, User, KycProfile, …)
-  aggregateId   String?  // ID of the domain object
+  eventType     String // e.g. payment.submitted, kyc.approved, account.deactivated
+  aggregateType String? // Domain model name (Transaction, Wallet, User, KycProfile, …)
+  aggregateId   String? // ID of the domain object
   actorType     String   @default("system") // user | administrator | system
-  actorId       String?  // userId or adminId that triggered the event
+  actorId       String? // userId or adminId that triggered the event
   payload       Json     @default("{}") // structured event data
   previousHash  String?  @unique // chained reference for tamper-detection
   hash          String?  @unique // HMAC over (previousHash + event fields)
@@ -902,16 +912,16 @@ model WorkflowEvent {
 // is blocked while status = 'deactivated'. Reactivation requires admin approval
 // and writes a matching event to WorkflowEvent for the full audit trail.
 model AccountStatusRecord {
-  id          String   @id @default(cuid())
+  id          String    @id @default(cuid())
   userId      String
-  status      String   // 'active' | 'deactivated'
-  reason      String   // structured reason code
-  notes       String?  // free-text detail
-  initiatedBy String   // admin user ID or 'system'
-  approvedBy  String?  // second-approval admin user ID (for reactivation)
+  status      String // 'active' | 'deactivated'
+  reason      String // structured reason code
+  notes       String? // free-text detail
+  initiatedBy String // admin user ID or 'system'
+  approvedBy  String? // second-approval admin user ID (for reactivation)
   approvedAt  DateTime?
-  effectiveAt DateTime @default(now())
-  createdAt   DateTime @default(now())
+  effectiveAt DateTime  @default(now())
+  createdAt   DateTime  @default(now())
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -922,13 +932,13 @@ model AccountStatusRecord {
 // Multi-tenant / partner isolation marker for routing and authorization scoping.
 // Allows future onboarding of partners while enforcing data isolation server-side.
 model Partner {
-  id            String   @id @default(cuid())
-  name          String   @unique
-  externalId    String?  @unique // Partner's own identifier
-  status        String   @default("active") // active | suspended | archived
-  config        Json     @default("{}") // Partner-specific configuration
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  id         String   @id @default(cuid())
+  name       String   @unique
+  externalId String?  @unique // Partner's own identifier
+  status     String   @default("active") // active | suspended | archived
+  config     Json     @default("{}") // Partner-specific configuration
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
 
   adminUsers AdminUser[]
 

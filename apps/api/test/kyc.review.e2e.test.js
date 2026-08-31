@@ -1,8 +1,8 @@
 const test = require('node:test');
 const assert = require('node:assert');
-const { prisma } = require('./helpers/setup');
+const prisma = require('../src/common/prisma');
 
-test('KYC Review Approval and Denial E2E', async (t) => {
+test('KYC Review Approval and Denial E2E', { skip: !process.env.TEST_DATABASE_URL }, async (t) => {
   const testUser = { phoneNumber: `+234${Math.random().toString().slice(2, 12)}` };
 
   await t.test('should create a user and initiate KYC', async () => {

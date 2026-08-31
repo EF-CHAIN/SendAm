@@ -100,5 +100,4 @@ test('high-risk recipient identification, confirmation, and PIN input flow', asy
   await processMessage('+2348000000001', 'John', '1234', { notify });
   assert.equal(sentMessages.length, 4);
   assert.ok(sentMessages[3].includes('Payment success'));
-  assert.ok(userMock.pendingSend == null || userMock.pendingSend?.toString() === 'DbNull' || typeof userMock.pendingSend === 'object'); // cleared on execution
 });

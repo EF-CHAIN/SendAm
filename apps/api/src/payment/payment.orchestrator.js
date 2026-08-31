@@ -47,10 +47,10 @@ const executePayment = async ({
   destinationCountry = 'NG',
   routeType,
   transactionId,
-  idempotencyKey,
-  quoteId,
   memo,
   memoType,
+  quoteId,
+  idempotencyKey,
 }) => {
   const senderUser = sender;
   if (!senderUser) throw new Error('Sender not found.');
@@ -91,25 +91,29 @@ const executePayment = async ({
       tx,
     });
 
+    // Idempotency short-circuit: an earlier attempt with this key already
+    // reserved a transaction. Return it (and its quote) without creating
+    // duplicates or re-consuming a quote.
     if (idempotencyKey) {
-      const existing = await tx.transaction.findUnique({ where: { idempotencyKey } });
-      if (existing) {
-        const existingQuote = existing.quoteId ? await tx.quote.findUnique({ where: { id: existing.quoteId } }) : null;
-        return { compliance, quote: existingQuote, transaction: existing };
+      const prior = await tx.transaction.findUnique({ where: { idempotencyKey } });
+      if (prior) {
+        const quote = prior.quoteId ? await tx.quote.findUnique({ where: { id: prior.quoteId } }) : null;
+        return { compliance, quote, transaction: prior };
       }
     }
 
     let quote;
     if (quoteId) {
-      const fetchedQuote = await tx.quote.findUnique({ where: { id: quoteId } });
-      quote = await validateQuoteForExecution({
-        quote: fetchedQuote,
-        user: senderUser,
-        expectedSourceCurrency: effectiveAsset,
-        expectedSourceAmount: normalizedAmount,
+      const existing = await tx.quote.findUnique({ where: { id: quoteId } });
+      await validateQuoteForExecution({
+        quote: existing,
+        userId: senderUser.id,
+        asset: effectiveAsset,
+        amount: normalizedAmount,
       });
-      await tx.quote.update({
-        where: { id: quote.id },
+      // Safe to settle: claim the quote so a retry with the same id is rejected.
+      quote = await tx.quote.update({
+        where: { id: quoteId },
         data: { status: QUOTE_STATUS.CONSUMED },
       });
     } else {
