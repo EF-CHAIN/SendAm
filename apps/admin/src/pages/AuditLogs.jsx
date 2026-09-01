@@ -26,7 +26,8 @@ export default function AuditLogs() {
   const [refreshKey, setRefreshKey] = useState(0);
 
   useEffect(() => {
-to    // Same fetch pattern as the other list pages (Users, Wallets,
+    let active = true;
+    // Same fetch pattern as the other list pages (Users, Wallets,
     // Transactions): loading is toggled inside the async fetch so the spinner
     // shows on every refetch without calling setState synchronously in the
     // effect body (react-hooks/set-state-in-effect).
@@ -34,11 +35,19 @@ to    // Same fetch pattern as the other list pages (Users, Wallets,
       setLoading(true);
       try {
         const res = await getAdminAuditLogs(params);
+        if (!active) return;
         setRows(res.data || []);
         setPagination(res.pagination);
-      })
-      .catch((err) => setError(err.message || 'Failed to fetch audit logs'))
-      .finally(() => setLoading(false));
+      } catch (err) {
+        if (active) setError(err.message || 'Failed to fetch audit logs');
+      } finally {
+        if (active) setLoading(false);
+      }
+    };
+    fetchLogs();
+    return () => {
+      active = false;
+    };
   }, [params, refreshKey]);
 
   const handleExportAudit = async () => {
@@ -105,12 +114,30 @@ to    // Same fetch pattern as the other list pages (Users, Wallets,
     </button>
         <button
           type="button"
-          onClick={handleExport}
-          disabled={exporting}
+          onClick={handleExportAudit}
+          disabled={exportingAudit}
           className="text-sm rounded-lg border border-gray-200 bg-white px-3 py-1.5 font-medium shadow-sm hover:bg-gray-50 disabled:opacity-50"
           data-testid="export-audit"
         >
-          {exporting ? 'Exporting…' : 'Export CSV'}
+          {exportingAudit ? 'Exporting…' : 'Export CSV'}
+        </button>
+        <button
+          type="button"
+          onClick={handleExportEvents}
+          disabled={exportingEvents}
+          className="text-sm rounded-lg border border-gray-200 bg-white px-3 py-1.5 font-medium shadow-sm hover:bg-gray-50 disabled:opacity-50"
+          data-testid="export-events"
+        >
+          {exportingEvents ? 'Exporting…' : 'Export Workflow Events'}
+        </button>
+        <button
+          type="button"
+          onClick={handleVerifyChain}
+          disabled={verifyingChain}
+          className="text-sm rounded-lg border border-gray-200 bg-white px-3 py-1.5 font-medium shadow-sm hover:bg-gray-50 disabled:opacity-50"
+          data-testid="verify-chain"
+        >
+          {verifyingChain ? 'Verifying…' : 'Verify Event Chain'}
         </button>
       </div>
       </div>

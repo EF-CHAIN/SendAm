@@ -19,22 +19,24 @@ const SystemHealth = lazy(() => import('./pages/SystemHealth.jsx'));
 
 export default function App() {
   return (
-    <Suspense fallback={null}>
-      <Routes>
-        <Route path="/login" element={<Login />} />
-        <Route path="/set-password" element={<SetPassword />} />
-        <Route element={<AdminLayout />}>
-          <Route path="/" element={<Dashboard />} />
-          <Route path="/users" element={<Users />} />
-          <Route path="/wallets" element={<Wallets />} />
-          <Route path="/transactions" element={<Transactions />} />
-          <Route path="/transactions/:id" element={<TransactionDetail />} />
-          <Route path="/kyc" element={<KycReview />} />
-          <Route path="/audit-logs" element={<AuditLogs />} />
-          <Route path="/system-health" element={<SystemHealth />} />
-          <Route path="*" element={<Dashboard />} />
-        </Route>
-      </Routes>
-    </Suspense>
+    <ErrorBoundary variant="admin">
+      <Suspense fallback={null}>
+        <Routes>
+          <Route path="/login" element={<Login />} />
+          <Route path="/set-password" element={<SetPassword />} />
+          <Route element={<AdminLayout />}>
+            <Route path="/" element={<Dashboard />} />
+            <Route path="/users" element={<Users />} />
+            <Route path="/wallets" element={<Wallets />} />
+            <Route path="/transactions" element={<Transactions />} />
+            <Route path="/transactions/:id" element={<TransactionDetail />} />
+            <Route path="/kyc" element={<KycReview />} />
+            <Route path="/audit-logs" element={<AuditLogs />} />
+            <Route path="/system-health" element={<SystemHealth />} />
+            <Route path="*" element={<Dashboard />} />
+          </Route>
+        </Routes>
+      </Suspense>
+    </ErrorBoundary>
   );
 }
