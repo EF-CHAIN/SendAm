@@ -374,3 +374,73 @@ test('getFundingAccountHealth reports fee and reserve pressure with operator thr
   assert.ok(Array.isArray(report.runbook));
   assert.ok(report.runbook.length > 0);
 });
+
+// #197: ambiguous outcomes must be reconciled via Horizon before any retry.
+// Sequence: attempt 1 times out (status unknown, write never landed) -> the
+// SAME signed envelope is resubmitted -> Horizon rejects with tx_bad_seq
+// because the first transaction actually landed -> the adapter must query
+// Horizon by the pre-computed hash and return success WITHOUT building a new
+// envelope or spending twice.
+test('submitPayment reconciles timeout + tx_bad_seq via Horizon lookup, reusing one envelope', async () => {
+  mockSuccessfulPaymentSetup();
+
+  const { HorizonWriteUncertainError } = require('../src/config/horizon');
+
+  let submitCalls = 0;
+  const submittedTxs = [];
+  mock.method(server, 'submitTransaction', async (tx) => {
+    submitCalls += 1;
+    submittedTxs.push(tx);
+    if (submitCalls === 1) {
+      // Attempt 1: ambiguous timeout -- the write may or may not have landed.
+      throw new HorizonWriteUncertainError('submission status unknown after timeout');
+    }
+    // Attempt 2 (same envelope): Horizon says bad sequence -- proof that
+    // attempt 1 actually landed and consumed the sequence number.
+    const err = new Error('Transaction failed');
+    err.response = {
+      data: {
+        extras: {
+          result_codes: { transaction: 'tx_bad_seq' },
+        },
+      },
+    };
+    throw err;
+  });
+
+  // Horizon lookup by hash: not found after the timeout, found after tx_bad_seq.
+  let lookupCalls = 0;
+  mock.method(server, 'transactions', () => {
+    lookupCalls += 1;
+    const callIndex = lookupCalls;
+    return {
+      transactionHash: (hash) => ({
+        call: async () => {
+          if (callIndex === 1) {
+            const notFound = new Error('Not Found');
+            notFound.response = { status: 404 };
+            throw notFound;
+          }
+          return { hash };
+        },
+      }),
+    };
+  });
+
+  const result = await stellarAdapter.submitPayment({
+    secretKey: SOURCE_SECRET,
+    destination: DESTINATION_PUBLIC_KEY,
+    amount: '1',
+    asset: 'XLM',
+  });
+
+  // Success recovered via the hash lookup, using the ORIGINAL envelope's hash.
+  assert.equal(typeof result.txHash, 'string');
+  assert.ok(result.txHash.length > 0);
+  assert.ok(result.explorerUrl.includes(result.txHash));
+  // Exactly two submissions (timeout + bad_seq), never a third, and the SAME
+  // signed envelope was reused -- no rebuild, no duplicate payment.
+  assert.equal(submitCalls, 2);
+  assert.ok(submittedTxs[0] === submittedTxs[1], 'the same signed envelope must be reused');
+  assert.ok(lookupCalls >= 2, 'Horizon must be queried by hash after each ambiguous outcome');
+});
