@@ -23,7 +23,7 @@ export default function Dashboard() {
         if (active) setStats(res.data);
       } catch (err) {
         // normalizeError ensures raw error.message / stack never reaches the UI
-        if (active) setError(normalizeError(err));
+        if (active) setError(normalizeError(err).userMessage);
       } finally {
         if (active) setLoading(false);
       }
