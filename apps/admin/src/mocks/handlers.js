@@ -10,6 +10,11 @@ export const handlers = [
     return HttpResponse.json({ message: 'Invalid credentials' }, { status: 401 });
   }),
 
+  // Authenticated operator identity + effective permissions
+  http.get('*/api/admin/me', () => {
+    return HttpResponse.json({ data: { permissions: ['*'] } });
+  }),
+
   // Dashboard stats
   http.get('*/api/admin/stats', () => {
     return HttpResponse.json({

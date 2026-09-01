@@ -83,7 +83,7 @@ export default function Transactions() {
           { key: 'status', label: 'Status', type: 'select', options: ['pending', 'processing', 'success', 'failed'] },
           { key: 'asset', label: 'Asset', placeholder: 'e.g. USDC' },
           { key: 'rail', label: 'Rail', placeholder: 'e.g. stellar' },
-          { key: 'phone', label: 'Customer Phone', placeholder: 'Search phone…' },
+          { key: 'phone', label: 'User Phone', placeholder: 'Search phone…' },
           { key: 'userId', label: 'User ID', placeholder: 'User ID…' },
           { key: 'identifier', label: 'Tx ID / Hash', placeholder: 'id, txHash…' },
           { key: 'from', label: 'From', type: 'date' },
