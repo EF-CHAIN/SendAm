@@ -301,8 +301,6 @@ const processSmileIdCallback = async (payload) => {
   }
 };
 
-const getPolicyCurrency = policyCurrency;
-
 const calculateRiskScore = ({ amount, asset, routeType, destinationCountry, profileRiskScore = 0 }) => {
   const riskAsset = asset || policyCurrency();
   const normalizedAmount = canonicalizePolicyAmount(amount, riskAsset);
