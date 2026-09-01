@@ -1,6 +1,5 @@
 const { test, describe, beforeEach } = require('node:test');
 const assert = require('node:assert/strict');
-const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
 
