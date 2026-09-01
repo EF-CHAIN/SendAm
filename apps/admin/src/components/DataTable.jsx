@@ -50,7 +50,6 @@ export default function DataTable({
               onClick={onRowClick ? () => onRowClick(row) : undefined}
               onKeyDown={onRowClick ? (e) => handleRowKeyDown(e, row) : undefined}
               tabIndex={onRowClick ? 0 : undefined}
-              role={onRowClick ? 'button' : undefined}
               aria-label={onRowClick ? `View details for row ${idx + 1}` : undefined}
             >
               {columns.map((col, colIdx) => (
