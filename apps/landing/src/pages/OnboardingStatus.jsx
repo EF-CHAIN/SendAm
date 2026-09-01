@@ -8,49 +8,58 @@ export default function OnboardingStatus() {
   const [status, setStatus] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-
-  const fetchStatus = async () => {
-    setLoading(true);
-    setError('');
-    try {
-      const res = await api.get('/compliance/onboarding');
-      if (res.data?.success) {
-        setStatus(res.data.data);
-      } else {
-        setError(res.data?.message || 'Failed to fetch onboarding status.');
-      }
-    } catch (err) {
-      // Fallback for demonstration when no active session is attached
-      if (err.response?.status === 401 || err.response?.status === 403) {
-        setStatus({
-          stage: 'in_progress',
-          percentComplete: 67,
-          checkpoints: [
-            { id: 'account_created', label: 'Account created', description: 'Your WhatsApp account is registered.', complete: true },
-            { id: 'wallet_ready', label: 'Wallet ready', description: 'Your Stellar wallet has been funded and is ready to send and receive.', complete: true },
-            { id: 'pin_set', label: 'PIN set', description: 'A 4-digit PIN protects your payment confirmations.', complete: true },
-            { id: 'kyc_started', label: 'Identity verification started', description: 'You have initiated the identity verification process.', complete: true },
-            { id: 'kyc_approved', label: 'Identity verified', description: 'Your identity has been verified and your payment limits have been upgraded.', complete: false },
-            { id: 'account_active', label: 'Account in good standing', description: 'Your account has no compliance or security holds.', complete: true }
-          ],
-          nextStep: { action: 'await_review', message: "Your identity verification is under review. We'll notify you when it's approved." },
-          blockers: [],
-          kyc: { status: 'pending', tier: 0, sanctionsStatus: 'cleared' },
-          wallet: { funded: true, fundingState: 'succeeded', trustlineState: 'succeeded', network: 'testnet' },
-          accountActive: true,
-          computedAt: new Date().toISOString(),
-        });
-      } else {
-        setError(err.response?.data?.message || err.message || 'Unable to connect to server.');
-      }
-    } finally {
-      setLoading(false);
-    }
-  };
+  const [refreshKey, setRefreshKey] = useState(0);
 
   useEffect(() => {
+    let active = true;
+    // Loading is toggled inside the async fetch (same pattern as the admin
+    // list pages) so the spinner shows on every refetch without calling
+    // setState synchronously in the effect body (react-hooks/set-state-in-effect).
+    const fetchStatus = async () => {
+      setLoading(true);
+      setError('');
+      try {
+        const res = await api.get('/compliance/onboarding');
+        if (!active) return;
+        if (res.data?.success) {
+          setStatus(res.data.data);
+        } else {
+          setError(res.data?.message || 'Failed to fetch onboarding status.');
+        }
+      } catch (err) {
+        if (!active) return;
+        // Fallback for demonstration when no active session is attached
+        if (err.response?.status === 401 || err.response?.status === 403) {
+          setStatus({
+            stage: 'in_progress',
+            percentComplete: 67,
+            checkpoints: [
+              { id: 'account_created', label: 'Account created', description: 'Your WhatsApp account is registered.', complete: true },
+              { id: 'wallet_ready', label: 'Wallet ready', description: 'Your Stellar wallet has been funded and is ready to send and receive.', complete: true },
+              { id: 'pin_set', label: 'PIN set', description: 'A 4-digit PIN protects your payment confirmations.', complete: true },
+              { id: 'kyc_started', label: 'Identity verification started', description: 'You have initiated the identity verification process.', complete: true },
+              { id: 'kyc_approved', label: 'Identity verified', description: 'Your identity has been verified and your payment limits have been upgraded.', complete: false },
+              { id: 'account_active', label: 'Account in good standing', description: 'Your account has no compliance or security holds.', complete: true }
+            ],
+            nextStep: { action: 'await_review', message: "Your identity verification is under review. We'll notify you when it's approved." },
+            blockers: [],
+            kyc: { status: 'pending', tier: 0, sanctionsStatus: 'cleared' },
+            wallet: { funded: true, fundingState: 'succeeded', trustlineState: 'succeeded', network: 'testnet' },
+            accountActive: true,
+            computedAt: new Date().toISOString(),
+          });
+        } else {
+          setError(err.response?.data?.message || err.message || 'Unable to connect to server.');
+        }
+      } finally {
+        if (active) setLoading(false);
+      }
+    };
     fetchStatus();
-  }, []);
+    return () => {
+      active = false;
+    };
+  }, [refreshKey]);
 
   const getStageBadge = (stage) => {
     switch (stage) {
@@ -90,7 +99,7 @@ export default function OnboardingStatus() {
         </div>
         <button
           type="button"
-          onClick={fetchStatus}
+          onClick={() => setRefreshKey((k) => k + 1)}
           disabled={loading}
           className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-slate-700 bg-white border border-slate-200 rounded-lg shadow-sm hover:bg-slate-50 transition"
         >

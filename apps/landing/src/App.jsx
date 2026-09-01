@@ -14,6 +14,7 @@ export default function App() {
         <main className="flex-grow w-full min-w-0">
           <Routes>
             <Route path="/" element={<Home />} />
+            <Route path="/onboarding" element={<OnboardingStatus />} />
             <Route path="*" element={<NotFound />} />
           </Routes>
         </main>
