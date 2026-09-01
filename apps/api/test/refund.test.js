@@ -39,7 +39,6 @@ const mockRecipientWallet = {
 const createdTransactions = new Map();
 
 // Database queries/mocks
-let mockCreatedRefund;
 const prismaMock = {
   transaction: {
     findUnique: async ({ where }) => {

@@ -67,7 +67,8 @@ CREATE INDEX "SupportCase_userId_status_idx" ON "SupportCase"("userId", "status"
 CREATE INDEX "SupportCase_status_createdAt_idx" ON "SupportCase"("status", "createdAt");
 CREATE INDEX "SupportCase_priority_status_idx" ON "SupportCase"("priority", "status");
 CREATE INDEX "SupportCase_assignedTo_idx" ON "SupportCase"("assignedTo");
-CREATE UNIQUE INDEX "SupportCase_caseNumber_key" ON "SupportCase"("caseNumber");
+-- caseNumber is declared UNIQUE inline, which already creates the
+-- SupportCase_caseNumber_key index; an explicit index with that name would collide.
 
 ALTER TABLE "SupportCase" ADD CONSTRAINT "SupportCase_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 

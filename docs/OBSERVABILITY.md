@@ -85,6 +85,18 @@ The primary metrics are:
 - `sendam_health_checks_total`
 - process uptime and resident memory gauges
 
+Continuous alert-delivery verification (see
+`docs/ALERT-DELIVERY-VERIFICATION.md`) adds label-free gauges that prove the
+outbound alert-routing pipeline itself is delivering end-to-end:
+
+- `sendam_alert_delivery_status` — 1 healthy, 0.5 degraded (primary failing,
+  fallback in use), 0 failed/unknown/disabled
+- `sendam_alert_delivery_last_success_timestamp_seconds` — last verified
+  end-to-end delivery
+- `sendam_alert_delivery_age_seconds` — seconds since last success (-1 = never)
+- `sendam_alert_delivery_checks_total` and
+  `sendam_alert_delivery_outcomes_total{outcome}`
+
 Redis availability and recovery signals (see
 `apps/api/src/config/redis.js` and `test/redis.safeguards.test.js`):
 
@@ -130,9 +142,12 @@ Alertmanager, credentials, and log ingestion. Backend Engineering owns metric
 semantics, correlation propagation, redaction tests, and exception triage.
 Payments/Compliance must join incidents involving financial or KYC operations.
 
-Alert delivery itself must be monitored. Run a synthetic alert at least weekly,
-and alert through an independent channel when Prometheus, Alertmanager, the log
-drain, or the error-monitor endpoint is unavailable.
+Alert delivery itself must be monitored. SendAm continuously sends synthetic
+alerts through the real outbound pipeline on a schedule and confirms delivery
+end-to-end (`sendam_alert_delivery_*`, `docs/ALERT-DELIVERY-VERIFICATION.md`),
+so a bogus "all monitoring components up" picture cannot hide a broken
+alert-routing path. Alert through an independent channel when Prometheus,
+Alertmanager, the log drain, or the error-monitor endpoint is unavailable.
 
 ## Operator recovery
 

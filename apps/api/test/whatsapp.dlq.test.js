@@ -14,7 +14,6 @@ injectMock('utils/logger', { info: () => {}, warn: () => {}, error: () => {} });
 const {
   moveToDeadLetterQueue,
   listDeadLetterJobs,
-  getDeadLetterJob,
   replayDeadLetterJob,
   clearDlq,
   sanitizePayload,
@@ -117,7 +116,6 @@ test('replayDeadLetterJob re-enqueues job and records audit event when job is va
   const record = await moveToDeadLetterQueue(dummyJob, new Error('Network failure'));
 
   let enqueued = false;
-  let auditCreated = false;
 
   const mockQueueService = {
     enqueue: async (queue, jobName, data) => {
@@ -134,7 +132,6 @@ test('replayDeadLetterJob re-enqueues job and records audit event when job is va
     },
     auditLog: {
       create: async ({ data }) => {
-        auditCreated = true;
         assert.equal(data.action, 'whatsapp.dlq.replayed');
         assert.equal(data.entityId, record.id);
         return { id: 'audit-2' };

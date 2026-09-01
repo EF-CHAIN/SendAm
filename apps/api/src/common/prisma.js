@@ -4,7 +4,7 @@ const { Pool } = require('pg');
 const config = require('../config/env');
 const { increment, observeDuration, setGauge } = require('../observability/metrics');
 
-const dbUrl = config.databaseUrl || process.env.DATABASE_URL || 'postgresql://user:pass@localhost:5432/sendam_dev';
+const dbUrl = config.databaseUrl || process.env.DATABASE_URL || 'postgresql://localhost:5432/sendam_dev';
 
 if (!dbUrl) {
   throw new Error('DATABASE_URL must be set. Use your Neon PostgreSQL connection string.');
@@ -28,6 +28,10 @@ pool.connect = (...args) => {
   }
   const started = process.hrtime.bigint();
   let expired = false;
+  // pg-pool invokes connect() both promise-style (no args) and callback-style
+  // (a callback argument, e.g. from Pool#query). Callback mode returns
+  // undefined and resolves the callback later, so the timeout race below only
+  // applies to the promise path.
   const connection = connectFromPool(...args);
   if (connection && typeof connection.then === 'function') {
     connection.then((client) => {

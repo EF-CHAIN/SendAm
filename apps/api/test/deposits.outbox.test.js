@@ -187,7 +187,7 @@ describe('Deposit Notification Outbox (#158)', () => {
           resetId = args.where.id;
           return { id: resetId, ...args.data };
         },
-        updateMany: async (args) => {
+        updateMany: async (_args) => {
           resetAll = true;
           return { count: 3 };
         },

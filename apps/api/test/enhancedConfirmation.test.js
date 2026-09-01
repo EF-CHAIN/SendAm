@@ -21,26 +21,21 @@ const prismaMock = {
     findFirst: async () => null, // default: never transacted successfully
   },
   alias: {
-    findUnique: async () => null,
+    findUnique: async () => null, // default: not a saved contact
     findFirst: async () => null, // default: not a saved contact
-    findUnique: async () => null,
   },
   user: {
     findUnique: async () => userMock,
-    updateMany: async () => {
-      userMock.pendingSend = null;
-      return { count: 1 };
-    },
     update: async ({ data }) => {
       userMock.pendingSend = data.pendingSend;
       return userMock;
     },
-    updateMany: async ({ where, data }) => {
-      if (userMock.pendingSend) {
-        userMock.pendingSend = data.pendingSend;
-        return { count: 1 };
-      }
-      return { count: 0 };
+    updateMany: async (args) => {
+      // The payment flow clears/updates `pendingSend` via `user.update`; this
+      // `updateMany` stub keeps the claim helpers usable if exercised.
+      if (args?.data) userMock.pendingSend = args.data.pendingSend;
+      else userMock.pendingSend = null;
+      return { count: 1 };
     },
   },
 };

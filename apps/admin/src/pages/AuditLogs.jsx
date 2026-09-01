@@ -26,7 +26,7 @@ export default function AuditLogs() {
   const [refreshKey, setRefreshKey] = useState(0);
 
   useEffect(() => {
-to    // Same fetch pattern as the other list pages (Users, Wallets,
+    // Same fetch pattern as the other list pages (Users, Wallets,
     // Transactions): loading is toggled inside the async fetch so the spinner
     // shows on every refetch without calling setState synchronously in the
     // effect body (react-hooks/set-state-in-effect).

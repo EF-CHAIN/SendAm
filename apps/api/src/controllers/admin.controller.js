@@ -1,7 +1,7 @@
 const { sendSuccess, sendError, sendCursorPaginated } = require('../utils/response');
 const { authenticate, createInvitation, acceptInvitation, revokeSessions, hashPassword, changeOwnPassword } = require('../services/adminAuth.service');
 const { writeAuditLog } = require('../common/audit.service');
-const { appendEvent, EVENT_TYPES, queryEvents, verifyEventChain: verifyEventChainService } = require('../common/event.service');
+const { queryEvents, verifyEventChain: verifyEventChainService } = require('../common/event.service');
 const { deactivateAccount, reactivateAccount, getAccountStatusHistory, DEACTIVATION_REASONS } = require('../compliance/account.service');
 const { getOnboardingStatus } = require('../compliance/onboarding.service');
 const { buildUserEvidencePackage, exportWorkflowEventsCsv, exportKycEvidenceCsv, exportAccountStatusHistoryCsv } = require('../compliance/evidence.service');
@@ -560,12 +560,21 @@ const exportAuditLogs = async (req, res, next) => {
 
 const getSystemHealth = async (_req, res, next) => {
   try {
+    const { getStatus: getAlertDeliveryStatus } = require('../observability/alertDelivery.service');
+    let alertDelivery = 'disabled';
+    try {
+      const status = await getAlertDeliveryStatus({ db: prisma });
+      alertDelivery = status.overallStatus || 'unknown';
+    } catch (_error) {
+      alertDelivery = 'unavailable';
+    }
     sendSuccess(res, {
       api: 'ok',
       database: 'ok',
       queues: process.env.REDIS_URL || process.env.UPSTASH_REDIS_URL ? 'redis-configured' : 'unavailable',
       settlementRail: 'stellar',
       custodyModel: 'direct',
+      alertDelivery,
       timestamp: new Date().toISOString(),
     });
   } catch (error) {

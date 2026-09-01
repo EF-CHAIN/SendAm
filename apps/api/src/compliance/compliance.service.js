@@ -13,6 +13,7 @@ const defaultTierLimits = {
 };
 
 const policyCurrency = () => String(config.compliance?.policyCurrency || 'NGN').trim().toUpperCase();
+const getPolicyCurrency = policyCurrency;
 
 const canonicalizePolicyAmount = (value, currency) => {
   const rule = getAssetRule(currency);
@@ -299,8 +300,6 @@ const processSmileIdCallback = async (payload) => {
     throw error;
   }
 };
-
-const getPolicyCurrency = policyCurrency;
 
 const calculateRiskScore = ({ amount, asset, routeType, destinationCountry, profileRiskScore = 0 }) => {
   const riskAsset = asset || policyCurrency();

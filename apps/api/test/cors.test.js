@@ -6,6 +6,8 @@ const http = require('node:http');
 process.env.ENCRYPTION_KEY = process.env.ENCRYPTION_KEY || '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
 process.env.JWT_SECRET = process.env.JWT_SECRET || 'test-jwt-secret';
 process.env.CORS_ORIGINS = 'https://dashboard.example.com,http://localhost:3000';
+process.env.ENCRYPTION_KEY = 'a'.repeat(64); // 32 bytes hex
+process.env.JWT_SECRET = 'cors-test-jwt-secret-that-is-at-least-32-characters-long-';
 
 const app = require('../src/app');
 

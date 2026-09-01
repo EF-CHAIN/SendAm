@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { 
   getAdminUsers, 
   getUserOnboardingStatus, 
@@ -37,7 +37,7 @@ export default function Users() {
   const [reactivateNotes, setReactivateNotes] = useState('');
   const [reactivateApprovedBy, setReactivateApprovedBy] = useState('');
 
-  const fetchUsers = async () => {
+  const fetchUsers = useCallback(async () => {
     setLoading(true);
     try {
       const res = await getAdminUsers(params);
@@ -48,11 +48,13 @@ export default function Users() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [params]);
 
   useEffect(() => {
-    fetchUsers();
-  }, [params]);
+    // Defer out of the synchronous effect body to avoid cascading re-renders.
+    const timer = setTimeout(fetchUsers, 0);
+    return () => clearTimeout(timer);
+  }, [fetchUsers]);
 
   const handleViewOnboarding = async (user) => {
     setOnboardingUser(user);

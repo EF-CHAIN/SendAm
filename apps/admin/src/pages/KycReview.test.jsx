@@ -6,15 +6,6 @@ import { describe, it, expect } from 'vitest';
 import { server } from '../mocks/server';
 import { http, HttpResponse } from 'msw';
 
-// Helper: find the StatusBadge span for a given status value.
-// The FilterBar's status <select> also contains the same text as <option>
-// elements, so we scope to the table cell to avoid ambiguity.
-function getBadgeText(status) {
-  return screen.getAllByText(status).find(
-    (el) => el.tagName === 'SPAN' && el.className.includes('rounded-full')
-  );
-}
-
 describe('KycReview Component', () => {
   it('renders KYC profiles and handles approval mutation', async () => {
     render(

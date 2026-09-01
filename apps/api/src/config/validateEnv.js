@@ -131,6 +131,26 @@ const validateEnv = (config) => {
     }
   }
 
+  // Continuous alert-delivery verification (issue #228).
+  if (config.alertDelivery?.enabled) {
+    const pos = (v) => Number.isFinite(v) && v > 0;
+    if (!config.alertDelivery.recipient) {
+      problems.push('ALERT_TEST_RECIPIENT must be set when ALERT_DELIVERY_ENABLED is true.');
+    }
+    if (!pos(config.alertDelivery.intervalMs)) {
+      problems.push('ALERT_DELIVERY_INTERVAL_MS must be a positive number.');
+    }
+    if (!pos(config.alertDelivery.ackTimeoutMs)) {
+      problems.push('ALERT_DELIVERY_ACK_TIMEOUT_MS must be a positive number.');
+    }
+    if (!Number.isFinite(config.alertDelivery.missedFactor) || config.alertDelivery.missedFactor < 2) {
+      problems.push('ALERT_DELIVERY_MISSED_FACTOR must be a number of at least 2 (intervals of silence before a test is considered missed).');
+    }
+    if (config.alertDelivery.templateName && config.alertDelivery.templateName.length > 512) {
+      problems.push('ALERT_TEST_TEMPLATE_NAME must be 512 characters or fewer.');
+    }
+  }
+
   if (problems.length > 0) {
     throw new Error(`Invalid configuration:\n  - ${problems.join('\n  - ')}`);
   }

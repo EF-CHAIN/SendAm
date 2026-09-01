@@ -160,6 +160,36 @@ groups:
           summary: SendAm Redis reconnect budget exhausted; ensure Redis is reachable
           runbook_url: https://github.com/EF-CHAIN/SendAm/blob/main/docs/OBSERVABILITY.md#redis-disconnected
 
+      - alert: SendAmAlertDeliveryFailed
+        expr: sendam_alert_delivery_status == 0
+        for: 5m
+        labels:
+          severity: critical
+          service: sendam-worker
+        annotations:
+          summary: Continuous alert-delivery verification is failing (all routes failed, ack timed out, or a test was missed)
+          runbook_url: https://github.com/EF-CHAIN/SendAm/blob/main/docs/ALERT-DELIVERY-VERIFICATION.md#troubleshooting
+
+      - alert: SendAmAlertDeliveryDegraded
+        expr: sendam_alert_delivery_status == 0.5
+        for: 10m
+        labels:
+          severity: warning
+          service: sendam-worker
+        annotations:
+          summary: Alert delivery is degraded (primary route failing, fallback in use)
+          runbook_url: https://github.com/EF-CHAIN/SendAm/blob/main/docs/ALERT-DELIVERY-VERIFICATION.md#troubleshooting
+
+      - alert: SendAmAlertDeliveryNeverVerified
+        expr: sendam_alert_delivery_age_seconds < 0
+        for: 6h
+        labels:
+          severity: warning
+          service: sendam-worker
+        annotations:
+          summary: Continuous alert-delivery verification is enabled but has never succeeded end-to-end
+          runbook_url: https://github.com/EF-CHAIN/SendAm/blob/main/docs/ALERT-DELIVERY-VERIFICATION.md#troubleshooting
+
       - alert: SendAmQueueInlineFallback
         expr: increase(sendam_queue_inline_fallback_total[10m]) > 0
         for: 5m

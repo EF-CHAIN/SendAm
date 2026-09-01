@@ -1,6 +1,6 @@
 const logger = require('../utils/logger');
 const { response } = require('../utils/response');
-const { reconcileStaleTransactions, listLedgerDiscrepancies, listStuckPayments, operatorResolveStuckPayment } = require('./payment.reconciler');
+const { reconcileStaleTransactions, listLedgerDiscrepancies } = require('./payment.reconciler');
 
 const triggerReconciliation = async (req, res) => {
   try {
