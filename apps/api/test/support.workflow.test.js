@@ -1,8 +1,8 @@
 const test = require('node:test');
 const assert = require('node:assert');
-const { prisma } = require('./helpers/setup');
+const prisma = require('../src/common/prisma');
 
-test('Support Case Workflow', async (t) => {
+test('Support Case Workflow', { skip: !process.env.TEST_DATABASE_URL }, async (t) => {
   const testAdmin = { id: 'admin-test-123' };
   let testCase = null;
 

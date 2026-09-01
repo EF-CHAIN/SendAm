@@ -744,6 +744,15 @@ const establishTrustline = async ({ secretKey, assetCode }) => {
         }
 
         logger.error("Error establishing trustline", error.message);
+        const classification = classifyTrustlineError(error);
+        if (classification) {
+          throw Object.assign(new Error(classification.userMessage), {
+            code: classification.code,
+            retryable: classification.retryable,
+            alreadyExisted: classification.alreadyExisted || false,
+            raw: error,
+          });
+        }
         throw new Error(`Could not establish ${asset.getCode()} trustline.`);
       }
     }

@@ -25,7 +25,7 @@ const isTrustedProxyHeader = (req) => {
 };
 
 const sanitizeForwardingHeaders = (req) => {
-  if (!isTrustedProxyHeader(req)) {
+  if (!isTrustedProxyHeader(req) && req?.headers) {
     delete req.headers['x-forwarded-for'];
     delete req.headers['x-real-ip'];
     delete req.headers.forwarded;
@@ -39,7 +39,7 @@ const getClientIp = (req) => {
     return req.ip || req.socket?.remoteAddress || 'unknown';
   }
 
-  const forwardedFor = req.headers['x-forwarded-for'];
+  const forwardedFor = req.headers?.['x-forwarded-for'];
   if (forwardedFor && typeof forwardedFor === 'string') {
     const candidate = forwardedFor.split(',')[0].trim();
     if (candidate) return candidate;

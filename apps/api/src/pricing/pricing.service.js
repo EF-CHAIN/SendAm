@@ -426,6 +426,9 @@ const { getPolicyConversionSnapshot, PolicyError, POLICY_ERROR_CODES } = require
 module.exports = {
   createQuote,
   getExchangeRate,
+  fetchExchangeRateQuote,
+  validateProviderPayload,
+  resetPricingPolicyState,
   getPolicyConversionSnapshot,
   fetchExchangeRateQuote,
   validateProviderPayload,
@@ -437,7 +440,9 @@ module.exports = {
   reconcileQuotes,
   QuoteError,
   PolicyError,
+  PricingProviderError,
   QUOTE_STATUS,
   QUOTE_ERROR_CODES,
   POLICY_ERROR_CODES,
 };
+
