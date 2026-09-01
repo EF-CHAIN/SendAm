@@ -172,7 +172,7 @@ describe('admin dashboard accessibility', () => {
       }
       // Header row + at least one data row.
       await waitFor(() => {
-        expect(within(table).getAllByRole('row').length).toBeGreaterThanOrEqual(2);
+        expect(within(screen.getByRole('table')).getAllByRole('row').length).toBeGreaterThanOrEqual(2);
       });
     });
 

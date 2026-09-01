@@ -26,22 +26,25 @@ export default function Transactions() {
   const [error, setError] = useState(null);
 
   useEffect(() => {
+    let active = true;
     const fetchTransactions = async () => {
       setLoading(true);
       setError(null);
       try {
         const res = await getAdminTransactions(params);
+        if (!active) return;
         setTransactions(res.data);
         setPagination(res.pagination);
       } catch (err) {
         // Replace silent failure with a safe, observable error state.
         // normalizeError ensures raw error.message / stack never reaches the UI.
-        setError(normalizeError(err));
+        if (active) setError(normalizeError(err));
       } finally {
-        setLoading(false);
+        if (active) setLoading(false);
       }
     };
     fetchTransactions();
+    return () => { active = false; };
   }, [params]);
 
   const columns = [

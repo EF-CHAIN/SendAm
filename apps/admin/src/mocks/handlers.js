@@ -93,6 +93,13 @@ export const handlers = [
     return HttpResponse.json({ success: true });
   }),
 
+  // System health
+  http.get('*/api/admin/system-health', () => {
+    return HttpResponse.json({
+      data: { database: 'ok', redis: 'ok', horizon: 'ok', queue: 'ok' },
+    });
+  }),
+
   // Audit logs
   http.get('*/api/admin/audit-logs', () => {
     return HttpResponse.json({
