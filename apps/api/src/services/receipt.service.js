@@ -47,6 +47,8 @@ const buildStandardReceipt = (transaction, options = {}) => {
       rail: transaction.rail || 'stellar',
       memo: meta.memo || null,
       memoType: meta.memoType || null,
+      network: transaction.network || null,
+      assetIssuer: transaction.assetIssuer || null,
     },
   };
 };

@@ -3,10 +3,17 @@ const router = express.Router();
 const walletController = require('../controllers/wallet.controller');
 const requireRestApiEnabled = require('../middlewares/requireRestApiEnabled');
 const requireRestSession = require('../middlewares/requireRestSession');
+const createAccountRateLimit = require('../middlewares/accountRateLimit');
 const { validateRequest } = require('../middlewares/validateRequest');
+
+// General per-account ceiling for the wallet REST API, plus a much tighter
+// one on /send since it moves funds and is the highest-value abuse target.
+const walletLimiter = createAccountRateLimit({ windowMs: 60 * 1000, max: 30, prefix: 'wallet:' });
+const sendLimiter = createAccountRateLimit({ windowMs: 60 * 1000, max: 5, prefix: 'wallet-send:' });
 
 router.use(requireRestApiEnabled);
 router.use(requireRestSession);
+router.use(walletLimiter);
 
 router.post(
   '/create',
@@ -78,6 +85,7 @@ router.get('/statement/export', walletController.getStatement);
 
 router.post(
   '/send',
+  sendLimiter,
   validateRequest({
     body: {
       allowedKeys: ['phoneNumber', 'amount', 'destination', 'asset', 'routeType', 'sourceCountry', 'destinationCountry'],

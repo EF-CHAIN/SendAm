@@ -33,6 +33,10 @@ export const handlers = [
         failedTransactions: 8,
         pendingTransactions: 20,
         pendingKyc: 3,
+        balances: [
+          { asset: 'USD', amount: '150.00', precision: 2, baseCurrency: 'USD', baseAmount: '150.00', rate: '1', source: 'identity' },
+          { asset: 'XLM', amount: '1000.0000000', precision: 7, baseCurrency: 'USD', baseAmount: '500.00', rate: '0.5', source: 'exchangerate-api' },
+        ],
       },
     });
   }),

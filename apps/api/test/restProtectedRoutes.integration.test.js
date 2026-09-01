@@ -47,6 +47,13 @@ inject('compliance/pin.service', { hashPin: (pin) => `hashed:${pin}` });
 inject('common/prisma', {
   user: { update: async (args) => { calls.pin = args; return owner; } },
 });
+// The wallet routes carry a per-account rate limiter; give it an in-memory
+// store so it doesn't reach the real database through the fake prisma above.
+inject('services/rateLimit.service', {
+  consume: async () => ({ totalHits: 1, resetTime: new Date(Date.now() + 60000) }),
+  decrement: async () => {},
+  resetKey: async () => {},
+});
 
 const walletRoutes = require('../src/routes/wallet.routes');
 const complianceRoutes = require('../src/compliance/compliance.routes');

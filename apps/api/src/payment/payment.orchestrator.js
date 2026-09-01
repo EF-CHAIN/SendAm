@@ -12,6 +12,7 @@ const prisma = require('../common/prisma');
 const { withIdAlias } = require('../common/records');
 const { assertValidAmount, percentage } = require('../utils/money');
 const config = require('../config/env');
+const assetIdentity = require('../wallet/assetIdentity');
 
 const RAIL = 'stellar';
 const NATIVE_ASSET = 'XLM';
@@ -136,6 +137,10 @@ const executePayment = async ({
           type: 'send',
           amount: normalizedAmount,
           asset: effectiveAsset,
+          assetIssuer: assetIdentity.resolveConfiguredIssuer({
+            network: config.stellar.network,
+            code: effectiveAsset,
+          }),
           recipientPhoneNumber,
           destination,
           rail,

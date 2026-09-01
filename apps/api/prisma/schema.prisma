@@ -139,6 +139,11 @@ model Transaction {
   /// Canonical decimal string validated by src/utils/money.js; never serialize monetary values as floats.
   amount                String
   asset                 String   @default("USDC")
+  /// Issuer this service resolved `asset` to at execution time (see
+  /// wallet/assetIdentity.js). Null for native XLM. Persisted so a receipt
+  /// or audit lookup can always confirm which issuer moved, not just which
+  /// asset code (#285).
+  assetIssuer           String?
   fiatCurrency          String?
   /// Canonical decimal string for configured fiat currencies.
   fiatAmount            String?
@@ -758,6 +763,16 @@ model DepositOutboxRecord {
   phoneNumber       String
   amount            String
   asset             String
+  /// Issuer of `asset` as reported by Horizon on the payment operation.
+  /// Null for native XLM. Kept even when `trusted` is false, so a spoofed
+  /// same-code deposit stays fully traceable for reconciliation (#285).
+  assetIssuer       String?
+  /// Stellar network id ('testnet' | 'public') this deposit was observed on.
+  network           String?
+  /// Whether `assetIssuer` matched this service's configured issuer for
+  /// `asset` at the time the deposit was recorded. False means the code
+  /// matched a recognised asset (e.g. "USDC") but the issuer did not.
+  trusted           Boolean   @default(true)
   fiatRate          Float?
   message           String
   status            String    @default("pending") // pending | delivered | failed | dead_letter
