@@ -46,7 +46,7 @@ const dbMock = {
       if (where.id === 'wallet_123') return { ...mockWallet };
       return null;
     },
-    update: async ({ where, data }) => {
+    update: async ({ where: _where, data }) => {
       Object.assign(mockWallet, data);
       return { ...mockWallet };
     },

@@ -129,21 +129,6 @@ const anonymizeUser = async (db, options = {}) => {
   }
 
   const anonymizedPhone = `deleted-user-${userId}`;
-  const anonymizedUser = {
-    ...user,
-    phoneNumber: anonymizedPhone,
-    whatsappName: 'Deleted User',
-    kycTier: 0,
-    riskScore: 0,
-    pinHash: null,
-    pinSetAt: null,
-    pendingSend: null,
-    contactsJson: null,
-    deletedAt: new Date(),
-    deletionStatus: 'anonymized',
-    anonymizedAt: new Date(),
-    legalHold,
-  };
 
   await safeDb.wallet.updateMany({
     where: { userId },

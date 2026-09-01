@@ -2,7 +2,6 @@ const crypto = require('crypto');
 const prisma = require('../common/prisma');
 const { writeAuditLog } = require('../common/audit.service');
 const retention = require('./retention');
-const { ProviderSkippedError } = require('./providerErrors');
 const smileId = require('./smileId.provider');
 const whatsapp = require('../services/whatsapp.service');
 const voice = require('../voice/voice.service');
@@ -270,7 +269,7 @@ const buildTarget = (request) => {
 
 // Idempotent: a second call on an already-anonymized user does not re-run local
 // anonymization but still allows retrying failed provider tasks.
-const fulfillErasure = async (userId, { requestId, approvedBy } = {}) => {
+const fulfillErasure = async (userId, { requestId, approvedBy: _approvedBy } = {}) => {
   const user = await prisma.user.findUnique({ where: { id: userId } });
   if (!user) {
     const error = new Error('User not found');

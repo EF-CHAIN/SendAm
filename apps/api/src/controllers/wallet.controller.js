@@ -3,7 +3,6 @@ const { sendSuccess, sendError } = require('../utils/response');
 const walletService = require('../wallet/wallet.service');
 const { validateAddress } = require('../wallet/stellar.adapter');
 const { executePayment } = require('../payment/payment.orchestrator');
-const prisma = require('../common/prisma');
 const {
   IdempotencyError,
   validateKey,
@@ -38,7 +37,7 @@ const checkBalance = async (req, res, next) => {
 
 const sendFunds = async (req, res, next) => {
   try {
-    const { phoneNumber, amount, destination } = req.body || {};
+    const { amount, destination } = req.body || {};
     const idempotencyKey = (req.get ? req.get('Idempotency-Key') : req.headers?.['idempotency-key']) || req.body?.idempotencyKey;
 
     if (idempotencyKey && !validateKey(idempotencyKey)) {

@@ -254,7 +254,7 @@ async function replayDeadLetterJob(dlqJobId, options = {}) {
 /**
  * Discard/archive a DLQ job.
  */
-async function discardDeadLetterJob(dlqJobId, options = {}) {
+async function discardDeadLetterJob(dlqJobId, _options = {}) {
   const record = await getDeadLetterJob(dlqJobId);
   if (!record) {
     throw new Error(`DLQ record not found: ${dlqJobId}`);

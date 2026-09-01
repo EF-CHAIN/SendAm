@@ -19,10 +19,13 @@ const notFound = require('./middlewares/notFound');
 const PostgresRateStore = require('./middlewares/postgresRateStore');
 const config = require('./config/env');
 const { getTrustProxySetting, sanitizeForwardingHeaders } = require('./config/proxy');
+const { describeNetworkProfile } = require('./config/networkProfiles');
 const logger = require('./utils/logger');
 const prisma = require('./common/prisma');
-const { correlationMiddleware } = require('./observability/context');
+const { AppError } = require('./errors');
+const { correlationMiddleware, getContext } = require('./observability/context');
 const { requestMetrics, getMetricSnapshot, metricsHandler, increment } = require('./observability/metrics');
+const { pingRedis } = require('./queues/queue.service');
 
 const app = express();
 let startupComplete = false;

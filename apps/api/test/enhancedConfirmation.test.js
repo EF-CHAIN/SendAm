@@ -23,19 +23,14 @@ const prismaMock = {
   alias: {
     findUnique: async () => null,
     findFirst: async () => null, // default: not a saved contact
-    findUnique: async () => null,
   },
   user: {
     findUnique: async () => userMock,
-    updateMany: async () => {
-      userMock.pendingSend = null;
-      return { count: 1 };
-    },
     update: async ({ data }) => {
       userMock.pendingSend = data.pendingSend;
       return userMock;
     },
-    updateMany: async ({ where, data }) => {
+    updateMany: async ({ where: _where, data }) => {
       if (userMock.pendingSend) {
         userMock.pendingSend = data.pendingSend;
         return { count: 1 };

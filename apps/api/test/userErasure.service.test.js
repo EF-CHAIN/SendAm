@@ -1,7 +1,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 
-const { RETENTION_MATRIX, anonymizeUser, buildRetentionMatrix, withErasureGuard } = require('../src/services/userErasure.service');
+const { anonymizeUser, buildRetentionMatrix, withErasureGuard } = require('../src/services/userErasure.service');
 
 test('retention matrix marks regulated records as immutable and retained', () => {
   const matrix = buildRetentionMatrix();

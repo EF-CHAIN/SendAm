@@ -1,18 +1,10 @@
 const { test, describe, beforeEach } = require('node:test');
 const assert = require('node:assert/strict');
-const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
 
 process.env.ENCRYPTION_KEY = process.env.ENCRYPTION_KEY || 'a'.repeat(64);
 process.env.JWT_SECRET = process.env.JWT_SECRET || 'test-jwt-secret';
-
-const srcRoot = path.resolve(__dirname, '../src');
-
-const injectMock = (relFromSrc, factory) => {
-  const abs = path.resolve(srcRoot, `${relFromSrc}.js`);
-  require.cache[abs] = { id: abs, filename: abs, loaded: true, exports: factory() };
-};
 
 const {
   buildManifest,

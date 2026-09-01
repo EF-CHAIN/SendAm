@@ -448,12 +448,7 @@ const operatorResolveStuckPayment = async ({
       toState: nextStatus,
       actor: { type: 'administrator', id: adminId },
       reason: cleanReason,
-      metadata: {
-        resolvedAt: action === 'mark_resolved' ? now.toISOString() : metadata.resolvedAt,
-        escalatedAt: action === 'escalate' ? now.toISOString() : metadata.escalatedAt,
-        operatorActions: [...(Array.isArray(metadata.operatorActions) ? metadata.operatorActions : []), actionEvent],
-        ...(action === 'retry' ? { retryHistory: [...(Array.isArray(metadata.retryHistory) ? metadata.retryHistory : []), actionEvent] } : {}),
-      },
+      metadata: nextMetadata,
     });
 
     const audit = {

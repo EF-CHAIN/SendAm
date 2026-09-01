@@ -10,6 +10,11 @@ export const handlers = [
     return HttpResponse.json({ message: 'Invalid credentials' }, { status: 401 });
   }),
 
+  // Authenticated operator identity + effective permissions
+  http.get('*/api/admin/me', () => {
+    return HttpResponse.json({ data: { permissions: ['*'] } });
+  }),
+
   // Dashboard stats
   http.get('*/api/admin/stats', () => {
     return HttpResponse.json({
@@ -86,6 +91,13 @@ export const handlers = [
 
   http.post('*/api/compliance/kyc/:id/review', () => {
     return HttpResponse.json({ success: true });
+  }),
+
+  // System health
+  http.get('*/api/admin/system-health', () => {
+    return HttpResponse.json({
+      data: { database: 'ok', redis: 'ok', horizon: 'ok', queue: 'ok' },
+    });
   }),
 
   // Audit logs

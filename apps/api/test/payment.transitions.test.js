@@ -3,7 +3,6 @@ const assert = require('node:assert/strict');
 
 const {
   PAYMENT_STATUSES,
-  PAYMENT_TRANSITIONS,
   PaymentTransitionError,
   isValidPaymentTransition,
   validatePaymentTransition,

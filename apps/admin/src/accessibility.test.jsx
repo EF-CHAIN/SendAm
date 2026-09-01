@@ -66,7 +66,7 @@ describe('admin dashboard accessibility', () => {
       expect(screen.getAllByRole('main')).toHaveLength(1);
     });
 
-    it('gives every sidebar link and the logout button a meaningful accessible name', () => {
+    it('gives every sidebar link and the logout button a meaningful accessible name', async () => {
       renderAdmin('/');
       const expectedLinks = [
         ['Overview', '/'],
@@ -78,7 +78,7 @@ describe('admin dashboard accessibility', () => {
         ['Health', '/system-health'],
       ];
       for (const [name, href] of expectedLinks) {
-        const link = screen.getByRole('link', { name });
+        const link = await screen.findByRole('link', { name });
         expect(link).toHaveAttribute('href', href);
       }
       expect(screen.getByRole('button', { name: /logout/i })).toBeInTheDocument();
@@ -153,7 +153,7 @@ describe('admin dashboard accessibility', () => {
       );
       renderAdmin('/');
       await waitFor(() => {
-        expect(screen.getByRole('alert')).toHaveTextContent(/request failed/i);
+        expect(screen.getByRole('alert')).toHaveTextContent(/a server error occurred/i);
       });
     });
   });
@@ -171,7 +171,9 @@ describe('admin dashboard accessibility', () => {
         expect(th).toHaveAttribute('scope', 'col');
       }
       // Header row + at least one data row.
-      expect(within(table).getAllByRole('row').length).toBeGreaterThanOrEqual(2);
+      await waitFor(() => {
+        expect(within(screen.getByRole('table')).getAllByRole('row').length).toBeGreaterThanOrEqual(2);
+      });
     });
 
     it('exposes empty table results as visible text', async () => {
@@ -214,9 +216,9 @@ describe('admin dashboard accessibility', () => {
   });
 
   describe('forms', () => {
-    it('associates login labels with their controls and marks them required', () => {
+    it('associates login labels with their controls and marks them required', async () => {
       renderLogin();
-      expect(screen.getByLabelText('Email')).toBeRequired();
+      expect(await screen.findByLabelText('Email')).toBeRequired();
       expect(screen.getByLabelText('Password')).toBeRequired();
       expect(screen.getByRole('button', { name: /sign in/i })).toBeInTheDocument();
     });
@@ -224,6 +226,7 @@ describe('admin dashboard accessibility', () => {
     it('completes the login form using only the keyboard', async () => {
       const user = userEvent.setup();
       renderLogin();
+      await screen.findByLabelText('Email');
       await user.tab();
       expect(screen.getByLabelText('Email')).toHaveFocus();
       await user.keyboard('operator@example.com');

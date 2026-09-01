@@ -26,22 +26,25 @@ export default function Transactions() {
   const [error, setError] = useState(null);
 
   useEffect(() => {
+    let active = true;
     const fetchTransactions = async () => {
       setLoading(true);
       setError(null);
       try {
         const res = await getAdminTransactions(params);
+        if (!active) return;
         setTransactions(res.data);
         setPagination(res.pagination);
       } catch (err) {
         // Replace silent failure with a safe, observable error state.
         // normalizeError ensures raw error.message / stack never reaches the UI.
-        setError(normalizeError(err));
+        if (active) setError(normalizeError(err));
       } finally {
-        setLoading(false);
+        if (active) setLoading(false);
       }
     };
     fetchTransactions();
+    return () => { active = false; };
   }, [params]);
 
   const columns = [
@@ -83,7 +86,7 @@ export default function Transactions() {
           { key: 'status', label: 'Status', type: 'select', options: ['pending', 'processing', 'success', 'failed'] },
           { key: 'asset', label: 'Asset', placeholder: 'e.g. USDC' },
           { key: 'rail', label: 'Rail', placeholder: 'e.g. stellar' },
-          { key: 'phone', label: 'Customer Phone', placeholder: 'Search phone…' },
+          { key: 'phone', label: 'User Phone', placeholder: 'Search phone…' },
           { key: 'userId', label: 'User ID', placeholder: 'User ID…' },
           { key: 'identifier', label: 'Tx ID / Hash', placeholder: 'id, txHash…' },
           { key: 'from', label: 'From', type: 'date' },

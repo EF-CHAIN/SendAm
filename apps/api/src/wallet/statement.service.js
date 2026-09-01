@@ -7,13 +7,10 @@
  * activity, fees, asset changes, and balance history with full audit metadata.
  */
 
-const crypto = require('crypto');
 const prisma = require('../common/prisma');
-const walletService = require('./wallet.service');
 const stellarAdapter = require('./stellar.adapter');
 const { writeAuditLog } = require('../common/audit.service');
-const { appendEvent, EVENT_TYPES } = require('../common/event.service');
-const { assertValidAmount, add, subtract, formatUnits, getAssetRule, parseUnits } = require('../utils/money');
+const { add } = require('../utils/money');
 
 const escapeCsv = (value) => {
   if (value === null || value === undefined) return '';
@@ -60,11 +57,9 @@ const buildPdfDocument = ({ title, metadata = [], summary = [], headers = [], ro
 
   // Metadata block
   lines.push('/F1 9 Tf');
-  let currentY = 700;
   metadata.forEach((item) => {
     lines.push(`0 -14 Td`);
     lines.push(`(${escapePdf(item.label)}: ${escapePdf(item.value)}) Tj`);
-    currentY -= 14;
   });
 
   // Summary box
@@ -204,26 +199,31 @@ const buildStatementData = async ({
       };
     }
 
-    const precision = getAssetRule(txAsset).precision;
     const amountStr = tx.amount || '0';
 
     if (tx.type === 'send') {
       totalsByAsset[txAsset].sentCount += 1;
       try {
         totalsByAsset[txAsset].sentAmount = add(totalsByAsset[txAsset].sentAmount, amountStr, txAsset);
-      } catch {}
+      } catch {
+        // Skip totals for an unsupported asset or malformed stored amount.
+      }
     } else if (tx.type === 'receive' || tx.type === 'deposit') {
       totalsByAsset[txAsset].receivedCount += 1;
       try {
         totalsByAsset[txAsset].receivedAmount = add(totalsByAsset[txAsset].receivedAmount, amountStr, txAsset);
-      } catch {}
+      } catch {
+        // Skip totals for an unsupported asset or malformed stored amount.
+      }
     }
 
     const fee = tx.metadata?.fee;
     if (fee) {
       try {
         totalFeeXlm = add(totalFeeXlm, String(fee), 'XLM');
-      } catch {}
+      } catch {
+        // Skip fee accumulation for a malformed stored fee value.
+      }
     }
   });
 

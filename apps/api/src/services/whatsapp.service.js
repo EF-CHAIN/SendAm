@@ -5,6 +5,8 @@ const logger = require('../utils/logger');
 const prisma = require('../common/prisma');
 const { enqueue } = require('../queues/queue.service');
 const { increment } = require('../observability/metrics');
+const { outboundHeaders } = require('../observability/context');
+const { ProviderSkippedError } = require('../compliance/providerErrors');
 
 const RETRYABLE_META_STATUS_CODES = new Set([429, 500, 502, 503, 504]);
 
@@ -441,7 +443,6 @@ const sendTextMessage = async (to, body, options = {}) => {
   try {
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
       try {
-        const { outboundHeaders } = require('../observability/context');
         const response = await axiosImpl.post(url, payload, {
           headers: {
             'Authorization': `Bearer ${config.whatsapp.token}`,

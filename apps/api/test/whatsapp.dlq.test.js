@@ -14,7 +14,6 @@ injectMock('utils/logger', { info: () => {}, warn: () => {}, error: () => {} });
 const {
   moveToDeadLetterQueue,
   listDeadLetterJobs,
-  getDeadLetterJob,
   replayDeadLetterJob,
   clearDlq,
   sanitizePayload,
@@ -151,6 +150,7 @@ test('replayDeadLetterJob re-enqueues job and records audit event when job is va
 
   assert.equal(result.replayed, true);
   assert.equal(enqueued, true);
+  assert.equal(auditCreated, true);
 
   // Second replay attempt of same DLQ record is refused
   const retryResult = await replayDeadLetterJob(record.id, { queueService: mockQueueService });

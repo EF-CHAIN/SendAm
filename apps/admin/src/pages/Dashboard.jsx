@@ -23,7 +23,7 @@ export default function Dashboard() {
         if (active) setStats(res.data);
       } catch (err) {
         // normalizeError ensures raw error.message / stack never reaches the UI
-        if (active) setError(normalizeError(err));
+        if (active) setError(normalizeError(err).userMessage);
       } finally {
         if (active) setLoading(false);
       }
@@ -35,7 +35,18 @@ export default function Dashboard() {
   const handleRetry = useCallback(() => setRetryCount((c) => c + 1), []);
 
   if (loading) return <div className="flex justify-center py-20"><Loader size={32} /></div>;
-  if (error) return <div className="text-red-500 p-4 bg-red-50 rounded-lg" role="alert">{error}</div>;
+  if (error) return (
+    <div className="text-red-500 p-4 bg-red-50 rounded-lg flex items-center justify-between gap-4" role="alert">
+      <span>{error}</span>
+      <button
+        type="button"
+        onClick={handleRetry}
+        className="text-sm font-medium underline shrink-0"
+      >
+        Try Again
+      </button>
+    </div>
+  );
 
   return (
     <div className="min-w-0">

@@ -4,7 +4,6 @@ const assert = require('node:assert/strict');
 const {
   attachHorizonResilience,
   HorizonOutageError,
-  HorizonWriteUncertainError,
   isHorizonWriteUncertain,
 } = require('../src/config/horizon');
 

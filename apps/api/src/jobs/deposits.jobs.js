@@ -32,6 +32,7 @@ const { getExchangeRate } = require('../pricing/pricing.service');
 const logger = require('../utils/logger');
 const config = require('../config/env');
 const assetIdentity = require('../wallet/assetIdentity');
+const { setGauge } = require('../observability/metrics');
 
 // ---------------------------------------------------------------------------
 // Notification text — "You received 20 USDC (~₦31,000)"

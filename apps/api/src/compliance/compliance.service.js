@@ -300,8 +300,6 @@ const processSmileIdCallback = async (payload) => {
   }
 };
 
-const getPolicyCurrency = policyCurrency;
-
 const calculateRiskScore = ({ amount, asset, routeType, destinationCountry, profileRiskScore = 0 }) => {
   const riskAsset = asset || policyCurrency();
   const normalizedAmount = canonicalizePolicyAmount(amount, riskAsset);
@@ -313,8 +311,6 @@ const calculateRiskScore = ({ amount, asset, routeType, destinationCountry, prof
   score += Math.min(Math.max(Number(profileRiskScore) || 0, 0), 30);
   return Math.min(score, 100);
 };
-
-const normalizeCountry = (country) => String(country || '').trim().toUpperCase();
 
 // Build screening subjects for a transaction
 const buildScreeningSubjects = ({ user, destinationCountry, recipientPhoneNumber, destination }) => {
@@ -374,7 +370,7 @@ const buildScreeningSubjects = ({ user, destinationCountry, recipientPhoneNumber
 };
 
 // Persist screening results with full audit trail
-const persistScreeningResults = async ({ profileId, subjects, results, tx }) => {
+const persistScreeningResults = async ({ profileId, subjects: _subjects, results, tx }) => {
   const now = new Date();
 
   for (const result of results) {
@@ -414,7 +410,7 @@ const persistScreeningResults = async ({ profileId, subjects, results, tx }) => 
 };
 
 // Main screening function using configured provider
-const screenSanctions = async ({ user, destinationCountry, routeType, recipientPhoneNumber, destination, tx = prisma }) => {
+const screenSanctions = async ({ user, destinationCountry, routeType: _routeType, recipientPhoneNumber, destination, tx = prisma }) => {
   const profile = await getOrCreateKycProfile(user);
   const maxAgeMs = Number(config.compliance?.screeningMaxAgeMs || 24 * 60 * 60 * 1000);
 

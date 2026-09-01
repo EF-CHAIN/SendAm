@@ -36,23 +36,31 @@ export default function Users() {
   const [reactivateModalUser, setReactivateModalUser] = useState(null);
   const [reactivateNotes, setReactivateNotes] = useState('');
   const [reactivateApprovedBy, setReactivateApprovedBy] = useState('');
-
-  const fetchUsers = async () => {
-    setLoading(true);
-    try {
-      const res = await getAdminUsers(params);
-      setUsers(res.data || []);
-      setPagination(res.pagination);
-    } catch (err) {
-      console.error(err);
-    } finally {
-      setLoading(false);
-    }
-  };
+  const [refreshKey, setRefreshKey] = useState(0);
 
   useEffect(() => {
+    let active = true;
+    // Same fetch pattern as the other list pages: loading is toggled inside
+    // the async fetch so the spinner shows on every refetch without calling
+    // setState synchronously in the effect body (react-hooks/set-state-in-effect).
+    const fetchUsers = async () => {
+      setLoading(true);
+      try {
+        const res = await getAdminUsers(params);
+        if (!active) return;
+        setUsers(res.data || []);
+        setPagination(res.pagination);
+      } catch (err) {
+        console.error(err);
+      } finally {
+        if (active) setLoading(false);
+      }
+    };
     fetchUsers();
-  }, [params]);
+    return () => {
+      active = false;
+    };
+  }, [params, refreshKey]);
 
   const handleViewOnboarding = async (user) => {
     setOnboardingUser(user);
@@ -92,7 +100,7 @@ export default function Users() {
       setDeactivateModalUser(null);
       setDeactivateNotes('');
       setActionSuccess('Account deactivated successfully.');
-      await fetchUsers();
+      setRefreshKey((k) => k + 1);
     } catch (err) {
       setActionError(err.response?.data?.message || err.message || 'Failed to deactivate account');
     } finally {
@@ -114,7 +122,7 @@ export default function Users() {
       setReactivateNotes('');
       setReactivateApprovedBy('');
       setActionSuccess('Account reactivated successfully.');
-      await fetchUsers();
+      setRefreshKey((k) => k + 1);
     } catch (err) {
       setActionError(err.response?.data?.message || err.message || 'Failed to reactivate account');
     } finally {
