@@ -2,6 +2,8 @@ const { test, beforeEach } = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('path');
 
+process.env.ENCRYPTION_KEY = process.env.ENCRYPTION_KEY || 'a'.repeat(64);
+
 const inject = (relative, exports) => {
   const filename = path.resolve(__dirname, '../src', `${relative}.js`);
   require.cache[filename] = { id: filename, filename, loaded: true, exports };
