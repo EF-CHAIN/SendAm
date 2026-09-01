@@ -43,7 +43,7 @@ export default function Dashboard() {
         onClick={handleRetry}
         className="text-sm font-medium underline shrink-0"
       >
-        Retry
+        Try Again
       </button>
     </div>
   );
