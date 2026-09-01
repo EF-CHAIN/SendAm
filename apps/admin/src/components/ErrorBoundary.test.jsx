@@ -560,10 +560,7 @@ describe('SystemHealth — data fetch error', () => {
       </MemoryRouter>
     );
 
-    await waitFor(() => {
-      expect(screen.queryByRole('alert')).not.toBeInTheDocument();
-    });
-
-    expect(screen.getByText('System Health')).toBeInTheDocument();
+    expect(await screen.findByText('System Health')).toBeInTheDocument();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
 });
