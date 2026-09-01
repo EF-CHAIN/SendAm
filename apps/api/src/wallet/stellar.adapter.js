@@ -557,10 +557,13 @@ const submitPayment = async ({
 
       const stellarMemo = buildStellarMemo({ memo, memoType });
 
-      let transaction;
-      let hash;
-      let lastError;
-      for (let attempt = 1; attempt <= SEND_MAX_ATTEMPTS; attempt += 1) {
+      // Build and sign the envelope ONCE, before any submission attempt.
+      // Retries reuse the exact same signed envelope, so an ambiguous outcome
+      // (timeout/connection loss) is safe to re-attempt: Horizon either has
+      // the transaction (found by hash -> success) or it never landed (the
+      // same envelope is safe to resend). Only a genuine tx_bad_seq conflict
+      // forces a rebuild with a fresh sequence number (#197).
+      const buildTransaction = async () => {
         const sourceAccount = await server.loadAccount(sourcePublicKey);
         assertNativeReserve(sourceAccount, fee);
 
@@ -579,9 +582,18 @@ const submitPayment = async ({
           builder.addMemo(stellarMemo);
         }
 
-        transaction = builder.setTimeout(30).build();
-        transaction.sign(sourceKeypair);
-        hash = safeHash(transaction);
+        const tx = builder.setTimeout(30).build();
+        tx.sign(sourceKeypair);
+        return { tx, hash: safeHash(tx) };
+      };
+
+      let { tx: transaction, hash } = await buildTransaction();
+      let lastError;
+      for (let attempt = 1; attempt <= SEND_MAX_ATTEMPTS; attempt += 1) {
+        if (!transaction) {
+          // Genuine sequence conflict: rebuild with a fresh sequence number.
+          ({ tx: transaction, hash } = await buildTransaction());
+        }
 
         try {
           const txResponse = await server.submitTransaction(transaction);
@@ -590,50 +602,41 @@ const submitPayment = async ({
             explorerUrl: getTransactionUrl(txResponse.hash),
           };
         } catch (error) {
-          // Reconcile uncertain submissions before rebuilding or failing
-          if (isHorizonWriteUncertain(error)) {
-            if (hash) {
-              try {
-                const found = await server.transactions().transactionHash(hash).call();
-                if (found) {
-                  logger.info(`Recovered seemingly-timed-out payment ${hash} via Horizon lookup.`);
-                  return { txHash: hash, explorerUrl: getTransactionUrl(hash) };
-                }
-              } catch (_) {
-                // Ignore lookup errors
-              }
-            }
+          const ambiguous = isHorizonWriteUncertain(error) || isBadSequence(error);
 
-            if (attempt < SEND_MAX_ATTEMPTS) {
-              logger.warn(`Payment uncertain (attempt ${attempt}/${SEND_MAX_ATTEMPTS}); resubmitting same envelope.`);
-              await sleep(attempt * 250);
-              continue;
-            } else {
-              throw new Error(
-                "Transaction submission status unknown after timeout; not resubmitting to avoid a duplicate.",
-              );
+          // Reconcile ambiguous submissions before rebuilding or failing:
+          // if the transaction actually landed, report success instead of
+          // risking a duplicate spend.
+          if (ambiguous && hash) {
+            try {
+              const found = await server.transactions().transactionHash(hash).call();
+              if (found) {
+                logger.info(`Recovered ambiguous payment ${hash} via Horizon lookup (attempt ${attempt}).`);
+                return { txHash: hash, explorerUrl: getTransactionUrl(hash) };
+              }
+            } catch (_) {
+              // Lookup failed; fall through to the retry logic below.
             }
           }
 
-          if (isBadSequence(error)) {
-            if (hash) {
-              try {
-                const found = await server.transactions().transactionHash(hash).call();
-                if (found) {
-                  logger.info(`Recovered tx_bad_seq payment ${hash} via Horizon lookup.`);
-                  return { txHash: hash, explorerUrl: getTransactionUrl(hash) };
-                }
-              } catch (_) {
-                // lookup failed; fall through to the standard retry path
-              }
+          if (isHorizonWriteUncertain(error)) {
+            if (attempt < SEND_MAX_ATTEMPTS) {
+              logger.warn(`Payment uncertain (attempt ${attempt}/${SEND_MAX_ATTEMPTS}); resubmitting same envelope.`);
+              await sleep(attempt * 250);
+              continue; // reuse the exact same signed envelope
             }
+            throw new Error(
+              "Transaction submission status unknown after timeout; not resubmitting to avoid a duplicate.",
+            );
+          }
 
+          if (isBadSequence(error)) {
             if (attempt < SEND_MAX_ATTEMPTS) {
               lastError = error;
               logger.warn(
                 `Payment hit tx_bad_seq (attempt ${attempt}/${SEND_MAX_ATTEMPTS}); reloading sequence and retrying.`,
               );
-              transaction = null;
+              transaction = null; // force a rebuild with a fresh sequence number
               await sleep(attempt * 250);
               continue;
             }
