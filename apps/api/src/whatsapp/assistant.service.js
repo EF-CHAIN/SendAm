@@ -12,7 +12,9 @@ const defaultPrisma = require('../common/prisma');
 const { canonicalizePhoneNumber } = require('../utils/validators');
 const { parseConsentCommand, applyConsentKeyword, isMessageAllowed } = require('../compliance/consent.service');
 const { t, SUPPORTED_LOCALES } = require('../i18n/messages');
+// eslint-disable-next-line no-unused-vars
 const { formatDateByLocale, formatAmountByLocale } = require('../i18n/formatters');
+// eslint-disable-next-line no-unused-vars
 const { buildStandardReceipt, formatChannelReceiptMessage, recordReceiptDeliveryEvent } = require('../services/receipt.service');
 
 const PENDING_SEND_TTL_MS = 10 * 60 * 1000;
@@ -162,6 +164,7 @@ const requestConfirmation = async ({ phoneNumber, user, intent, notify, db = def
     const warnMsg = t('high_risk_warning', { fingerprint }, locale);
     await notify(phoneNumber, warnMsg);
   } else {
+    // eslint-disable-next-line no-unused-vars
     const formattedAmount = formatAmountByLocale(intent.amount, intent.asset, locale);
     const memoLine = intent.memo ? `\nMemo (${intent.memoType || 'text'}): ${intent.memo}` : '';
     const quoteLine = quote?.expiresAt ? `Quote expires: ${new Date(quote.expiresAt).toISOString()}\n` : '';

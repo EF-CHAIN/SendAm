@@ -118,15 +118,13 @@ describe('startAlertDeliveryTestScheduler', () => {
   });
 
   test('errors in runTest are caught and do not crash the scheduler', (t, done) => {
-    let errorHandled = false;
-
     const { stop } = jobModule.startAlertDeliveryTestScheduler({
       cfg: makeConfig({ primaryUrl: 'https://monitor.example.com/hook' }),
       runTest: async () => {
         throw new Error('simulated delivery failure');
       },
       checkStale: () => ({ stale: false, staleSinceMs: null, intervalMs: 60_000 }),
-      capture: async () => { errorHandled = true; },
+      capture: async () => {},
       nowFn: Date.now,
     });
 
@@ -144,13 +142,11 @@ describe('startAlertDeliveryTestScheduler', () => {
 // ---------------------------------------------------------------------------
 describe('stale detection integration', () => {
   test('does not call capture when tests are not stale', (t, done) => {
-    let captured = false;
-
     const { stop } = jobModule.startAlertDeliveryTestScheduler({
       cfg: makeConfig({ primaryUrl: 'https://monitor.example.com/hook' }),
       runTest: async () => ({ success: true }),
       checkStale: () => ({ stale: false, staleSinceMs: null, intervalMs: 60_000 }),
-      capture: async () => { captured = true; },
+      capture: async () => {},
       nowFn: Date.now,
     });
 

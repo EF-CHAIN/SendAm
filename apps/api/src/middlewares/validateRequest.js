@@ -37,6 +37,7 @@ const applyValidation = ({ section, payload, schema }) => {
     }
   }
 
+  // eslint-disable-next-line no-unused-vars
   for (const [key, value] of Object.entries(fieldDefs)) {
     if (payload[key] === undefined) continue;
 

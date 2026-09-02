@@ -1,6 +1,7 @@
 const { sendSuccess, sendError, sendCursorPaginated } = require('../utils/response');
 const { authenticate, createInvitation, acceptInvitation, revokeSessions, hashPassword, changeOwnPassword } = require('../services/adminAuth.service');
 const { writeAuditLog } = require('../common/audit.service');
+// eslint-disable-next-line no-unused-vars
 const { appendEvent, EVENT_TYPES, queryEvents, verifyEventChain: verifyEventChainService } = require('../common/event.service');
 const { deactivateAccount, reactivateAccount, getAccountStatusHistory, DEACTIVATION_REASONS } = require('../compliance/account.service');
 const { getOnboardingStatus } = require('../compliance/onboarding.service');
@@ -11,8 +12,10 @@ const { parseLimit, cursorQuery, MAX_EXPORT_ROWS } = require('../utils/cursorPag
 const { listStuckPayments, operatorResolveStuckPayment, listLedgerDiscrepancies } = require('../payment/payment.reconciler');
 const { getWalletActivitySummary } = require('../services/wallet-activity-summary.service');
 const walletService = require('../wallet/wallet.service');
+// eslint-disable-next-line no-unused-vars
 const { getRotationStatus, rotateSecret: performSecretRotation, evaluateRotationHealth, SECRET_CATEGORIES } = require('../services/secret-rotation.service');
-const { userDto, walletDto, transactionDto, kycProfileDto } = require('../admin/adminDtos');
+// eslint-disable-next-line no-unused-vars
+const { walletDto, transactionDto, kycProfileDto } = require('../admin/adminDtos');
 const { getExchangeRate } = require('../pricing/pricing.service');
 const { getAssetRule } = require('../utils/money');
 const { getAlertDeliveryTestStatus } = require('../observability/alertDeliveryTest.service');

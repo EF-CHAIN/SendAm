@@ -39,7 +39,7 @@ const auditPinEvent = async ({ prisma, userId, action, metadata = {} }) => {
         metadata,
       },
     });
-  } catch (error) {
+  } catch (_error) {
     return null;
   }
 };

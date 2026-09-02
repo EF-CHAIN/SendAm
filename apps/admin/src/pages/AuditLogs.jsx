@@ -26,19 +26,20 @@ export default function AuditLogs() {
   const [refreshKey, setRefreshKey] = useState(0);
 
   useEffect(() => {
-to    // Same fetch pattern as the other list pages (Users, Wallets,
-    // Transactions): loading is toggled inside the async fetch so the spinner
-    // shows on every refetch without calling setState synchronously in the
-    // effect body (react-hooks/set-state-in-effect).
     const fetchLogs = async () => {
       setLoading(true);
+      setError('');
       try {
         const res = await getAdminAuditLogs(params);
         setRows(res.data || []);
         setPagination(res.pagination);
-      })
-      .catch((err) => setError(err.message || 'Failed to fetch audit logs'))
-      .finally(() => setLoading(false));
+      } catch (err) {
+        setError(err.message || 'Failed to fetch audit logs');
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchLogs();
   }, [params, refreshKey]);
 
   const handleExportAudit = async () => {
@@ -105,12 +106,12 @@ to    // Same fetch pattern as the other list pages (Users, Wallets,
     </button>
         <button
           type="button"
-          onClick={handleExport}
-          disabled={exporting}
+          onClick={handleExportAudit}
+          disabled={exportingAudit}
           className="text-sm rounded-lg border border-gray-200 bg-white px-3 py-1.5 font-medium shadow-sm hover:bg-gray-50 disabled:opacity-50"
           data-testid="export-audit"
         >
-          {exporting ? 'Exporting…' : 'Export CSV'}
+          {exportingAudit ? 'Exporting…' : 'Export CSV'}
         </button>
       </div>
       </div>
@@ -132,6 +133,9 @@ to    // Same fetch pattern as the other list pages (Users, Wallets,
           </button>
         </div>
       )}
+
+      <button type="button" onClick={handleExportEvents} disabled={exportingEvents} className="text-sm rounded-lg border border-gray-200 bg-white px-3 py-1.5 font-medium shadow-sm hover:bg-gray-50 disabled:opacity-50">{exportingEvents ? 'Exporting events…' : 'Export Events'}</button>
+      <button type="button" onClick={handleVerifyChain} disabled={verifyingChain} className="text-sm rounded-lg border border-gray-200 bg-white px-3 py-1.5 font-medium shadow-sm hover:bg-gray-50 disabled:opacity-50">{verifyingChain ? 'Verifying…' : 'Verify Chain'}</button>
 
       <FilterBar
         fields={[

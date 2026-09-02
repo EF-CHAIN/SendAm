@@ -16,6 +16,7 @@ const injectMock = (relFromSrc, factory) => {
 let walletRows = [];
 let txRows = [];
 let kycRow = null;
+// eslint-disable-next-line no-unused-vars
 let auditRows = [];
 
 injectMock('common/prisma', () => ({
@@ -51,6 +52,7 @@ injectMock('common/prisma', () => ({
       const sum = rows.reduce((s, t) => s + Number(t.amount), 0).toFixed(2);
       return { _sum: { amount: sum } };
     },
+    // eslint-disable-next-line no-unused-vars
     findMany: async ({ where, orderBy, take }) => {
       let rows = txRows;
       if (where?.userId) rows = rows.filter((t) => t.userId === where.userId);
@@ -73,6 +75,7 @@ injectMock('common/prisma', () => ({
 
 injectMock('common/audit.service', () => ({ writeAuditLog: async () => {} }));
 
+// eslint-disable-next-line no-unused-vars
 const { getWalletActivitySummary, buildWalletSummary } = require('../src/services/wallet-activity-summary.service');
 
 const makeWallet = (overrides = {}) => ({

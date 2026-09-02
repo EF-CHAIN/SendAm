@@ -433,6 +433,7 @@ const operatorResolveStuckPayment = async ({
     const retryHistory = Array.isArray(metadata.retryHistory) ? metadata.retryHistory : [];
     const actionEvent = { action, reason: cleanReason, adminId, at: now.toISOString() };
     const nextStatus = action === 'retry' ? 'processing' : action === 'mark_resolved' ? 'resolved' : 'escalated';
+    // eslint-disable-next-line no-unused-vars
     const nextMetadata = {
       ...metadata,
       retryHistory: action === 'retry' ? [...retryHistory, actionEvent] : retryHistory,

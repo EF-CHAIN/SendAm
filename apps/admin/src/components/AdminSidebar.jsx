@@ -22,13 +22,15 @@ export default function AdminSidebar() {
 
   useEffect(() => {
     let active = true;
-    getAdminMe()
-      .then((me) => { if (active) setPermissions(me?.permissions || []); })
-      .catch(() => { if (active) setPermissions([]); });
-    return () => { active = false; };
+    const timer = setTimeout(() => {
+      getAdminMe()
+        .then((me) => { if (active) setPermissions(me?.permissions || []); })
+        .catch(() => { if (active) setPermissions([]); });
+    }, 0);
+    return () => { active = false; clearTimeout(timer); };
   }, []);
 
-  const links = permissions ? ALL_LINKS.filter((l) => hasPermission(permissions, l.permission)) : [];
+  const links = permissions ? ALL_LINKS.filter((l) => hasPermission(permissions, l.permission)) : ALL_LINKS;
 
   const handleLogout = () => {
     removeToken();

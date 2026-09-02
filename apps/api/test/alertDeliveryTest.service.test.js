@@ -8,7 +8,7 @@ process.env.JWT_SECRET = process.env.JWT_SECRET || 'b'.repeat(64);
 process.env.ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'testpassword123';
 process.env.NODE_ENV = process.env.NODE_ENV || 'test';
 
-const { test, describe, beforeEach, afterEach } = require('node:test');
+const { test, describe, beforeEach } = require('node:test');
 const assert = require('node:assert/strict');
 
 // ---------------------------------------------------------------------------

@@ -1,6 +1,8 @@
 import { http, HttpResponse } from 'msw';
 
 export const handlers = [
+  http.get('*/api/admin/me', () => HttpResponse.json({ data: { permissions: ['admin.read', 'compliance.read', 'operations.write'] } })),
+  http.post('*/api/admin/password', () => HttpResponse.json({ data: { success: true } })),
   // Authentication
   http.post('*/api/admin/login', async ({ request }) => {
     const body = await request.json();

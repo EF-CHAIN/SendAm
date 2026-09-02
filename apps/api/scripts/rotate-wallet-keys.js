@@ -39,7 +39,6 @@ const rotateWalletKeys = async ({
       encryptedSecretKey: { not: null },
     },
     select: {
-      id: { select: false }, // avoid logging sensitive identifiers unnecessarily
       id: true,
       publicKey: true,
       encryptedSecretKey: true,

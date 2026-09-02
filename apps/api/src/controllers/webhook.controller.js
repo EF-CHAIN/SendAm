@@ -12,6 +12,7 @@ const { captureException } = require('../observability/errors');
 const { canonicalizePhoneNumber } = require('../utils/validators');
 
 const { validateWebhookEnvelope, validateInboundMessage, validateStatusEntry } = require('../whatsapp/webhook.validator');
+// eslint-disable-next-line no-unused-vars
 const { withIdempotency } = require('../webhooks/idempotency.service');
 
 /** Outcome labels for a single inbound message item within a batch. */
