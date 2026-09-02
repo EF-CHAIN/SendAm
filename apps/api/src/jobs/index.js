@@ -2,12 +2,13 @@ const { registerWhatsAppJobs } = require('./whatsapp.jobs');
 const { startDepositPoller } = require('./deposits.jobs');
 const { startAuditPoller } = require('./audit.jobs');
 const { JOB_NAME, runRotationHealthCheck, rotateCategorySecret } = require('./secret-rotation.job');
+const { startAlertDeliveryTestScheduler } = require('./alertDeliveryTest.job');
 const { enqueue, registerProcessor } = require('../queues/queue.service');
 const config = require('../config/env');
 const logger = require('../utils/logger');
 
 const registerSecretRotationJobs = () => {
-  registerProcessor(JOB_NAME, async (job, token) => {
+  registerProcessor(JOB_NAME, async (job, _token) => {
     const action = job.name;
     if (action === 'health-check') {
       return runRotationHealthCheck();
@@ -40,21 +41,24 @@ const registerJobs = () => {
   const depositPoller = startDepositPoller();
   const auditPoller = startAuditPoller();
   const rotationJobs = registerSecretRotationJobs();
+  const inboxDrain = startWebhookInboxDrain();
+  const outboxReconciler = startOutboxReconciler();
+  const alertDeliveryTest = startAlertDeliveryTestScheduler();
   return {
     whatsappWorker,
     depositPoller,
     auditPoller,
     rotationJobs,
-  const inboxDrain = startWebhookInboxDrain();
-  const outboxReconciler = startOutboxReconciler();
-  return {
-    whatsappWorker,
+    inboxDrain,
+    outboxReconciler,
+    alertDeliveryTest,
     processorNames: ['whatsapp-inbound'],
     stop: async () => {
       depositPoller.stop();
       auditPoller.stop();
       inboxDrain.stop();
       outboxReconciler.stop();
+      alertDeliveryTest.stop();
     },
   };
 };

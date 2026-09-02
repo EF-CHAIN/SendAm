@@ -15,6 +15,8 @@ const { getRotationStatus, rotateSecret: performSecretRotation, evaluateRotation
 const { userDto, walletDto, transactionDto, kycProfileDto } = require('../admin/adminDtos');
 const { getExchangeRate } = require('../pricing/pricing.service');
 const { getAssetRule } = require('../utils/money');
+const { getAlertDeliveryTestStatus } = require('../observability/alertDeliveryTest.service');
+const config = require('../config/env');
 
 // Build an inclusive [gte, lte] range from `from`/`to` query params. Tolerant of
 // bare dates ("2024-01-01") and full ISO timestamps; invalid input is ignored
@@ -573,6 +575,17 @@ const getSystemHealth = async (_req, res, next) => {
   }
 };
 
+// ── Issue #228: Alert delivery test status ───────────────────────────────────
+
+const getAlertDeliveryTestStatusHandler = async (_req, res, next) => {
+  try {
+    const status = getAlertDeliveryTestStatus(config);
+    return sendSuccess(res, status);
+  } catch (error) {
+    next(error);
+  }
+};
+
 const refundTransaction = async (req, res, next) => {
   try {
     const { id } = req.params;
@@ -1103,6 +1116,7 @@ module.exports = {
   getDeadLetterJobById,
   replayDeadLetterJob: replayDeadLetterJobHandler,
   discardDeadLetterJob: discardDeadLetterJobHandler,
+  getAlertDeliveryTestStatus: getAlertDeliveryTestStatusHandler,
 };
 
 

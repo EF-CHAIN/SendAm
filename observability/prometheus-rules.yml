@@ -208,3 +208,34 @@ groups:
         annotations:
           summary: SendAm dead-letter queue is receiving failed poison message jobs
           runbook_url: https://github.com/EF-CHAIN/SendAm/blob/main/docs/OBSERVABILITY.md#dead-letter-queue
+
+      # ── Issue #228: Alert delivery tests ────────────────────────────────────
+
+      - alert: SendAmAlertDeliveryTestFailed
+        expr: increase(sendam_alert_delivery_test_overall_failure_total[15m]) > 0
+        for: 1m
+        labels:
+          severity: critical
+          service: sendam-api
+        annotations:
+          summary: SendAm alert delivery test failed — one or more alert routes could not be verified
+          runbook_url: https://github.com/EF-CHAIN/SendAm/blob/main/docs/OBSERVABILITY.md#alert-delivery-test
+
+      - alert: SendAmAlertDeliveryTestStale
+        expr: sendam_alert_delivery_test_stale == 1
+        for: 2m
+        labels:
+          severity: critical
+          service: sendam-api
+        annotations:
+          summary: SendAm alert delivery tests have not run within the expected window — scheduler may be stopped
+          runbook_url: https://github.com/EF-CHAIN/SendAm/blob/main/docs/OBSERVABILITY.md#alert-delivery-test
+
+      - alert: SendAmAlertDeliveryFallbackUsed
+        expr: increase(sendam_alert_delivery_test_fallback_total[30m]) > 0
+        for: 0m
+        labels:
+          severity: warning
+          service: sendam-api
+        annotations:
+          summary: SendAm alert delivery test fell back to secondary route — primary route may be degraded

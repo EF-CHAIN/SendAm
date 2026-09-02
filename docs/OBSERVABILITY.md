@@ -221,3 +221,115 @@ Fires when `sendam_queue_lag_seconds` exceeds 300s (5 minutes).
 Fires on `SendAmDeadLetterQueueGrowing` when repeated job failures move to the dead-letter queue.
 1. Inspect DLQ messages with `node apps/api/scripts/whatsapp-dlq.js inspect`.
 2. Fix underlying provider errors before replaying: `node apps/api/scripts/whatsapp-dlq.js replay`.
+
+### Alert delivery test
+
+**Issue #228** — The worker continuously sends synthetic test alerts through
+every configured alert route to verify end-to-end delivery and acknowledgement.
+The test runs on a configurable interval (default 10 minutes).
+
+#### Configuration
+
+```text
+# How often to run a synthetic test (ms). Default: 600000 (10 minutes).
+ALERT_DELIVERY_TEST_INTERVAL_MS=600000
+
+# Optional fallback route. Tried when ERROR_MONITOR_WEBHOOK_URL fails.
+ALERT_DELIVERY_TEST_FALLBACK_URL=
+ALERT_DELIVERY_TEST_FALLBACK_TOKEN=
+
+# Comma-separated extra routes to test in addition to the primary.
+ALERT_DELIVERY_TEST_EXTRA_URLS=
+
+# HTTP timeout per delivery attempt (ms). Default: 5000.
+ALERT_DELIVERY_TEST_TIMEOUT_MS=5000
+
+# Stale-test multiplier: flag when > N × interval has elapsed. Default: 2.
+ALERT_DELIVERY_TEST_STALE_MULTIPLIER=2
+```
+
+The primary alert route is `ERROR_MONITOR_WEBHOOK_URL`.
+
+#### What the test does
+
+1. Generates a synthetic payload with `event: "sendam-alert-delivery-test"`,
+   `synthetic: true`, and an explicit message stating it is not a real incident.
+2. POSTs the payload to every configured route (primary, then fallback if
+   primary fails, then any extra routes).
+3. Considers a delivery successful only when the route responds with HTTP
+   200/201/202/204 within the configured timeout.
+4. Records the result and updates Prometheus gauges.
+5. Fires a real exception to `ERROR_MONITOR_WEBHOOK_URL` when the overall test
+   fails so operators are notified through the existing error-monitoring path.
+
+#### Metrics
+
+| Metric | Type | Description |
+|--------|------|-------------|
+| `sendam_alert_delivery_test_attempts_total` | counter | Test runs started |
+| `sendam_alert_delivery_test_overall_success_total` | counter | Fully successful test runs |
+| `sendam_alert_delivery_test_overall_failure_total` | counter | Failed test runs |
+| `sendam_alert_delivery_test_success_total{route=…}` | counter | Per-route successes |
+| `sendam_alert_delivery_test_failure_total{route=…}` | counter | Per-route failures |
+| `sendam_alert_delivery_test_fallback_total{fallback=…}` | counter | Fallback attempts |
+| `sendam_alert_delivery_test_last_success_timestamp_seconds` | gauge | Unix epoch of last successful test |
+| `sendam_alert_delivery_test_last_attempt_timestamp_seconds` | gauge | Unix epoch of last test attempt |
+| `sendam_alert_delivery_test_stale` | gauge | 1 when tests are stale |
+| `sendam_alert_delivery_test_stale_total` | counter | Stale detections |
+
+#### Prometheus alerts
+
+| Alert | Condition |
+|-------|-----------|
+| `SendAmAlertDeliveryTestFailed` | A test failed within the last 15 minutes |
+| `SendAmAlertDeliveryTestStale` | `sendam_alert_delivery_test_stale == 1` for 2+ minutes |
+| `SendAmAlertDeliveryFallbackUsed` | Fallback was triggered (primary route degraded) |
+
+#### Admin API
+
+`GET /admin/alert-delivery-test` (requires `operations.write`) returns:
+
+```json
+{
+  "configured": true,
+  "intervalMs": 600000,
+  "routeCount": 1,
+  "testedRoutes": ["https://alerts.example.com/hook"],
+  "lastTestAttempt": {
+    "testId": "…",
+    "startedAt": "…",
+    "completedAt": "…",
+    "success": true,
+    "fallbackUsed": false,
+    "routeResults": [{ "routeId": "…", "success": true, "statusCode": 200, "durationMs": 42 }]
+  },
+  "lastSuccessfulTest": { "testId": "…", "completedAt": "…" },
+  "healthy": true,
+  "stale": false,
+  "staleSinceMs": null
+}
+```
+
+#### Troubleshooting
+
+**`SendAmAlertDeliveryTestFailed`**
+1. Check `GET /admin/alert-delivery-test` for `lastTestAttempt.routeResults`.
+2. Verify the alerting webhook endpoint is reachable from the worker host
+   (`curl -X POST <ERROR_MONITOR_WEBHOOK_URL> -d '{}' -H 'content-type: application/json'`).
+3. Confirm `ERROR_MONITOR_WEBHOOK_URL` is correctly set in the worker environment.
+4. If the primary route is down, set `ALERT_DELIVERY_TEST_FALLBACK_URL` to an
+   alternative endpoint so the test can succeed via fallback.
+
+**`SendAmAlertDeliveryTestStale`**
+1. The scheduler may have stopped. Check worker process health.
+2. Confirm the worker started successfully and registered all jobs (look for
+   `alert_delivery_test_scheduler_started` in logs).
+3. If the worker restarted, the first test fires within one interval.
+
+#### Customer safety
+
+Synthetic test payloads carry `synthetic: true` and
+`event: "sendam-alert-delivery-test"`. They never reference real users,
+phone numbers, transactions, or payment amounts. They cannot trigger customer
+notifications, create incidents, or enter any customer-facing workflow.
+The synthetic marker is validated in `test/alertDeliveryTest.service.test.js`.

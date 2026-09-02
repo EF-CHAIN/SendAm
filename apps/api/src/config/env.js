@@ -258,4 +258,26 @@ module.exports = {
     secretRotationAlertWebhookUrl: process.env.SECRET_ROTATION_ALERT_WEBHOOK_URL || process.env.ERROR_MONITOR_WEBHOOK_URL,
     secretRotationAlertToken: process.env.SECRET_ROTATION_ALERT_TOKEN || process.env.ERROR_MONITOR_TOKEN,
   },
+  // ── Issue #228: Continuous alert delivery testing ────────────────────────
+  // Periodically sends synthetic test alerts through every configured alert
+  // route to verify end-to-end delivery and acknowledgement.
+  alertDeliveryTest: {
+    // How often to run a synthetic test (milliseconds). Default: 10 minutes.
+    intervalMs: Number(process.env.ALERT_DELIVERY_TEST_INTERVAL_MS || 10 * 60 * 1000),
+    // Optional secondary/fallback alert webhook URL.
+    // When the primary ERROR_MONITOR_WEBHOOK_URL fails, the test falls back here.
+    fallbackWebhookUrl: process.env.ALERT_DELIVERY_TEST_FALLBACK_URL || null,
+    // Optional bearer token for the fallback webhook.
+    fallbackWebhookToken: process.env.ALERT_DELIVERY_TEST_FALLBACK_TOKEN || null,
+    // Comma-separated list of additional webhook URLs to test (beyond primary + fallback).
+    extraRouteUrls: (process.env.ALERT_DELIVERY_TEST_EXTRA_URLS || '')
+      .split(',')
+      .map((u) => u.trim())
+      .filter(Boolean),
+    // HTTP timeout per delivery attempt (milliseconds). Default: 5 seconds.
+    timeoutMs: Number(process.env.ALERT_DELIVERY_TEST_TIMEOUT_MS || 5000),
+    // Multiplier applied to intervalMs to determine when a test is considered
+    // stale (missed). Default: 2 (i.e. flag when > 2× interval has elapsed).
+    staleMultiplier: Number(process.env.ALERT_DELIVERY_TEST_STALE_MULTIPLIER || 2),
+  },
 };
