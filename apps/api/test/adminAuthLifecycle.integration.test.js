@@ -24,6 +24,7 @@ let sessionSeq = 0;
 let adminSeq = 0;
 
 const now = () => new Date();
+// eslint-disable-next-line no-unused-vars
 const future = () => new Date(Date.now() + 12 * 60 * 60 * 1000);
 const roleByName = (name) => Object.values(db.roles).find((r) => r.name === name);
 const roleById = (id) => db.roles[id] || roleByName(id);

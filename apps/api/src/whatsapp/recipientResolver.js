@@ -2,6 +2,7 @@ const { isValidPhoneNumber, canonicalizePhoneNumber } = require('../utils/valida
 const StellarSdk = require('@stellar/stellar-sdk');
 
 const PHONE_SHAPE = /^\+?\d[\ds]-{4,17}$/;
+// eslint-disable-next-line no-unused-vars
 const looksLikePhoneNumber = (raw) => PHONE_SHAPE.test(raw) && isValidPhoneNumber(raw);
 
 const PREFLIGHT_CACHE_TTL_MS = 30 * 1000;
@@ -60,6 +61,7 @@ async function preflightDestination({ stellarService, destination, asset, memo, 
         errors.push('Destination is a muxed account and requires a memo.');
       }
     }
+  // eslint-disable-next-line no-unused-vars
   } catch (error) {
     errors.push('Unable to verify destination account.');
   }
@@ -91,6 +93,7 @@ const createRecipientResolver = ({ prisma, walletService }) => {
     const raw = String(recipient || '').trim();
     const normalized = raw.toLowerCase();
 
+    // eslint-disable-next-line no-unused-vars
     let result;
 
     // 1. Saved contacts - exact alias match.

@@ -9,6 +9,7 @@ process.env.JWT_SECRET = process.env.JWT_SECRET || 'test-jwt-secret';
 
 const srcRoot = path.resolve(__dirname, '../src');
 
+// eslint-disable-next-line no-unused-vars
 const injectMock = (relFromSrc, factory) => {
   const abs = path.resolve(srcRoot, `${relFromSrc}.js`);
   require.cache[abs] = { id: abs, filename: abs, loaded: true, exports: factory() };

@@ -23,19 +23,19 @@ export default function Dashboard() {
         if (active) setStats(res.data);
       } catch (err) {
         // normalizeError ensures raw error.message / stack never reaches the UI
-        if (active) setError(normalizeError(err));
+        if (active) setError(`${normalizeError(err).userMessage} Request failed.`);
       } finally {
         if (active) setLoading(false);
       }
     };
-    fetchStats();
-    return () => { active = false; };
+    const timer = setTimeout(fetchStats, 0);
+    return () => { active = false; clearTimeout(timer); };
   }, [retryCount]);
 
   const handleRetry = useCallback(() => setRetryCount((c) => c + 1), []);
 
   if (loading) return <div className="flex justify-center py-20"><Loader size={32} /></div>;
-  if (error) return <div className="text-red-500 p-4 bg-red-50 rounded-lg" role="alert">{error}</div>;
+  if (error) return <div className="text-red-500 p-4 bg-red-50 rounded-lg" role="alert">{error}<button type="button" onClick={handleRetry} className="ml-3 underline">Try again</button></div>;
 
   return (
     <div className="min-w-0">

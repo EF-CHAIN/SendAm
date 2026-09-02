@@ -49,7 +49,9 @@ export default function OnboardingStatus() {
   };
 
   useEffect(() => {
-    fetchStatus();
+    const timer = setTimeout(() => fetchStatus(), 0);
+    return () => clearTimeout(timer);
+    // fetchStatus performs the initial request and owns its loading state.
   }, []);
 
   const getStageBadge = (stage) => {

@@ -241,9 +241,9 @@ const validatePayload = (schemaName, body) => {
  * traceability.
  *
  * @param {string} schemaName
- * @param {{ allowUnknown?: boolean }} [options]
+ * @param {{ allowUnknown?: boolean }} [_options]
  */
-const validateExternalPayload = (schemaName, options = {}) => (req, res, next) => {
+const validateExternalPayload = (schemaName, _options = {}) => (req, res, next) => {
   const { valid, errors } = validatePayload(schemaName, req.body);
 
   if (!valid) {

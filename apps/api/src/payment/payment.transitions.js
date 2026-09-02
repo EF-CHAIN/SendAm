@@ -199,6 +199,7 @@ async function transitionPaymentState({
       entityId: String(transactionId),
       metadata: { status: toState, fromState: current.status, toState, reason, ...metadata },
     });
+  // eslint-disable-next-line no-empty
   } catch {}
 
   try {
@@ -213,6 +214,7 @@ async function transitionPaymentState({
         payload: { fromState: current.status, toState, reason },
       });
     }
+  // eslint-disable-next-line no-empty
   } catch {}
 
   return updatedTx;

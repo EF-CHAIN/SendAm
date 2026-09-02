@@ -304,6 +304,7 @@ test('KYC Review Approval and Denial E2E', { skip: !process.env.TEST_DATABASE_UR
       },
     });
 
+    // eslint-disable-next-line no-unused-vars
     const adminId = 'admin-1';
 
     // Resubmit for review

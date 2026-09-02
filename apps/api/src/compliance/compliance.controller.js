@@ -18,7 +18,6 @@ const {
   TransitionError,
 } = require('./kyc.transitions');
 const { getOnboardingStatus: computeOnboardingStatus } = require('./onboarding.service');
-const logger = require('../utils/logger');
 
 const getProfile = async (req, res, next) => {
   try {

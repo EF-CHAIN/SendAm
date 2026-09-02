@@ -11,11 +11,11 @@ const matches = (row, where) => {
     if (key === 'AND') return cond.every((sub) => matches(row, sub));
     if (key === 'user' || key === 'wallet') return matches(row[key] || {}, cond);
     const value = row[key];
-    if (cond && typeof cond === 'object' && !Array.isArray(cond)) {
-      return Object.entries(cond).every(([op, operand]) => {
-        const eq = (a, b) => (a instanceof Date || b instanceof Date)
+    const eq = (a, b) => (a instanceof Date || b instanceof Date)
           ? new Date(a).getTime() === new Date(b).getTime()
           : a === b;
+    if (cond && typeof cond === 'object' && !Array.isArray(cond)) {
+      return Object.entries(cond).every(([op, operand]) => {
         switch (op) {
           case 'equals': return eq(value, operand);
           case 'contains': return String(value).toLowerCase().includes(String(operand).toLowerCase());

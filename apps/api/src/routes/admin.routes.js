@@ -58,6 +58,9 @@ router.delete('/legal-holds/:userId', requireAdmin('compliance.write'), privacyC
 router.get('/audit-logs/export', requireAdmin('admin.read'), adminController.exportAuditLogs);
 router.get('/system-health', requireAdmin('operations.write'), adminController.getSystemHealth);
 
+// ── Issue #228: Alert delivery test status ───────────────────────────────────
+router.get('/alert-delivery-test', requireAdmin('operations.write'), adminController.getAlertDeliveryTestStatus);
+
 // Dead-letter queue inspection and operator recovery (#340)
 router.get('/dlq', requireAdmin('operations.write'), adminController.getDeadLetterJobs);
 router.get('/dlq/:id', requireAdmin('operations.write'), adminController.getDeadLetterJobById);

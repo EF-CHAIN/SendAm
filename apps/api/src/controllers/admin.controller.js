@@ -1,6 +1,7 @@
 const { sendSuccess, sendError, sendCursorPaginated } = require('../utils/response');
 const { authenticate, createInvitation, acceptInvitation, revokeSessions, hashPassword, changeOwnPassword } = require('../services/adminAuth.service');
 const { writeAuditLog } = require('../common/audit.service');
+// eslint-disable-next-line no-unused-vars
 const { appendEvent, EVENT_TYPES, queryEvents, verifyEventChain: verifyEventChainService } = require('../common/event.service');
 const { deactivateAccount, reactivateAccount, getAccountStatusHistory, DEACTIVATION_REASONS } = require('../compliance/account.service');
 const { getOnboardingStatus } = require('../compliance/onboarding.service');
@@ -11,10 +12,14 @@ const { parseLimit, cursorQuery, MAX_EXPORT_ROWS } = require('../utils/cursorPag
 const { listStuckPayments, operatorResolveStuckPayment, listLedgerDiscrepancies } = require('../payment/payment.reconciler');
 const { getWalletActivitySummary } = require('../services/wallet-activity-summary.service');
 const walletService = require('../wallet/wallet.service');
+// eslint-disable-next-line no-unused-vars
 const { getRotationStatus, rotateSecret: performSecretRotation, evaluateRotationHealth, SECRET_CATEGORIES } = require('../services/secret-rotation.service');
-const { userDto, walletDto, transactionDto, kycProfileDto } = require('../admin/adminDtos');
+// eslint-disable-next-line no-unused-vars
+const { walletDto, transactionDto, kycProfileDto } = require('../admin/adminDtos');
 const { getExchangeRate } = require('../pricing/pricing.service');
 const { getAssetRule } = require('../utils/money');
+const { getAlertDeliveryTestStatus } = require('../observability/alertDeliveryTest.service');
+const config = require('../config/env');
 
 // Build an inclusive [gte, lte] range from `from`/`to` query params. Tolerant of
 // bare dates ("2024-01-01") and full ISO timestamps; invalid input is ignored
@@ -573,6 +578,17 @@ const getSystemHealth = async (_req, res, next) => {
   }
 };
 
+// ── Issue #228: Alert delivery test status ───────────────────────────────────
+
+const getAlertDeliveryTestStatusHandler = async (_req, res, next) => {
+  try {
+    const status = getAlertDeliveryTestStatus(config);
+    return sendSuccess(res, status);
+  } catch (error) {
+    next(error);
+  }
+};
+
 const refundTransaction = async (req, res, next) => {
   try {
     const { id } = req.params;
@@ -1103,6 +1119,7 @@ module.exports = {
   getDeadLetterJobById,
   replayDeadLetterJob: replayDeadLetterJobHandler,
   discardDeadLetterJob: discardDeadLetterJobHandler,
+  getAlertDeliveryTestStatus: getAlertDeliveryTestStatusHandler,
 };
 
 

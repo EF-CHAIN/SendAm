@@ -5,6 +5,7 @@ const prisma = require('../common/prisma');
 const { withIdAlias, withIdAliases } = require('../common/records');
 const logger = require('../utils/logger');
 const { canonicalizePhoneNumber } = require('../utils/validators');
+// eslint-disable-next-line no-unused-vars
 const { CATALOG } = require('../errors/catalog');
 const config = require('../config/env');
 const { assertAccountActive } = require('../compliance/account.service');
@@ -80,12 +81,14 @@ const classifyRecoverableError = (error) => {
   return { ...classification, retryable: Boolean(classification.retryable) };
 };
 
+// eslint-disable-next-line no-unused-vars
 const isProvisioningRetryable = (wallet) => {
   if (wallet.fundingState === 'succeeded' || wallet.funded) return false;
   const classification = classifyRecoverableError(new Error(wallet.fundingError || ''));
   return classification.retryable && wallet.fundingAttempts < MAX_PROVISIONING_ATTEMPTS;
 };
 
+// eslint-disable-next-line no-unused-vars
 const isTrustlineRetryable = (wallet) => {
   if (wallet.trustlineState === 'succeeded') return false;
   const classification = classifyRecoverableError(new Error(wallet.trustlineError || ''));

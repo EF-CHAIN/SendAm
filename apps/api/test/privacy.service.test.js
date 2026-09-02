@@ -132,7 +132,7 @@ inject('../src/compliance/smileId.provider', { deleteSubject: makeProviderMock()
 inject('../src/services/whatsapp.service', makeWhatsappMock());
 inject('../src/voice/voice.service', { processVoiceMessage: async () => {}, deleteUserData: makeProviderMock().deleteSubject });
 inject('../src/compliance/providers/monitoring', { deleteUserData: makeProviderMock().deleteSubject });
-// eslint-disable-next-line global-require
+ 
 const service = require('../src/compliance/privacy.service');
 
 beforeEach(() => {

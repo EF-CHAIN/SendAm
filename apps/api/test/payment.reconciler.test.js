@@ -146,6 +146,7 @@ test('reconcileStaleTransactions: Horizon 404 while ledger sequence window is op
   // Transaction is 6 min old: past staleAgeMs(5m) but inside LEDGER_SEQUENCE_WINDOW_MS(5m)?
   // Actually 6 min > 5 min, so sequence window IS closed for the default.
   // Use a transaction only 5.5 min old to stay within the window.
+  // eslint-disable-next-line no-unused-vars
   const tx = recentPendingTx({
     id: 'tx_fresh',
     createdAt: new Date(Date.now() - 5.5 * 60 * 1000), // 5.5 min > staleAgeMs but < window

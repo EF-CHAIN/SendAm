@@ -5,6 +5,8 @@ const logger = require('../utils/logger');
 const prisma = require('../common/prisma');
 const { enqueue } = require('../queues/queue.service');
 const { increment } = require('../observability/metrics');
+const { ProviderSkippedError } = require('../compliance/providerErrors');
+const { outboundHeaders } = require('../observability/context');
 
 const RETRYABLE_META_STATUS_CODES = new Set([429, 500, 502, 503, 504]);
 

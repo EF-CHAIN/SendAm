@@ -129,6 +129,7 @@ const anonymizeUser = async (db, options = {}) => {
   }
 
   const anonymizedPhone = `deleted-user-${userId}`;
+  // eslint-disable-next-line no-unused-vars
   const anonymizedUser = {
     ...user,
     phoneNumber: anonymizedPhone,

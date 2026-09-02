@@ -39,6 +39,7 @@ const mockRecipientWallet = {
 const createdTransactions = new Map();
 
 // Database queries/mocks
+// eslint-disable-next-line no-unused-vars
 let mockCreatedRefund;
 const prismaMock = {
   transaction: {

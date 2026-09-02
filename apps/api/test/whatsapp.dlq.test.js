@@ -14,6 +14,7 @@ injectMock('utils/logger', { info: () => {}, warn: () => {}, error: () => {} });
 const {
   moveToDeadLetterQueue,
   listDeadLetterJobs,
+  // eslint-disable-next-line no-unused-vars
   getDeadLetterJob,
   replayDeadLetterJob,
   clearDlq,
@@ -117,6 +118,7 @@ test('replayDeadLetterJob re-enqueues job and records audit event when job is va
   const record = await moveToDeadLetterQueue(dummyJob, new Error('Network failure'));
 
   let enqueued = false;
+  // eslint-disable-next-line no-unused-vars
   let auditCreated = false;
 
   const mockQueueService = {

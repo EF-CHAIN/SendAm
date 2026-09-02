@@ -51,7 +51,11 @@ export default function Users() {
   };
 
   useEffect(() => {
-    fetchUsers();
+    const timer = setTimeout(() => fetchUsers(), 0);
+    return () => clearTimeout(timer);
+    // fetchUsers is intentionally recreated with the page component; params
+    // is the sole trigger for refetching this list.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [params]);
 
   const handleViewOnboarding = async (user) => {

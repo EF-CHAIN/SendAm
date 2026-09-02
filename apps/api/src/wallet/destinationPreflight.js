@@ -4,7 +4,7 @@
 // destinations before they are asked to confirm with a PIN.
 const { server, StellarSdk } = require("../config/stellar");
 const config = require("../config/env");
-const { validateAddress, classifyRecoverableError } = require("./stellar.adapter");
+const { validateAddress } = require("./stellar.adapter");
 
 const PREFLIGHT_CACHE_TTL_MS = 30 * 1000;
 const preflightCache = new Map();

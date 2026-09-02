@@ -26,6 +26,50 @@ inject('pricing/pricing.service', {
   },
 });
 
+// Stub heavy transitive deps that require process-level secrets (ENCRYPTION_KEY,
+// JWT_SECRET, etc.) so this test can load the controller in isolation.
+inject('wallet/wallet.service', { recoverWallet: async () => {} });
+inject('services/adminAuth.service', {
+  authenticate: async () => {},
+  createInvitation: async () => {},
+  acceptInvitation: async () => {},
+  revokeSessions: async () => {},
+  hashPassword: async () => {},
+  changeOwnPassword: async () => {},
+});
+inject('compliance/account.service', {
+  deactivateAccount: async () => {},
+  reactivateAccount: async () => {},
+  getAccountStatusHistory: async () => [],
+  DEACTIVATION_REASONS: {},
+});
+inject('compliance/onboarding.service', { getOnboardingStatus: async () => {} });
+inject('compliance/evidence.service', {
+  buildUserEvidencePackage: async () => {},
+  exportWorkflowEventsCsv: async () => {},
+  exportKycEvidenceCsv: async () => {},
+  exportAccountStatusHistoryCsv: async () => {},
+});
+inject('common/event.service', {
+  appendEvent: async () => {},
+  EVENT_TYPES: {},
+  queryEvents: async () => [],
+  verifyEventChain: async () => {},
+});
+inject('payment/payment.reconciler', {
+  listStuckPayments: async () => [],
+  operatorResolveStuckPayment: async () => {},
+  listLedgerDiscrepancies: async () => [],
+});
+inject('services/wallet-activity-summary.service', { getWalletActivitySummary: async () => {} });
+inject('services/secret-rotation.service', {
+  getRotationStatus: async () => {},
+  rotateSecret: async () => {},
+  evaluateRotationHealth: async () => {},
+  SECRET_CATEGORIES: {},
+});
+inject('observability/alertDeliveryTest.service', { getAlertDeliveryTestStatus: () => ({}) });
+
 const controller = require('../src/controllers/admin.controller');
 
 const makeRes = () => {
