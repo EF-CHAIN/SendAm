@@ -214,8 +214,9 @@ describe('admin dashboard accessibility', () => {
   });
 
   describe('forms', () => {
-    it('associates login labels with their controls and marks them required', () => {
+    it('associates login labels with their controls and marks them required', async () => {
       renderLogin();
+      await waitFor(() => expect(screen.getByLabelText('Email')).toBeInTheDocument());
       expect(screen.getByLabelText('Email')).toBeRequired();
       expect(screen.getByLabelText('Password')).toBeRequired();
       expect(screen.getByRole('button', { name: /sign in/i })).toBeInTheDocument();
@@ -224,6 +225,7 @@ describe('admin dashboard accessibility', () => {
     it('completes the login form using only the keyboard', async () => {
       const user = userEvent.setup();
       renderLogin();
+      await waitFor(() => expect(screen.getByLabelText('Email')).toBeInTheDocument());
       await user.tab();
       expect(screen.getByLabelText('Email')).toHaveFocus();
       await user.keyboard('operator@example.com');
@@ -239,6 +241,7 @@ describe('admin dashboard accessibility', () => {
     it('announces failed login errors via an alert', async () => {
       const user = userEvent.setup();
       renderLogin();
+      await waitFor(() => expect(screen.getByLabelText('Email')).toBeInTheDocument());
       await user.type(screen.getByLabelText('Email'), 'operator@example.com');
       await user.type(screen.getByLabelText('Password'), 'wrong_password');
       await user.click(screen.getByRole('button', { name: /sign in/i }));
