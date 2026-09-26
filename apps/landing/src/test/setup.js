@@ -19,3 +19,25 @@ if (!window.matchMedia) {
     dispatchEvent: () => false,
   });
 }
+
+// jsdom does not implement HTMLCanvasElement 2D context by default.
+if (!HTMLCanvasElement.prototype.getContext || HTMLCanvasElement.prototype.getContext.toString().includes('notImplemented')) {
+  HTMLCanvasElement.prototype.getContext = () => ({
+    clearRect: () => {},
+    beginPath: () => {},
+    arc: () => {},
+    fill: () => {},
+    stroke: () => {},
+    moveTo: () => {},
+    lineTo: () => {},
+    fillText: () => {},
+    createRadialGradient: () => ({ addColorStop: () => {} }),
+    set strokeStyle(_) {},
+    set fillStyle(_) {},
+    set lineWidth(_) {},
+    set shadowColor(_) {},
+    set shadowBlur(_) {},
+    set font(_) {},
+  });
+}
+
