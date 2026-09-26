@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { 
   getAdminUsers, 
   getUserOnboardingStatus, 
@@ -13,6 +13,92 @@ import Loader from '@shared/Loader';
 import StatusBadge from '@/components/StatusBadge';
 import Pagination from '@/components/Pagination';
 import FilterBar from '@/components/FilterBar';
+
+// Anything that can hold focus inside a dialog, in DOM order.
+const FOCUSABLE_IN_DIALOG = [
+  'a[href]',
+  'button:not([disabled])',
+  'input:not([disabled]):not([type="hidden"])',
+  'select:not([disabled])',
+  'textarea:not([disabled])',
+  '[tabindex]:not([tabindex="-1"])',
+].join(',');
+
+const focusableIn = (root) =>
+  Array.from(root.querySelectorAll(FOCUSABLE_IN_DIALOG)).filter(
+    (el) => !el.hasAttribute('aria-hidden') && el.tabIndex !== -1
+  );
+
+/**
+ * Keyboard containment for a modal dialog (WCAG 2.2: 2.1.2 No Keyboard Trap
+ * still needs a documented way out — Escape; 2.4.3 Focus Order — focus must
+ * enter the dialog when it opens and return to the trigger when it closes).
+ *
+ * Returns a ref to attach to the dialog element. Tab and Shift+Tab cycle within
+ * the dialog only, Escape invokes `onClose`, and the element focused before the
+ * dialog opened is refocused on close.
+ */
+function useDialogFocusTrap(isOpen, onClose) {
+  const dialogRef = useRef(null);
+  const returnFocusRef = useRef(null);
+  // onClose is a fresh closure every render; keeping it in a ref lets the effect
+  // below depend on `isOpen` alone, so opening the dialog re-runs it once
+  // instead of stealing focus on every subsequent render.
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+
+  useEffect(() => {
+    const dialog = dialogRef.current;
+    if (!isOpen || !dialog) return undefined;
+
+    returnFocusRef.current = document.activeElement;
+    const items = focusableIn(dialog);
+    (items[0] || dialog).focus();
+
+    const onKeyDown = (event) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        event.stopPropagation();
+        onCloseRef.current?.();
+        return;
+      }
+      if (event.key !== 'Tab') return;
+
+      const focusable = focusableIn(dialog);
+      if (focusable.length === 0) {
+        event.preventDefault();
+        dialog.focus();
+        return;
+      }
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      const active = document.activeElement;
+      // When the dialog container itself holds focus, pull focus to the correct
+      // end rather than letting the browser continue behind the dialog.
+      if (active === dialog) {
+        event.preventDefault();
+        (event.shiftKey ? last : first).focus();
+      } else if (event.shiftKey && active === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && active === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+
+    document.addEventListener('keydown', onKeyDown, true);
+    return () => {
+      document.removeEventListener('keydown', onKeyDown, true);
+      const trigger = returnFocusRef.current;
+      if (trigger && document.contains(trigger) && typeof trigger.focus === 'function') {
+        trigger.focus();
+      }
+    };
+  }, [isOpen]);
+
+  return dialogRef;
+}
 
 export default function Users() {
   const { params, getFilter, setFilter, resetFilters, goNext, goPrev } = useListQuery(['phone']);
@@ -37,6 +123,17 @@ export default function Users() {
   const [reactivateNotes, setReactivateNotes] = useState('');
   const [reactivateApprovedBy, setReactivateApprovedBy] = useState('');
   const [refreshKey, setRefreshKey] = useState(0);
+
+  const closeOnboarding = useCallback(() => {
+    setOnboardingUser(null);
+    setOnboardingData(null);
+  }, []);
+  const closeDeactivate = useCallback(() => setDeactivateModalUser(null), []);
+  const closeReactivate = useCallback(() => setReactivateModalUser(null), []);
+
+  const onboardingDialogRef = useDialogFocusTrap(Boolean(onboardingUser), closeOnboarding);
+  const deactivateDialogRef = useDialogFocusTrap(Boolean(deactivateModalUser), closeDeactivate);
+  const reactivateDialogRef = useDialogFocusTrap(Boolean(reactivateModalUser), closeReactivate);
 
   useEffect(() => {
     let active = true;
@@ -208,7 +305,7 @@ export default function Users() {
       )}
 
       {actionSuccess && (
-        <div className="mb-4 p-3 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-lg text-sm">
+        <div className="mb-4 p-3 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-lg text-sm" role="status">
           {actionSuccess}
         </div>
       )}
@@ -232,15 +329,23 @@ export default function Users() {
       {/* Onboarding Checkpoints Modal */}
       {onboardingUser && (
         <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-xl max-h-[90vh] overflow-y-auto">
+          <div
+            ref={onboardingDialogRef}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="onboarding-status-dialog-title"
+            tabIndex={-1}
+            className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-xl max-h-[90vh] overflow-y-auto"
+          >
             <div className="flex justify-between items-center pb-4 border-b border-slate-100 mb-4">
               <div>
-                <h2 className="text-lg font-bold text-slate-900">Onboarding Status</h2>
+                <h2 id="onboarding-status-dialog-title" className="text-lg font-bold text-slate-900">Onboarding Status</h2>
                 <p className="text-xs text-slate-500">{onboardingUser.phoneNumber}</p>
               </div>
               <button
                 type="button"
-                onClick={() => { setOnboardingUser(null); setOnboardingData(null); }}
+                onClick={closeOnboarding}
+                aria-label="Close onboarding status"
                 className="text-slate-400 hover:text-slate-600 text-lg font-bold px-2"
               >
                 ✕
@@ -297,16 +402,25 @@ export default function Users() {
       {/* Deactivate User Modal */}
       {deactivateModalUser && (
         <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
-          <form onSubmit={handleDeactivate} className="bg-white rounded-2xl max-w-md w-full p-6 shadow-xl">
-            <h2 className="text-lg font-bold text-red-900 mb-1">Deactivate Customer Account</h2>
+          <form
+            ref={deactivateDialogRef}
+            onSubmit={handleDeactivate}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="deactivate-user-dialog-title"
+            tabIndex={-1}
+            className="bg-white rounded-2xl max-w-md w-full p-6 shadow-xl"
+          >
+            <h2 id="deactivate-user-dialog-title" className="text-lg font-bold text-red-900 mb-1">Deactivate Customer Account</h2>
             <p className="text-xs text-slate-600 mb-4">
               Disables wallet and payment operations for <strong>{deactivateModalUser.phoneNumber}</strong>.
             </p>
 
             <div className="space-y-4">
               <div>
-                <label className="block text-xs font-medium text-slate-700 mb-1">Deactivation Reason *</label>
+                <label htmlFor="deactivate-reason" className="block text-xs font-medium text-slate-700 mb-1">Deactivation Reason *</label>
                 <select
+                  id="deactivate-reason"
                   value={deactivateReason}
                   onChange={(e) => setDeactivateReason(e.target.value)}
                   className="w-full text-sm rounded-lg border border-slate-300 p-2 focus:ring-2 focus:ring-red-500 outline-none"
@@ -324,8 +438,9 @@ export default function Users() {
               </div>
 
               <div>
-                <label className="block text-xs font-medium text-slate-700 mb-1">Operational Notes</label>
+                <label htmlFor="deactivate-notes" className="block text-xs font-medium text-slate-700 mb-1">Operational Notes</label>
                 <textarea
+                  id="deactivate-notes"
                   value={deactivateNotes}
                   onChange={(e) => setDeactivateNotes(e.target.value)}
                   placeholder="Detail context for compliance audit..."
@@ -350,7 +465,7 @@ export default function Users() {
             <div className="flex justify-end gap-3 mt-6">
               <button
                 type="button"
-                onClick={() => setDeactivateModalUser(null)}
+                onClick={closeDeactivate}
                 className="px-4 py-2 text-xs font-medium text-slate-600 hover:bg-slate-100 rounded-lg transition"
               >
                 Cancel
@@ -370,16 +485,25 @@ export default function Users() {
       {/* Reactivate User Modal */}
       {reactivateModalUser && (
         <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
-          <form onSubmit={handleReactivate} className="bg-white rounded-2xl max-w-md w-full p-6 shadow-xl">
-            <h2 className="text-lg font-bold text-slate-900 mb-1">Reactivate Customer Account</h2>
+          <form
+            ref={reactivateDialogRef}
+            onSubmit={handleReactivate}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="reactivate-user-dialog-title"
+            tabIndex={-1}
+            className="bg-white rounded-2xl max-w-md w-full p-6 shadow-xl"
+          >
+            <h2 id="reactivate-user-dialog-title" className="text-lg font-bold text-slate-900 mb-1">Reactivate Customer Account</h2>
             <p className="text-xs text-slate-600 mb-4">
               Restores wallet and payment operations for <strong>{reactivateModalUser.phoneNumber}</strong>.
             </p>
 
             <div className="space-y-4">
               <div>
-                <label className="block text-xs font-medium text-slate-700 mb-1">Reactivation Notes *</label>
+                <label htmlFor="reactivate-notes" className="block text-xs font-medium text-slate-700 mb-1">Reactivation Notes *</label>
                 <textarea
+                  id="reactivate-notes"
                   value={reactivateNotes}
                   onChange={(e) => setReactivateNotes(e.target.value)}
                   placeholder="State resolution rationale (e.g. Identity verified / False positive resolved)..."
@@ -389,8 +513,9 @@ export default function Users() {
               </div>
 
               <div>
-                <label className="block text-xs font-medium text-slate-700 mb-1">Second Approver ID (Maker-Checker)</label>
+                <label htmlFor="reactivate-approved-by" className="block text-xs font-medium text-slate-700 mb-1">Second Approver ID (Maker-Checker)</label>
                 <input
+                  id="reactivate-approved-by"
                   type="text"
                   value={reactivateApprovedBy}
                   onChange={(e) => setReactivateApprovedBy(e.target.value)}
@@ -403,7 +528,7 @@ export default function Users() {
             <div className="flex justify-end gap-3 mt-6">
               <button
                 type="button"
-                onClick={() => setReactivateModalUser(null)}
+                onClick={closeReactivate}
                 className="px-4 py-2 text-xs font-medium text-slate-600 hover:bg-slate-100 rounded-lg transition"
               >
                 Cancel
