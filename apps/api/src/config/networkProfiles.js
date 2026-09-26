@@ -11,6 +11,20 @@
 const TESTNET_USDC_ISSUER = 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5';
 const MAINNET_USDC_ISSUER = 'GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN';
 
+/**
+ * @typedef {object} NetworkProfile
+ * @property {string} id - Canonical network identifier ('testnet' | 'public').
+ * @property {string} label - Human-readable name used in logs, errors, and UI display.
+ * @property {boolean} isMainnet - True if this network moves real funds and requires explicit confirmation.
+ * @property {string} passphrase - Stellar network passphrase used to sign and verify transactions.
+ * @property {readonly string[]} horizonHosts - Approved Horizon hostname allowlist for this network.
+ * @property {string} defaultHorizonUrl - Default Horizon API base URL.
+ * @property {string} usdcIssuer - Official Circle USDC issuing account public key for this network.
+ * @property {string} explorerBaseUrl - Base URL for the StellarExpert block explorer for this network.
+ * @property {boolean} supportsFriendbot - Whether automated testnet account funding (Friendbot) is available.
+ * @property {string|null} friendbotUrl - Friendbot endpoint URL if supported, or null for networks without free funding.
+ */
+
 const NETWORK_PROFILES = Object.freeze({
   testnet: Object.freeze({
     id: 'testnet',
