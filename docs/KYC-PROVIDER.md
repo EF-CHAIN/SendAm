@@ -5,6 +5,46 @@ SendAm uses Smile ID Basic KYC's asynchronous REST API. `POST
 applicant to Smile ID, and returns `202`. Smile ID delivers its result to
 `POST /api/compliance/kyc/callback/smileid`.
 
+## Sandbox setup
+
+Follow these steps to configure a working Smile ID sandbox setup for local development and integration testing:
+
+### 1. Obtain Sandbox Credentials
+
+1. Sign up or log in to the [Smile ID Developer Portal](https://portal.usesmileid.com/).
+2. Navigate to **Integration > API Keys & Partner ID**.
+3. Locate and copy your **Sandbox Partner ID** and generate or copy your **Sandbox API Key**.
+
+### 2. Configure Environment Variables
+
+Add or update the following environment variables in `apps/api/.env` (referencing `apps/api/.env.example`):
+
+```env
+# KYC Provider Selection
+KYC_PROVIDER=smileid
+
+# Smile ID Sandbox Credentials
+SMILE_ID_PARTNER_ID=your_sandbox_partner_id
+SMILE_ID_API_KEY=your_sandbox_api_key
+
+# Public HTTPS webhook endpoint for receiving async verification callbacks
+# For local testing, expose your server via a tunnel (e.g. ngrok or Cloudflare Tunnel)
+SMILE_ID_CALLBACK_URL=https://your-tunnel-url.example.com/api/compliance/kyc/callback/smileid
+
+# Optional configurations (defaults applied automatically if omitted)
+# Sandbox is automatically selected when NODE_ENV!=production.
+# Override only when using a custom proxy or mock server:
+# SMILE_ID_BASE_URL=https://sandbox.smileidentity.com/v2/verify_async
+SMILE_ID_TIMEOUT_MS=10000
+SMILE_ID_CALLBACK_TOLERANCE_SEC=300
+```
+
+### 3. Verify Local Setup
+
+1. Start your local API service (`pnpm run dev:api`).
+2. Register and start a KYC verification request via `POST /api/compliance/kyc/start`.
+3. Check the server logs for `kyc_submission_accepted` and ensure the callback payload sent to `SMILE_ID_CALLBACK_URL` generates a `kyc_callback_processed` log upon successful verification.
+
 ## Configuration and rollout
 
 Set `KYC_PROVIDER=smileid`, `SMILE_ID_PARTNER_ID`, `SMILE_ID_API_KEY`, and
