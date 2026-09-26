@@ -1,19 +1,29 @@
-import { useState, useEffect } from 'react';
-import { getAdminKyc, approveKyc, rejectKyc, exportAdminKyc } from '@/lib/adminApi';
-import { useListQuery } from '@/lib/useListQuery';
-import DataTable from '@/components/DataTable';
-import StatusBadge from '@/components/StatusBadge';
-import Loader from '@shared/Loader';
-import Pagination from '@/components/Pagination';
-import FilterBar from '@/components/FilterBar';
+import { useState, useEffect } from "react";
+import {
+  getAdminKyc,
+  approveKyc,
+  rejectKyc,
+  fetchAdminKycExportData,
+  exportAdminKyc,
+} from "@/lib/adminApi";
+import { useListQuery } from "@/lib/useListQuery";
+import DataTable from "@/components/DataTable";
+import StatusBadge from "@/components/StatusBadge";
+import Loader from "@shared/Loader";
+import Pagination from "@/components/Pagination";
+import FilterBar from "@/components/FilterBar";
+import KycExportModal from "@/components/KycExportModal";
+import { encryptData, downloadEncryptedFile } from "@/lib/clientCrypto";
 
 export default function KycReview() {
-  const { params, getFilter, setFilter, resetFilters, goNext, goPrev } = useListQuery(['status', 'phone', 'country']);
+  const { params, getFilter, setFilter, resetFilters, goNext, goPrev } =
+    useListQuery(["status", "phone", "country"]);
   const [rows, setRows] = useState([]);
   const [pagination, setPagination] = useState(null);
   const [loading, setLoading] = useState(true);
   const [exporting, setExporting] = useState(false);
-  const [error, setError] = useState('');
+  const [exportModalOpen, setExportModalOpen] = useState(false);
+  const [error, setError] = useState("");
   const [refreshKey, setRefreshKey] = useState(0);
 
   useEffect(() => {
@@ -30,7 +40,7 @@ export default function KycReview() {
           setPagination(res.pagination);
         }
       } catch (err) {
-        if (active) setError(err.message || 'Failed to fetch KYC profiles');
+        if (active) setError(err.message || "Failed to fetch KYC profiles");
       } finally {
         if (active) setLoading(false);
       }
@@ -43,12 +53,14 @@ export default function KycReview() {
 
   const handleApprove = async (id) => {
     setMutatingId(id);
-    setError('');
+    setError("");
     try {
       await approveKyc(id);
-      setRows((prev) => prev.map((r) => r._id === id ? { ...r, status: 'approved' } : r));
+      setRows((prev) =>
+        prev.map((r) => (r._id === id ? { ...r, status: "approved" } : r)),
+      );
     } catch (err) {
-      setError(err.response?.data?.message || 'Failed to approve KYC');
+      setError(err.response?.data?.message || "Failed to approve KYC");
     } finally {
       setMutatingId(null);
     }
@@ -56,12 +68,14 @@ export default function KycReview() {
 
   const handleReject = async (id) => {
     setMutatingId(id);
-    setError('');
+    setError("");
     try {
       await rejectKyc(id);
-      setRows((prev) => prev.map((r) => r._id === id ? { ...r, status: 'rejected' } : r));
+      setRows((prev) =>
+        prev.map((r) => (r._id === id ? { ...r, status: "rejected" } : r)),
+      );
     } catch (err) {
-      setError(err.response?.data?.message || 'Failed to reject KYC');
+      setError(err.response?.data?.message || "Failed to reject KYC");
     } finally {
       setMutatingId(null);
     }
@@ -69,88 +83,139 @@ export default function KycReview() {
 
   const [mutatingId, setMutatingId] = useState(null);
 
-  const handleExport = async () => {
+  const handleExportSubmit = async ({ format, passphrase }) => {
     setExporting(true);
-    setError('');
+    setError("");
     try {
-      await exportAdminKyc(params);
+      if (format === "encrypted") {
+        const rawBlob = await fetchAdminKycExportData(params);
+        const textContent = await rawBlob.text();
+        const encrypted = await encryptData(textContent, passphrase, {
+          filters: params,
+          exportedAt: new Date().toISOString(),
+          dataType: "KYC_EXPORT",
+        });
+        downloadEncryptedFile(encrypted, `kyc-export-${Date.now()}.sendam-enc`);
+      } else {
+        await exportAdminKyc(params);
+      }
+      setExportModalOpen(false);
     } catch (err) {
-      setError(err.response?.data?.message || 'Failed to export KYC');
+      setError(
+        err.response?.data?.message || err.message || "Failed to export KYC",
+      );
     } finally {
       setExporting(false);
     }
   };
 
-  if (loading) return <div className="flex justify-center py-20" data-testid="kyc-loading"><Loader size={32} /></div>;
+  if (loading)
+    return (
+      <div className="flex justify-center py-20" data-testid="kyc-loading">
+        <Loader size={32} />
+      </div>
+    );
   const handleRefresh = () => setRefreshKey((prev) => prev + 1);
 
   const columns = [
-    { header: 'User', render: (row) => row.userId?.phoneNumber || '-' },
-    { header: 'Provider', accessor: 'provider' },
-    { header: 'Tier', accessor: 'tier' },
-    { header: 'Risk', accessor: 'riskScore' },
-    { header: 'Status', render: (row) => <StatusBadge status={row.status} /> },
-    { header: 'Updated', render: (row) => new Date(row.updatedAt).toLocaleString() },
-    { header: 'Actions', render: (row) => (
-      ['pending', 'review'].includes(row.status) && (
-        <div className="flex gap-2">
-          <button
-            onClick={() => handleApprove(row._id)}
-            disabled={mutatingId === row._id}
-            className="px-3 py-1 text-xs bg-green-600 text-white rounded hover:bg-green-700 disabled:opacity-50"
-          >
-            Approve
-          </button>
-          <button
-            onClick={() => handleReject(row._id)}
-            disabled={mutatingId === row._id}
-            className="px-3 py-1 text-xs bg-red-600 text-white rounded hover:bg-red-700 disabled:opacity-50"
-          >
-            Reject
-          </button>
-        </div>
-      )
-    )}
+    { header: "User", render: (row) => row.userId?.phoneNumber || "-" },
+    { header: "Provider", accessor: "provider" },
+    { header: "Tier", accessor: "tier" },
+    { header: "Risk", accessor: "riskScore" },
+    { header: "Status", render: (row) => <StatusBadge status={row.status} /> },
+    {
+      header: "Updated",
+      render: (row) => new Date(row.updatedAt).toLocaleString(),
+    },
+    {
+      header: "Actions",
+      render: (row) =>
+        ["pending", "review"].includes(row.status) && (
+          <div className="flex gap-2">
+            <button
+              onClick={() => handleApprove(row._id)}
+              disabled={mutatingId === row._id}
+              className="px-3 py-1 text-xs bg-green-600 text-white rounded hover:bg-green-700 disabled:opacity-50"
+            >
+              Approve
+            </button>
+            <button
+              onClick={() => handleReject(row._id)}
+              disabled={mutatingId === row._id}
+              className="px-3 py-1 text-xs bg-red-600 text-white rounded hover:bg-red-700 disabled:opacity-50"
+            >
+              Reject
+            </button>
+          </div>
+        ),
+    },
   ];
 
   return (
     <div>
       <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3 mb-6">
         <h1 className="text-2xl font-bold">KYC Review</h1>
-        <button
-          type="button"
-          onClick={handleRefresh}
-          disabled={loading}
-          className="text-sm rounded-lg border border-gray-200 bg-white px-3 py-1.5 font-medium shadow-sm hover:bg-gray-50 disabled:opacity-50"
-          data-testid="refresh-kyc"
-        >
-        Refresh
-       </button>
-       <button
-         type="button"
-         onClick={handleExport}
-         disabled={exporting}
-         className="text-sm rounded-lg border border-gray-200 bg-white px-3 py-1.5 font-medium shadow-sm hover:bg-gray-50 disabled:opacity-50"
-         data-testid="export-kyc"
-        >
-          {exporting ? 'Exporting…' : 'Export CSV'}
-        </button>
+        <div className="flex gap-2">
+          <button
+            type="button"
+            onClick={handleRefresh}
+            disabled={loading}
+            className="text-sm rounded-lg border border-gray-200 bg-white px-3 py-1.5 font-medium shadow-sm hover:bg-gray-50 disabled:opacity-50"
+            data-testid="refresh-kyc"
+          >
+            Refresh
+          </button>
+          <button
+            type="button"
+            onClick={() => setExportModalOpen(true)}
+            disabled={exporting}
+            className="text-sm rounded-lg border border-gray-200 bg-white px-3 py-1.5 font-medium shadow-sm hover:bg-gray-50 disabled:opacity-50"
+            data-testid="export-kyc"
+          >
+            {exporting ? "Exporting…" : "Export KYC"}
+          </button>
+        </div>
       </div>
 
       <FilterBar
         fields={[
-          { key: 'status', label: 'Status', type: 'select', options: ['not_started', 'pending', 'review', 'approved', 'rejected'] },
-          { key: 'phone', label: 'Phone', placeholder: 'Search phone…' },
-          { key: 'country', label: 'Country', placeholder: 'e.g. NG' },
+          {
+            key: "status",
+            label: "Status",
+            type: "select",
+            options: [
+              "not_started",
+              "pending",
+              "review",
+              "approved",
+              "rejected",
+            ],
+          },
+          { key: "phone", label: "Phone", placeholder: "Search phone…" },
+          { key: "country", label: "Country", placeholder: "e.g. NG" },
         ]}
         getFilter={getFilter}
         setFilter={setFilter}
         onReset={resetFilters}
       />
 
-      {error && <div className="mb-4 p-3 bg-red-50 text-red-600 border border-red-200 rounded" role="alert">{error}</div>}
+      {error && (
+        <div
+          className="mb-4 p-3 bg-red-50 text-red-600 border border-red-200 rounded"
+          role="alert"
+        >
+          {error}
+        </div>
+      )}
       <DataTable columns={columns} data={rows} keyField="_id" />
       <Pagination pagination={pagination} onNext={goNext} onPrev={goPrev} />
+
+      <KycExportModal
+        isOpen={exportModalOpen}
+        onClose={() => setExportModalOpen(false)}
+        onExport={handleExportSubmit}
+        exporting={exporting}
+      />
     </div>
   );
 }

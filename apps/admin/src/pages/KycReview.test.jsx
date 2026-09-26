@@ -1,51 +1,53 @@
-import { render, screen, waitFor, within } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
-import { MemoryRouter } from 'react-router-dom';
-import KycReview from './KycReview';
-import { describe, it, expect } from 'vitest';
-import { server } from '../mocks/server';
-import { http, HttpResponse } from 'msw';
+import { render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { MemoryRouter } from "react-router-dom";
+import KycReview from "./KycReview";
+import { describe, it, expect } from "vitest";
+import { server } from "../mocks/server";
+import { http, HttpResponse } from "msw";
 
-describe('KycReview Component', () => {
-  it('renders KYC profiles and handles approval mutation', async () => {
+describe("KycReview Component", () => {
+  it("renders KYC profiles and handles approval mutation", async () => {
     render(
       <MemoryRouter>
         <KycReview />
-      </MemoryRouter>
+      </MemoryRouter>,
     );
-    
+
     await waitFor(() => {
-      expect(screen.getByRole('table')).toBeInTheDocument();
+      expect(screen.getByRole("table")).toBeInTheDocument();
     });
 
     // The status badge renders the lowercase API status; the capitalize
     // styling is purely visual, so match case-insensitively within the table.
-    const table = screen.getByRole('table');
+    const table = screen.getByRole("table");
     expect(within(table).getByText(/pending/i)).toBeInTheDocument();
-    const approveButton = screen.getByRole('button', { name: /approve/i });
+    const approveButton = screen.getByRole("button", { name: /approve/i });
     await userEvent.click(approveButton);
 
     await waitFor(() => {
       expect(within(table).getByText(/approved/i)).toBeInTheDocument();
     });
-    
+
     // Approve/Reject action buttons should no longer appear for this record
-    expect(screen.queryByRole('button', { name: /approve/i })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /approve/i }),
+    ).not.toBeInTheDocument();
   });
 
-  it('renders KYC profiles and handles rejection mutation', async () => {
+  it("renders KYC profiles and handles rejection mutation", async () => {
     render(
       <MemoryRouter>
         <KycReview />
-      </MemoryRouter>
+      </MemoryRouter>,
     );
-    
+
     await waitFor(() => {
-      expect(screen.getByRole('table')).toBeInTheDocument();
+      expect(screen.getByRole("table")).toBeInTheDocument();
     });
 
-    const table = screen.getByRole('table');
-    const rejectButton = screen.getByRole('button', { name: /reject/i });
+    const table = screen.getByRole("table");
+    const rejectButton = screen.getByRole("button", { name: /reject/i });
     await userEvent.click(rejectButton);
 
     await waitFor(() => {
@@ -53,32 +55,92 @@ describe('KycReview Component', () => {
     });
   });
 
-  it('handles failed mutation gracefully', async () => {
+  it("handles failed mutation gracefully", async () => {
     server.use(
-      http.post('*/api/compliance/kyc/:id/review', () => {
-        return HttpResponse.json({ message: 'KYC failed validation' }, { status: 400 });
-      })
+      http.post("*/api/compliance/kyc/:id/review", () => {
+        return HttpResponse.json(
+          { message: "KYC failed validation" },
+          { status: 400 },
+        );
+      }),
     );
 
     render(
       <MemoryRouter>
         <KycReview />
-      </MemoryRouter>
+      </MemoryRouter>,
     );
-    
+
     await waitFor(() => {
-      expect(screen.getByRole('table')).toBeInTheDocument();
+      expect(screen.getByRole("table")).toBeInTheDocument();
     });
 
-    const approveButton = screen.getByRole('button', { name: /approve/i });
+    const approveButton = screen.getByRole("button", { name: /approve/i });
     await userEvent.click(approveButton);
 
     await waitFor(() => {
-      expect(screen.getByRole('alert')).toHaveTextContent('KYC failed validation');
+      expect(screen.getByRole("alert")).toHaveTextContent(
+        "KYC failed validation",
+      );
     });
-    
+
     // Status should remain pending
-    const table = screen.getByRole('table');
+    const table = screen.getByRole("table");
     expect(within(table).getByText(/pending/i)).toBeInTheDocument();
+  });
+
+  it("opens export modal and completes encrypted export flow", async () => {
+    render(
+      <MemoryRouter>
+        <KycReview />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole("table")).toBeInTheDocument();
+    });
+
+    const exportBtn = screen.getByTestId("export-kyc");
+    await userEvent.click(exportBtn);
+
+    expect(screen.getByTestId("kyc-export-modal")).toBeInTheDocument();
+    expect(screen.getByText(/Export KYC Data/i)).toBeInTheDocument();
+
+    const passInput = screen.getByTestId("kyc-export-passphrase");
+    const confirmInput = screen.getByTestId("kyc-export-confirm-passphrase");
+    await userEvent.type(passInput, "OperatorPass123!");
+    await userEvent.type(confirmInput, "OperatorPass123!");
+
+    const confirmExportBtn = screen.getByTestId("confirm-export-btn");
+    await userEvent.click(confirmExportBtn);
+
+    await waitFor(() => {
+      expect(screen.queryByTestId("kyc-export-modal")).not.toBeInTheDocument();
+    });
+  });
+
+  it("validates passphrase mismatch in export modal", async () => {
+    render(
+      <MemoryRouter>
+        <KycReview />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole("table")).toBeInTheDocument();
+    });
+
+    await userEvent.click(screen.getByTestId("export-kyc"));
+
+    const passInput = screen.getByTestId("kyc-export-passphrase");
+    const confirmInput = screen.getByTestId("kyc-export-confirm-passphrase");
+    await userEvent.type(passInput, "OperatorPass123!");
+    await userEvent.type(confirmInput, "DifferentPass123!");
+
+    await userEvent.click(screen.getByTestId("confirm-export-btn"));
+
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      /Passphrases do not match/i,
+    );
   });
 });
