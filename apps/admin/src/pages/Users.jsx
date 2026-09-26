@@ -13,9 +13,14 @@ import Loader from '@shared/Loader';
 import StatusBadge from '@/components/StatusBadge';
 import Pagination from '@/components/Pagination';
 import FilterBar from '@/components/FilterBar';
+import PasskeyPromptModal, { usePasskeyStepUp } from '@/components/PasskeyPromptModal';
 
 export default function Users() {
   const { params, getFilter, setFilter, resetFilters, goNext, goPrev } = useListQuery(['phone']);
+  // High-risk actions on this page (deactivate / reactivate / evidence
+  // download) are gated behind a WebAuthn passkey assertion. The hook only
+  // invokes the mutation callback after the device prompt succeeds.
+  const { startStepUp, stepUpModalProps } = usePasskeyStepUp();
   const [users, setUsers] = useState([]);
   const [pagination, setPagination] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -75,59 +80,81 @@ export default function Users() {
     }
   };
 
-  const handleDownloadEvidence = async (userId) => {
+  // Downloading a compliance evidence package is a high-risk export, so it is
+  // intercepted by the passkey step-up before the request is issued.
+  const handleDownloadEvidence = (userId) => {
     setActionError('');
     setActionSuccess('');
-    try {
-      await downloadUserEvidencePackage(userId);
-      setActionSuccess('Compliance evidence package downloaded successfully.');
-    } catch (err) {
-      setActionError(err.response?.data?.message || 'Failed to export compliance evidence');
-    }
+    startStepUp('user.evidence.download', async ({ passkeyAssertion, passkeyFallback }) => {
+      try {
+        await downloadUserEvidencePackage(userId, { passkeyAssertion, passkeyFallback });
+        setActionSuccess('Compliance evidence package downloaded successfully.');
+      } catch (err) {
+        setActionError(err.response?.data?.message || 'Failed to export compliance evidence');
+      }
+    });
   };
 
-  const handleDeactivate = async (e) => {
+  // Manual account deactivation is irreversible for the customer, so the
+  // passkey challenge runs between the confirmation form and the mutation.
+  const handleDeactivate = (e) => {
     e.preventDefault();
     if (!deactivateModalUser) return;
-    setSubmittingAction(true);
-    setActionError('');
-    try {
-      await deactivateUserAccount(deactivateModalUser.id, {
-        reason: deactivateReason,
-        notes: deactivateNotes,
-        force: deactivateForce,
-      });
-      setDeactivateModalUser(null);
-      setDeactivateNotes('');
-      setActionSuccess('Account deactivated successfully.');
-      setRefreshKey((k) => k + 1);
-    } catch (err) {
-      setActionError(err.response?.data?.message || err.message || 'Failed to deactivate account');
-    } finally {
-      setSubmittingAction(false);
-    }
+    const target = deactivateModalUser;
+    const payload = {
+      reason: deactivateReason,
+      notes: deactivateNotes,
+      force: deactivateForce,
+    };
+    startStepUp('user.deactivate', async ({ passkeyAssertion, passkeyFallback }) => {
+      setSubmittingAction(true);
+      setActionError('');
+      try {
+        await deactivateUserAccount(target.id, {
+          ...payload,
+          passkeyAssertion,
+          passkeyFallback,
+        });
+        setDeactivateModalUser(null);
+        setDeactivateNotes('');
+        setActionSuccess('Account deactivated successfully.');
+        setRefreshKey((k) => k + 1);
+      } catch (err) {
+        setActionError(err.response?.data?.message || err.message || 'Failed to deactivate account');
+      } finally {
+        setSubmittingAction(false);
+      }
+    });
   };
 
-  const handleReactivate = async (e) => {
+  const handleReactivate = (e) => {
     e.preventDefault();
     if (!reactivateModalUser) return;
-    setSubmittingAction(true);
-    setActionError('');
-    try {
-      await reactivateUserAccount(reactivateModalUser.id, {
-        notes: reactivateNotes,
-        approvedBy: reactivateApprovedBy || undefined,
-      });
-      setReactivateModalUser(null);
-      setReactivateNotes('');
-      setReactivateApprovedBy('');
-      setActionSuccess('Account reactivated successfully.');
-      setRefreshKey((k) => k + 1);
-    } catch (err) {
-      setActionError(err.response?.data?.message || err.message || 'Failed to reactivate account');
-    } finally {
-      setSubmittingAction(false);
-    }
+    const target = reactivateModalUser;
+    const payload = {
+      notes: reactivateNotes,
+      approvedBy: reactivateApprovedBy || undefined,
+    };
+    startStepUp('user.reactivate', async ({ passkeyAssertion, passkeyFallback }) => {
+      setSubmittingAction(true);
+      setActionError('');
+      try {
+        await reactivateUserAccount(target.id, {
+          ...payload,
+          passkeyAssertion,
+          passkeyFallback,
+        });
+        setReactivateModalUser(null);
+        setReactivateNotes('');
+        setReactivateApprovedBy('');
+        setActionSuccess('Account reactivated successfully.');
+        setRefreshKey((k) => k + 1);
+      } catch (err) {
+        setActionError(err.response?.data?.message || err.message || 'Failed to reactivate account');
+      } finally {
+        setSubmittingAction(false);
+      }
+    });
   };
 
   const columns = [
@@ -347,6 +374,11 @@ export default function Users() {
               </div>
             </div>
 
+            <p className="mt-4 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-600">
+              Passkey verification is required. You will confirm with your device biometrics or
+              security key before this deactivation is submitted.
+            </p>
+
             <div className="flex justify-end gap-3 mt-6">
               <button
                 type="button"
@@ -400,6 +432,11 @@ export default function Users() {
               </div>
             </div>
 
+            <p className="mt-4 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-600">
+              Passkey verification is required. You will confirm with your device biometrics or
+              security key before this reactivation is submitted.
+            </p>
+
             <div className="flex justify-end gap-3 mt-6">
               <button
                 type="button"
@@ -419,6 +456,9 @@ export default function Users() {
           </form>
         </div>
       )}
+
+      {/* WebAuthn / passkey step-up prompt for high-risk actions */}
+      <PasskeyPromptModal {...stepUpModalProps} />
     </div>
   );
 }

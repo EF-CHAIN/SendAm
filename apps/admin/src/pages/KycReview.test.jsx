@@ -2,9 +2,10 @@ import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import KycReview from './KycReview';
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterEach, beforeEach } from 'vitest';
 import { server } from '../mocks/server';
 import { http, HttpResponse } from 'msw';
+import { installWebAuthnMock, uninstallWebAuthnMock } from '../test/passkeys';
 
 const renderKyc = () =>
   render(
@@ -19,7 +20,22 @@ const waitForTable = async () => {
   });
 };
 
+// Approve / reject are gated behind the passkey step-up modal, so tests that
+// expect a mutation have to satisfy the device prompt first.
+const completeStepUp = async () => {
+  const dialog = await screen.findByRole('dialog', { name: /biometric step-up required/i });
+  await userEvent.click(within(dialog).getByRole('button', { name: /verify with passkey/i }));
+};
+
 describe('KycReview Component', () => {
+  beforeEach(() => {
+    installWebAuthnMock();
+  });
+
+  afterEach(() => {
+    uninstallWebAuthnMock();
+  });
+
   it('renders KYC profiles and handles approval mutation', async () => {
     renderKyc();
     await waitForTable();
@@ -35,6 +51,7 @@ describe('KycReview Component', () => {
     const dialog = await screen.findByRole('dialog');
     expect(within(dialog).getByText(/approve kyc/i)).toBeInTheDocument();
     await userEvent.click(within(dialog).getByRole('button', { name: /confirm approval/i }));
+    await completeStepUp();
 
     await waitFor(() => {
       expect(within(table).getByText(/approved/i)).toBeInTheDocument();
@@ -92,6 +109,7 @@ describe('KycReview Component', () => {
       'document_expired'
     );
     await userEvent.click(within(dialog).getByRole('button', { name: /confirm rejection/i }));
+    await completeStepUp();
 
     await waitFor(() => {
       expect(within(table).getByText(/rejected/i)).toBeInTheDocument();
@@ -141,10 +159,40 @@ describe('KycReview Component', () => {
       'sanctions_flag'
     );
     await userEvent.click(within(dialog).getByRole('button', { name: /confirm rejection/i }));
+    await completeStepUp();
 
     await waitFor(() => {
       expect(body).toMatchObject({ status: 'rejected', reason: 'sanctions_flag' });
     });
+    // The passkey assertion rides along with the review mutation.
+    expect(body.passkeyAssertion.response.signature).toBeTruthy();
+    expect(body.passkeyFallback).toBeNull();
+  });
+
+  it('requires a passkey assertion before the review mutation is sent', async () => {
+    let reviewCalls = 0;
+    server.use(
+      http.post('*/api/compliance/kyc/:id/review', () => {
+        reviewCalls += 1;
+        return HttpResponse.json({ success: true });
+      })
+    );
+
+    renderKyc();
+    await waitForTable();
+
+    await userEvent.click(screen.getByRole('button', { name: /approve/i }));
+    const confirmDialog = await screen.findByRole('dialog');
+    await userEvent.click(within(confirmDialog).getByRole('button', { name: /confirm approval/i }));
+
+    const stepUp = await screen.findByRole('dialog', { name: /biometric step-up required/i });
+    expect(within(stepUp).getByText(/approve kyc record/i)).toBeInTheDocument();
+    expect(reviewCalls).toBe(0);
+
+    // Cancelling the passkey prompt must not reach the API.
+    await userEvent.click(within(stepUp).getByRole('button', { name: /cancel/i }));
+    expect(reviewCalls).toBe(0);
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
 
   it('handles failed mutation gracefully', async () => {
@@ -162,6 +210,7 @@ describe('KycReview Component', () => {
 
     const dialog = await screen.findByRole('dialog');
     await userEvent.click(within(dialog).getByRole('button', { name: /confirm approval/i }));
+    await completeStepUp();
 
     await waitFor(() => {
       expect(screen.getByRole('alert')).toHaveTextContent('KYC failed validation');

@@ -81,6 +81,33 @@ export const handlers = [
     });
   }),
 
+  // WebAuthn / passkey step-up challenge for high-risk admin actions.
+  http.post('*/api/admin/webauthn/step-up/challenge', async ({ request }) => {
+    const body = await request.json().catch(() => ({}));
+    return HttpResponse.json({
+      data: {
+        action: body.action || null,
+        challenge: 'test-challenge-b64url',
+        rpId: 'localhost',
+        allowCredentials: [],
+      },
+    });
+  }),
+
+  // Customer account deactivation / reactivation (high-risk mutations)
+  http.post('*/api/admin/users/:id/deactivate', () => {
+    return HttpResponse.json({ data: { success: true } });
+  }),
+
+  http.post('*/api/admin/users/:id/reactivate', () => {
+    return HttpResponse.json({ data: { success: true } });
+  }),
+
+  // Compliance evidence package download (high-risk export)
+  http.get('*/api/admin/compliance/evidence/:id/download', () => {
+    return HttpResponse.json({ data: { userId: '1', generatedAt: new Date().toISOString() } });
+  }),
+
   // KYC
   http.get('*/api/admin/kyc', () => {
     return HttpResponse.json({

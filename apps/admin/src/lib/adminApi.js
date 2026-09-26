@@ -1,5 +1,6 @@
 import api from '@shared/api';
 import { getToken, setToken, removeToken } from './auth';
+import { buildStepUpHeaders, buildStepUpPayload } from './webauthn';
 
 // Attach the admin token to every request and centralise session expiry: any
 // 401 from the API clears the token and bounces the user back to /login.
@@ -104,10 +105,14 @@ const triggerDownload = (blob, filename) => {
   window.URL.revokeObjectURL(url);
 };
 
-export const exportAdminKyc = async (params = {}) => {
+export const exportAdminKyc = async (params = {}, stepUp = {}) => {
   // Strip cursor/pagination params — exports always cover the full filtered set.
   const { after: _a, before: _b, limit: _l, ...filters } = params;
-  const response = await api.get('/admin/kyc/export', { params: filters, responseType: 'blob' });
+  const response = await api.get('/admin/kyc/export', {
+    params: filters,
+    responseType: 'blob',
+    headers: buildStepUpHeaders(stepUp),
+  });
   triggerDownload(response.data, 'kyc-export.csv');
   return response.data;
 };
@@ -125,13 +130,32 @@ export const getAdminSystemHealth = async () => {
   return data;
 };
 
-export const approveKyc = async (id) => {
-  const { data } = await api.post(`/compliance/kyc/${id}/review`, { status: 'approved' });
+// ── WebAuthn / Passkey step-up authentication ─────────────────────────────
+// High-risk admin operations are gated behind a browser-native passkey
+// assertion (see apps/admin/src/lib/webauthn.js). The API issues a one-time
+// challenge, the operator's authenticator signs it, and the serialized
+// assertion is attached to the mutation for server-side verification. Falls
+// back to a locally generated challenge client-side when the endpoint is not
+// deployed, so the biometric prompt still runs.
+export const getPasskeyStepUpChallenge = async ({ action } = {}) => {
+  const { data } = await api.post('/admin/webauthn/step-up/challenge', { action });
+  return data?.data || null;
+};
+
+export const approveKyc = async (id, stepUp = {}) => {
+  const { data } = await api.post(`/compliance/kyc/${id}/review`, {
+    status: 'approved',
+    ...buildStepUpPayload(stepUp),
+  });
   return data;
 };
 
-export const rejectKyc = async (id, reason) => {
-  const { data } = await api.post(`/compliance/kyc/${id}/review`, { status: 'rejected', reason });
+export const rejectKyc = async (id, reason, stepUp = {}) => {
+  const { data } = await api.post(`/compliance/kyc/${id}/review`, {
+    status: 'rejected',
+    reason,
+    ...buildStepUpPayload(stepUp),
+  });
   return data;
 };
 
@@ -159,8 +183,11 @@ export const getUserEvidencePackage = async (userId) => {
   return data;
 };
 
-export const downloadUserEvidencePackage = async (userId) => {
-  const response = await api.get(`/admin/compliance/evidence/${userId}/download`, { responseType: 'blob' });
+export const downloadUserEvidencePackage = async (userId, stepUp = {}) => {
+  const response = await api.get(`/admin/compliance/evidence/${userId}/download`, {
+    responseType: 'blob',
+    headers: buildStepUpHeaders(stepUp),
+  });
   triggerDownload(response.data, `evidence-${userId}-${Date.now()}.json`);
   return response.data;
 };
@@ -186,13 +213,22 @@ export const getUserOnboardingStatus = async (userId) => {
 };
 
 // ── #332: Customer Account Deactivation / Reactivation ───────────────────
-export const deactivateUserAccount = async (userId, { reason, notes, force } = {}) => {
-  const { data } = await api.post(`/admin/users/${userId}/deactivate`, { reason, notes, force });
+export const deactivateUserAccount = async (userId, { reason, notes, force, ...stepUp } = {}) => {
+  const { data } = await api.post(`/admin/users/${userId}/deactivate`, {
+    reason,
+    notes,
+    force,
+    ...buildStepUpPayload(stepUp),
+  });
   return data;
 };
 
-export const reactivateUserAccount = async (userId, { notes, approvedBy } = {}) => {
-  const { data } = await api.post(`/admin/users/${userId}/reactivate`, { notes, approvedBy });
+export const reactivateUserAccount = async (userId, { notes, approvedBy, ...stepUp } = {}) => {
+  const { data } = await api.post(`/admin/users/${userId}/reactivate`, {
+    notes,
+    approvedBy,
+    ...buildStepUpPayload(stepUp),
+  });
   return data;
 };
 
