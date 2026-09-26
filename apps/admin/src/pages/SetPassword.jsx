@@ -45,7 +45,7 @@ export default function SetPassword() {
             <KeyRound size={32} />
           </div>
         </div>
-        <h2 className="text-2xl font-bold text-center mb-2">Set a Private Password</h2>
+        <h1 className="text-2xl font-bold text-center mb-2">Set a Private Password</h1>
         <p className="text-center text-gray-500 mb-8">
           This account was provisioned with a shared temporary credential.
           Choose a private password to begin managing the dashboard.
@@ -53,8 +53,9 @@ export default function SetPassword() {
 
         <form onSubmit={handleSubmit} className="space-y-6">
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">Current password</label>
+            <label htmlFor="set-password-current" className="block text-sm font-medium text-gray-700 mb-2">Current password</label>
             <input
+              id="set-password-current"
               type="password"
               required
               autoComplete="current-password"
@@ -65,8 +66,9 @@ export default function SetPassword() {
             />
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">New password</label>
+            <label htmlFor="set-password-new" className="block text-sm font-medium text-gray-700 mb-2">New password</label>
             <input
+              id="set-password-new"
               type="password"
               required
               autoComplete="new-password"
@@ -77,8 +79,9 @@ export default function SetPassword() {
             />
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">Confirm new password</label>
+            <label htmlFor="set-password-confirm" className="block text-sm font-medium text-gray-700 mb-2">Confirm new password</label>
             <input
+              id="set-password-confirm"
               type="password"
               required
               autoComplete="new-password"
@@ -89,7 +92,7 @@ export default function SetPassword() {
             />
           </div>
           {error && (
-            <p className="text-sm text-red-600 text-center">{error}</p>
+            <p role="alert" className="text-sm text-red-600 text-center">{error}</p>
           )}
           <button
             type="submit"
