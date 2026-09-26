@@ -32,9 +32,29 @@ if (config.redis && config.redis.url) {
 const inMemoryDlq = new Map();
 
 /**
- * Redact sensitive fields in payload before storing in DLQ or returning to operator.
+ * @file dlq.service.js
+ * @description Dead-Letter Queue (DLQ) service for storing, inspecting, replaying,
+ * and discarding failed background jobs (e.g. WhatsApp inbound messages) with PII redaction
+ * and idempotency checks.
+ *
+ * @example
+ * // 1. Moving a failed job to DLQ:
+ * const dlqRecord = await moveToDeadLetterQueue(job, error, { queueName: 'whatsapp-inbound' });
+ *
+ * // 2. Listing failed jobs for operator review:
+ * const failedJobs = await listDeadLetterJobs({ status: 'pending', limit: 20 });
+ *
+ * // 3. Replaying a job with idempotency guards:
+ * const result = await replayDeadLetterJob(dlqRecord.id, { queueService, actorId: 'admin-1' });
  */
 
+/**
+ * Redact sensitive fields in payload before storing in DLQ or returning to operator.
+ * Masks known authentication keys (PIN, token, secret, password) and redacts PII strings.
+ *
+ * @param {Record<string, any>} data - Raw payload object to sanitize.
+ * @returns {Record<string, any>} Sanitized payload copy with sensitive fields masked.
+ */
 function sanitizePayload(data) {
   if (!data || typeof data !== 'object') return {};
   const copy = { ...data };
@@ -50,6 +70,9 @@ function sanitizePayload(data) {
 
 /**
  * Save DLQ record to Redis and/or in-memory store.
+ *
+ * @param {object} record - DLQ record object to persist.
+ * @returns {Promise<void>} Resolves when saved.
  */
 async function saveDlqRecord(record) {
   inMemoryDlq.set(record.id, record);
@@ -65,6 +88,16 @@ async function saveDlqRecord(record) {
 
 /**
  * Move an exhausted failed WhatsApp job to the Dead-Letter Queue.
+ *
+ * @param {object} job - The BullMQ / worker job object that failed.
+ * @param {string|number} [job.id] - Original job identifier.
+ * @param {string} [job.name] - Name of the job / handler.
+ * @param {object} [job.data] - Original job data payload.
+ * @param {number} [job.attemptsMade] - Number of attempts made before failing.
+ * @param {Error|string} error - The error or exception that caused job failure.
+ * @param {object} [options={}] - Additional metadata options.
+ * @param {string} [options.queueName='whatsapp-inbound'] - Name of the origin queue.
+ * @returns {Promise<object>} The newly created DLQ record.
  */
 async function moveToDeadLetterQueue(job, error, options = {}) {
   const queueName = options.queueName || 'whatsapp-inbound';
@@ -100,6 +133,11 @@ async function moveToDeadLetterQueue(job, error, options = {}) {
 
 /**
  * List DLQ jobs for operator inspection with PII redacted.
+ *
+ * @param {object} [options={}] - Query filtering and pagination options.
+ * @param {string} [options.status] - Filter by job status ('pending' | 'replayed' | 'discarded').
+ * @param {number} [options.limit=50] - Maximum number of records to return.
+ * @returns {Promise<Array<object>>} List of DLQ records with sanitized payloads and redacted PII.
  */
 async function listDeadLetterJobs(options = {}) {
   const { status, limit = 50 } = options;
@@ -152,6 +190,9 @@ async function listDeadLetterJobs(options = {}) {
 
 /**
  * Get a specific DLQ job by ID.
+ *
+ * @param {string} dlqJobId - DLQ record ID to retrieve.
+ * @returns {Promise<object|null>} The DLQ record object or null if not found.
  */
 async function getDeadLetterJob(dlqJobId) {
   if (redisClient) {
@@ -167,6 +208,14 @@ async function getDeadLetterJob(dlqJobId) {
 
 /**
  * Replay a failed DLQ job with idempotency protection and audit logging.
+ *
+ * @param {string} dlqJobId - ID of the DLQ record to replay.
+ * @param {object} [options={}] - Replay execution options.
+ * @param {object} [options.queueService] - Queue service instance supporting `enqueue(queue, name, data, opts)`.
+ * @param {string} [options.actorType='operator'] - Actor type triggering replay for audit log.
+ * @param {string} [options.actorId='dlq-operator-cli'] - ID of actor triggering replay.
+ * @throws {Error} Throws if the DLQ record does not exist.
+ * @returns {Promise<{ replayed: boolean, reason?: string, alreadyCompleted?: boolean, record: object }>} Replay result status and record.
  */
 async function replayDeadLetterJob(dlqJobId, options = {}) {
   const { queueService } = options;
@@ -253,6 +302,11 @@ async function replayDeadLetterJob(dlqJobId, options = {}) {
 
 /**
  * Discard/archive a DLQ job.
+ *
+ * @param {string} dlqJobId - ID of the DLQ record to discard.
+ * @param {object} [_options={}] - Discard options.
+ * @throws {Error} Throws if the DLQ record does not exist.
+ * @returns {Promise<{ discarded: boolean, record: object }>} Discard result status and record.
  */
 async function discardDeadLetterJob(dlqJobId, _options = {}) {
   const record = await getDeadLetterJob(dlqJobId);
@@ -266,7 +320,9 @@ async function discardDeadLetterJob(dlqJobId, _options = {}) {
 }
 
 /**
- * Clear DLQ state (testing helper)
+ * Clear DLQ state in memory and Redis (testing helper).
+ *
+ * @returns {Promise<void>} Resolves when DLQ storage is wiped.
  */
 async function clearDlq() {
   inMemoryDlq.clear();
