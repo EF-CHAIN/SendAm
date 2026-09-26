@@ -53,7 +53,12 @@ const sendCursorPaginated = (
   res.status(200).json(withCorrelation({ success: true, message, data: items, pagination }));
 };
 
+const response = (res, statusCode, body) => {
+  return res.status(statusCode).json(withCorrelation(body));
+};
+
 module.exports = {
+  response,
   sendSuccess,
   sendError,
   sendPaginated,
