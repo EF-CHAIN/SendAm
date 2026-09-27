@@ -9,11 +9,13 @@ import Loader from '@shared/Loader';
 import StatusBadge from '@/components/StatusBadge';
 import Pagination from '@/components/Pagination';
 import FilterBar from '@/components/FilterBar';
+import LiveFeedIndicator from '@/components/LiveFeedIndicator';
+import { getWebSocketManager } from '@/lib/websocket';
 
 /**
- * Transaction list with full filter support and row-level drill-down.
- * Closes #324 — filters: status, asset, rail, phone, userId, identifier,
- * date range. Clicking a row navigates to /transactions/:id.
+ * Transaction list with full filter support, live feed prepending, and row-level drill-down.
+ * Closes #324, #580 — filters: status, asset, rail, phone, userId, identifier,
+ * date range. WebSocket stream automatically prepends newly finalized settlements.
  */
 export default function Transactions() {
   const navigate = useNavigate();
@@ -24,6 +26,7 @@ export default function Transactions() {
   const [pagination, setPagination] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [wsState, setWsState] = useState('disconnected');
 
   useEffect(() => {
     let active = true;
@@ -46,6 +49,42 @@ export default function Transactions() {
     fetchTransactions();
     return () => { active = false; };
   }, [params]);
+
+  useEffect(() => {
+    const wsManager = getWebSocketManager();
+    wsManager.connect();
+    const unsubState = wsManager.onStateChange((state) => {
+      setWsState(state);
+    });
+
+    const handleNewTx = (newTx) => {
+      if (!newTx) return;
+      const tx = newTx.transaction || newTx;
+      const txId = tx._id || tx.id;
+      if (!txId) return;
+
+      setTransactions((prev) => {
+        // Prevent duplicates
+        if (prev.some((item) => (item._id || item.id) === txId)) {
+          return prev.map((item) => ((item._id || item.id) === txId ? { ...item, ...tx } : item));
+        }
+        return [tx, ...prev];
+      });
+
+      setPagination((prev) => (prev ? { ...prev, total: (prev.total || 0) + 1 } : prev));
+    };
+
+    const unsubTx = wsManager.on('transaction', handleNewTx);
+    const unsubSettled = wsManager.on('transaction_settled', handleNewTx);
+    const unsubCreated = wsManager.on('transaction_created', handleNewTx);
+
+    return () => {
+      unsubState();
+      unsubTx();
+      unsubSettled();
+      unsubCreated();
+    };
+  }, []);
 
   const columns = [
     { header: 'User Phone', render: (row) => row.userId?.phoneNumber || 'Unknown' },
@@ -75,7 +114,13 @@ export default function Transactions() {
   return (
     <div className="min-w-0">
       <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3 mb-6">
-        <h1 className="text-xl sm:text-2xl font-bold">Transactions</h1>
+        <div className="flex items-center gap-3">
+          <h1 className="text-xl sm:text-2xl font-bold">Transactions</h1>
+          <LiveFeedIndicator
+            state={wsState}
+            onReconnect={() => getWebSocketManager().connect()}
+          />
+        </div>
         <span className="text-sm text-gray-500 bg-white px-3 py-1 rounded-full border border-gray-200 shadow-sm">
           {pagination?.total != null ? `Total: ${pagination.total}` : ''}
         </span>
