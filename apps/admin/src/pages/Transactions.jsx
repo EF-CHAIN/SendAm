@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { SlidersHorizontal } from 'lucide-react';
 import { getAdminTransactions } from '@/lib/adminApi';
 import { useListQuery } from '@/lib/useListQuery';
 import { formatDate } from '@shared/formatDate';
@@ -20,6 +21,7 @@ export default function Transactions() {
   const { params, getFilter, setFilter, resetFilters, goNext, goPrev } = useListQuery([
     'status', 'asset', 'rail', 'phone', 'userId', 'identifier', 'from', 'to',
   ]);
+  const [showFilters, setShowFilters] = useState(false);
   const [transactions, setTransactions] = useState([]);
   const [pagination, setPagination] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -76,12 +78,28 @@ export default function Transactions() {
     <div className="min-w-0">
       <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3 mb-6">
         <h1 className="text-xl sm:text-2xl font-bold">Transactions</h1>
-        <span className="text-sm text-gray-500 bg-white px-3 py-1 rounded-full border border-gray-200 shadow-sm">
-          {pagination?.total != null ? `Total: ${pagination.total}` : ''}
-        </span>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            aria-label={showFilters ? 'Hide filters' : 'Show filters'}
+            onClick={() => setShowFilters((v) => !v)}
+            className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm font-medium shadow-sm transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary ${
+              showFilters
+                ? 'border-primary bg-primary text-white hover:bg-accent'
+                : 'border-gray-200 bg-white text-gray-700 hover:bg-gray-50'
+            }`}
+          >
+            <SlidersHorizontal size={14} aria-hidden="true" />
+            Filters
+          </button>
+          <span className="text-sm text-gray-500 bg-white px-3 py-1 rounded-full border border-gray-200 shadow-sm">
+            {pagination?.total != null ? `Total: ${pagination.total}` : ''}
+          </span>
+        </div>
       </div>
 
-      <FilterBar
+      {showFilters && (
+        <FilterBar
         fields={[
           { key: 'status', label: 'Status', type: 'select', options: ['pending', 'processing', 'success', 'failed'] },
           { key: 'asset', label: 'Asset', placeholder: 'e.g. USDC' },
@@ -96,6 +114,7 @@ export default function Transactions() {
         setFilter={setFilter}
         onReset={resetFilters}
       />
+      )}
 
       {loading ? (
         <div className="flex justify-center py-20"><Loader /></div>
