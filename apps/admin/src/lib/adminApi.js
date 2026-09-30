@@ -130,8 +130,8 @@ export const approveKyc = async (id) => {
   return data;
 };
 
-export const rejectKyc = async (id) => {
-  const { data } = await api.post(`/compliance/kyc/${id}/review`, { status: 'rejected' });
+export const rejectKyc = async (id, reason) => {
+  const { data } = await api.post(`/compliance/kyc/${id}/review`, { status: 'rejected', reason });
   return data;
 };
 
