@@ -6,17 +6,7 @@ import StatusBadge from '@/components/StatusBadge';
 import Loader from '@shared/Loader';
 import Pagination from '@/components/Pagination';
 import FilterBar from '@/components/FilterBar';
-
-// Structured rejection reason codes required by compliance audit guidelines.
-// The operator must pick one of these (or "Other" plus free-text detail)
-// before a rejection can be submitted.
-export const REJECTION_REASONS = [
-  { code: 'document_expired', label: 'Document Expired' },
-  { code: 'name_mismatch', label: 'Name Mismatch' },
-  { code: 'unclear_photo', label: 'Unclear Photo' },
-  { code: 'sanctions_flag', label: 'Sanctions Flag' },
-  { code: 'other', label: 'Other' },
-];
+import { REJECTION_REASONS } from '@/lib/rejectionReasons';
 
 export default function KycReview() {
   const { params, getFilter, setFilter, resetFilters, goNext, goPrev } = useListQuery(['status', 'phone', 'country']);
