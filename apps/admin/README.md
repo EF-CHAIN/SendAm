@@ -16,11 +16,13 @@ Part of the [SendAm](../../README.md) monorepo.
 
 ## How Auth Works
 
-The dashboard authenticates against the backend admin API:
+The dashboard authenticates against the backend admin API in `apps/api`:
 
-1. The login screen posts the admin password to `POST /api/admin/login`.
-2. The API returns an HMAC-signed, expiring session token.
-3. The app stores the token and sends it as `Authorization: Bearer <token>` on every admin request.
+1. The login screen (`src/pages/Login.jsx`) posts an `{ email, password }` object to `POST /api/admin/login` via `adminLogin` in `src/lib/adminApi.js`. The legacy single-password flow is no longer supported.
+2. On success the API returns an HMAC-signed, expiring session token in `data.token`. For bootstrap or temporary credentials the response also includes `mustChangePassword: true`.
+3. When `mustChangePassword` is `true`, the app redirects to `/set-password` so the operator sets a private password before any admin work; otherwise it proceeds to the dashboard (`/`).
+4. The token is persisted in `localStorage` under the key `adminToken` (see `src/lib/auth.js`) and is attached to every request as `Authorization: Bearer <token>` by a request interceptor in `src/lib/adminApi.js`.
+5. Any `401` response clears the stored token and bounces the user back to `/login`.
 
 All data routes (`/stats`, `/users`, `/wallets`, `/transactions`) require a valid token; there is no client-only mock auth.
 

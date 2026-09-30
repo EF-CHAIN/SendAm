@@ -7,6 +7,17 @@ import Loader from '@shared/Loader';
 import Pagination from '@/components/Pagination';
 import FilterBar from '@/components/FilterBar';
 
+// Structured rejection reason codes required by compliance audit guidelines.
+// The operator must pick one of these (or "Other" plus free-text detail)
+// before a rejection can be submitted.
+export const REJECTION_REASONS = [
+  { code: 'document_expired', label: 'Document Expired' },
+  { code: 'name_mismatch', label: 'Name Mismatch' },
+  { code: 'unclear_photo', label: 'Unclear Photo' },
+  { code: 'sanctions_flag', label: 'Sanctions Flag' },
+  { code: 'other', label: 'Other' },
+];
+
 export default function KycReview() {
   const { params, getFilter, setFilter, resetFilters, goNext, goPrev } = useListQuery(['status', 'phone', 'country']);
   const [rows, setRows] = useState([]);
@@ -15,6 +26,14 @@ export default function KycReview() {
   const [exporting, setExporting] = useState(false);
   const [error, setError] = useState('');
   const [refreshKey, setRefreshKey] = useState(0);
+  const [mutatingId, setMutatingId] = useState(null);
+
+  // Confirmation modal state. `confirmTarget` holds the row awaiting an
+  // explicit operator confirmation; `confirmAction` is 'approve' | 'reject'.
+  const [confirmTarget, setConfirmTarget] = useState(null);
+  const [confirmAction, setConfirmAction] = useState(null);
+  const [rejectionReason, setRejectionReason] = useState('');
+  const [rejectionNotes, setRejectionNotes] = useState('');
 
   useEffect(() => {
     let active = true;
@@ -54,11 +73,11 @@ export default function KycReview() {
     }
   };
 
-  const handleReject = async (id) => {
+  const handleReject = async (id, reason) => {
     setMutatingId(id);
     setError('');
     try {
-      await rejectKyc(id);
+      await rejectKyc(id, reason);
       setRows((prev) => prev.map((r) => r._id === id ? { ...r, status: 'rejected' } : r));
     } catch (err) {
       setError(err.response?.data?.message || 'Failed to reject KYC');
@@ -67,7 +86,43 @@ export default function KycReview() {
     }
   };
 
-  const [mutatingId, setMutatingId] = useState(null);
+  const openConfirm = (row, action) => {
+    setError('');
+    setConfirmTarget(row);
+    setConfirmAction(action);
+    setRejectionReason('');
+    setRejectionNotes('');
+  };
+
+  const closeConfirm = () => {
+    setConfirmTarget(null);
+    setConfirmAction(null);
+    setRejectionReason('');
+    setRejectionNotes('');
+  };
+
+  // A rejection is only submittable once a reason code is chosen and, when
+  // "Other" is selected, free-text detail is supplied.
+  const rejectionReasonValid =
+    rejectionReason !== '' &&
+    (rejectionReason !== 'other' || rejectionNotes.trim().length > 0);
+
+  const handleConfirmSubmit = async (event) => {
+    event.preventDefault();
+    if (!confirmTarget) return;
+    const id = confirmTarget._id;
+    if (confirmAction === 'approve') {
+      closeConfirm();
+      await handleApprove(id);
+      return;
+    }
+    if (!rejectionReasonValid) return;
+    const reason = rejectionNotes.trim()
+      ? `${rejectionReason}: ${rejectionNotes.trim()}`
+      : rejectionReason;
+    closeConfirm();
+    await handleReject(id, reason);
+  };
 
   const handleExport = async () => {
     setExporting(true);
@@ -95,14 +150,14 @@ export default function KycReview() {
       ['pending', 'review'].includes(row.status) && (
         <div className="flex gap-2">
           <button
-            onClick={() => handleApprove(row._id)}
+            onClick={() => openConfirm(row, 'approve')}
             disabled={mutatingId === row._id}
             className="px-3 py-1 text-xs bg-green-600 text-white rounded hover:bg-green-700 disabled:opacity-50"
           >
             Approve
           </button>
           <button
-            onClick={() => handleReject(row._id)}
+            onClick={() => openConfirm(row, 'reject')}
             disabled={mutatingId === row._id}
             className="px-3 py-1 text-xs bg-red-600 text-white rounded hover:bg-red-700 disabled:opacity-50"
           >
@@ -151,6 +206,102 @@ export default function KycReview() {
       {error && <div className="mb-4 p-3 bg-red-50 text-red-600 border border-red-200 rounded" role="alert">{error}</div>}
       <DataTable columns={columns} data={rows} keyField="_id" />
       <Pagination pagination={pagination} onNext={goNext} onPrev={goPrev} />
+
+      {/* Approve / Reject confirmation modal */}
+      {confirmTarget && (
+        <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
+          <form
+            onSubmit={handleConfirmSubmit}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="kyc-confirm-title"
+            className="bg-white rounded-2xl max-w-md w-full p-6 shadow-xl"
+          >
+            <h2
+              id="kyc-confirm-title"
+              className={`text-lg font-bold mb-1 ${confirmAction === 'reject' ? 'text-red-900' : 'text-slate-900'}`}
+            >
+              {confirmAction === 'reject' ? 'Reject KYC' : 'Approve KYC'}
+            </h2>
+            <p className="text-xs text-slate-600 mb-4">
+              {confirmAction === 'reject'
+                ? 'This will reject the KYC record for the customer below. A reason is required for the compliance audit trail.'
+                : 'This will approve the KYC record for the customer below.'}
+            </p>
+
+            <dl className="mb-4 space-y-1 text-xs text-slate-700">
+              <div className="flex justify-between gap-4">
+                <dt className="font-medium text-slate-500">Phone</dt>
+                <dd data-testid="confirm-phone">{confirmTarget.userId?.phoneNumber || '-'}</dd>
+              </div>
+              <div className="flex justify-between gap-4">
+                <dt className="font-medium text-slate-500">Risk Score</dt>
+                <dd data-testid="confirm-risk">{confirmTarget.riskScore ?? '-'}</dd>
+              </div>
+            </dl>
+
+            {confirmAction === 'reject' && (
+              <div className="space-y-4">
+                <div>
+                  <label htmlFor="kycRejectionReason" className="block text-xs font-medium text-slate-700 mb-1">
+                    Rejection Reason *
+                  </label>
+                  <select
+                    id="kycRejectionReason"
+                    value={rejectionReason}
+                    onChange={(e) => setRejectionReason(e.target.value)}
+                    className="w-full text-sm rounded-lg border border-slate-300 p-2 focus:ring-2 focus:ring-red-500 outline-none"
+                    required
+                  >
+                    <option value="">Select a reason…</option>
+                    {REJECTION_REASONS.map((reason) => (
+                      <option key={reason.code} value={reason.code}>{reason.label}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label htmlFor="kycRejectionNotes" className="block text-xs font-medium text-slate-700 mb-1">
+                    {rejectionReason === 'other' ? 'Reason Detail *' : 'Additional Notes'}
+                  </label>
+                  <textarea
+                    id="kycRejectionNotes"
+                    value={rejectionNotes}
+                    onChange={(e) => setRejectionNotes(e.target.value)}
+                    placeholder="Detail context for compliance audit..."
+                    className="w-full text-sm rounded-lg border border-slate-300 p-2 focus:ring-2 focus:ring-red-500 outline-none h-20"
+                    required={rejectionReason === 'other'}
+                  />
+                </div>
+              </div>
+            )}
+
+            <div className="flex justify-end gap-3 mt-6">
+              <button
+                type="button"
+                onClick={closeConfirm}
+                className="px-4 py-2 text-xs font-medium text-slate-600 hover:bg-slate-100 rounded-lg transition"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={
+                  mutatingId === confirmTarget._id ||
+                  (confirmAction === 'reject' && !rejectionReasonValid)
+                }
+                className={`px-4 py-2 text-xs font-semibold text-white rounded-lg transition disabled:opacity-50 ${
+                  confirmAction === 'reject'
+                    ? 'bg-red-600 hover:bg-red-700'
+                    : 'bg-green-600 hover:bg-green-700'
+                }`}
+              >
+                {confirmAction === 'reject' ? 'Confirm Rejection' : 'Confirm Approval'}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
     </div>
   );
 }

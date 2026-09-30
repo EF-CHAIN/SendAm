@@ -80,9 +80,50 @@ export default function DataTable({
   };
 
   if (!data || data.length === 0) {
+    const {
+      title = 'No records found.',
+      description = hasActiveFilters
+        ? 'No records match your current search or filters. Reset them to see the full list again.'
+        : 'There are no records to show right now. New records will appear here as soon as they exist.',
+      icon: Icon = hasActiveFilters ? FilterX : SearchX,
+    } = emptyState || {};
+
+    const handleReset = () => {
+      if (onResetFilters) {
+        onResetFilters();
+        return;
+      }
+      // Clear every filter and the stale cursor window, but keep the page size.
+      setSearchParams((prev) => {
+        const next = new URLSearchParams(prev);
+        for (const key of Array.from(next.keys())) {
+          if (key !== 'limit') next.delete(key);
+        }
+        return next;
+      });
+    };
+
     return (
-      <div className="text-center py-8 text-gray-500 bg-white rounded-xl border border-gray-100">
-        No records found.
+      <div
+        role="status"
+        className="bg-white rounded-xl border border-gray-100 shadow-sm px-6 py-14 sm:py-16 text-center"
+      >
+        <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-secondary text-primary">
+          <Icon className="w-6 h-6" aria-hidden="true" />
+        </div>
+        <p className="mt-4 text-base sm:text-lg font-semibold text-dark">{title}</p>
+        <p className="mt-2 mx-auto max-w-md text-sm leading-6 text-gray-500">{description}</p>
+        {hasActiveFilters && (
+          <button
+            type="button"
+            onClick={handleReset}
+            data-testid="empty-reset-filters"
+            className="mt-6 inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-accent focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
+          >
+            <FilterX size={16} aria-hidden="true" />
+            Reset Filters
+          </button>
+        )}
       </div>
     );
   }
