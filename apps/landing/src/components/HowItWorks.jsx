@@ -33,19 +33,36 @@ export default function HowItWorks() {
         </div>
 
         <ol className="grid gap-6 md:grid-cols-3">
-          {steps.map((s) => (
+          {steps.map((s, index) => (
             <li
               key={s.n}
               className="relative rounded-2xl border border-slate-100 bg-white p-7 shadow-sm"
             >
-              <div className="mb-4 flex h-10 w-10 items-center justify-center rounded-full bg-primary font-bold text-white">
-                {s.n}
+              <div className="relative mb-4 flex h-10 w-10 items-center justify-center rounded-full bg-primary font-bold text-white ring-4 ring-primary/15">
+                <span aria-hidden="true" className="absolute -inset-1 rounded-full border border-primary/40 motion-safe:animate-pulse" />
+                <span className="relative">{s.n}</span>
               </div>
               <h3 className="mb-2 text-lg font-bold text-dark">{s.title}</h3>
               <p className="mb-4 text-sm leading-relaxed text-slate-600">{s.desc}</p>
               <code className="inline-block rounded-lg bg-slate-900 px-3 py-1.5 font-mono text-xs text-emerald-300">
                 {s.command}
               </code>
+              {index < steps.length - 1 && (
+                <>
+                  <span
+                    aria-hidden="true"
+                    className="pointer-events-none absolute -bottom-6 left-1/2 z-10 h-6 w-px bg-primary/40 md:hidden"
+                  >
+                    <span className="absolute -bottom-px -left-[3px] h-1.5 w-1.5 rotate-45 border-b border-r border-primary/60" />
+                  </span>
+                  <span
+                    aria-hidden="true"
+                    className="pointer-events-none absolute -right-6 top-12 z-10 hidden h-px w-6 bg-primary/40 md:block"
+                  >
+                    <span className="absolute -right-px -top-[3px] h-1.5 w-1.5 rotate-45 border-r border-t border-primary/60" />
+                  </span>
+                </>
+              )}
             </li>
           ))}
         </ol>
