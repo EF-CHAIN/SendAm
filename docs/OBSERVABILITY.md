@@ -84,6 +84,10 @@ The primary metrics are:
 - `sendam_webhook_events_total`
 - `sendam_health_checks_total`
 - process uptime and resident memory gauges
+- `sendam_alert_delivery_test_total` — counter of synthetic test runs, labelled by `result`
+- `sendam_alert_delivery_test_failures_total` — counter of tests that produced a non-success result
+- `sendam_alert_delivery_test_last_run_timestamp_seconds` — Unix timestamp of the most recent test run
+- `sendam_alert_delivery_test_last_success_timestamp_seconds` — Unix timestamp of the most recent successful test
 
 Redis availability and recovery signals (see
 `apps/api/src/config/redis.js` and `test/redis.safeguards.test.js`):
@@ -221,3 +225,25 @@ Fires when `sendam_queue_lag_seconds` exceeds 300s (5 minutes).
 Fires on `SendAmDeadLetterQueueGrowing` when repeated job failures move to the dead-letter queue.
 1. Inspect DLQ messages with `node apps/api/scripts/whatsapp-dlq.js inspect`.
 2. Fix underlying provider errors before replaying: `node apps/api/scripts/whatsapp-dlq.js replay`.
+
+### Alert delivery test
+
+Fires on `SendAmAlertDeliveryTestMissed` or `SendAmAlertDeliveryTestFailing` when the continuous
+alert-delivery test has not verified end-to-end delivery within the expected window (default: 30 minutes).
+This alert means **alerting itself may be broken** and should be treated as high priority.
+
+1. Check `GET /api/admin/system-health` (requires `operations.write` admin token). The `alertDelivery`
+   field shows `status`, `lastTestAt`, `lastSuccessAt`, `lastResult`, and per-route details.
+2. Review the worker log stream for `alert_delivery_test_completed` events. The `overallResult` and
+   per-route `result`/`error` fields identify which route failed and why.
+3. If `status: missed`, the worker may have crashed or the poller was disabled. Verify the worker
+   process is running and `ALERT_DELIVERY_TEST_INTERVAL_MS` is non-zero.
+4. If `status: degraded`, the test ran but delivery failed. Check:
+   - **WhatsApp route**: `ALERT_DELIVERY_TEST_PHONE` must be set, `MESSAGE_TRANSPORT=meta`, and
+     `WHATSAPP_TOKEN` / `WHATSAPP_PHONE_NUMBER_ID` must be valid.
+   - **Webhook fallback route**: `ERROR_MONITOR_WEBHOOK_URL` endpoint availability, network egress,
+     and TLS certificate. Confirm the endpoint returns HTTP 2xx.
+5. If both routes fail, escalate — the alerting pipeline has no verified delivery path.
+6. To manually trigger a test without waiting for the scheduled interval, restart the worker process
+   (the poller runs immediately on startup).
+

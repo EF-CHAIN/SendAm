@@ -3,8 +3,10 @@ const { startDepositPoller } = require('./deposits.jobs');
 const { startAuditPoller } = require('./audit.jobs');
 const { JOB_NAME, runRotationHealthCheck, rotateCategorySecret } = require('./secret-rotation.job');
 const { startWebhookInboxDrain, startOutboxReconciler } = require('./messaging.jobs');
+const { startAlertDeliveryTestPoller } = require('../observability/alertDeliveryTest.service');
 const { enqueue, registerProcessor } = require('../queues/queue.service');
 const config = require('../config/env');
+const prisma = require('../common/prisma');
 const logger = require('../utils/logger');
 
 const registerSecretRotationJobs = () => {
@@ -42,6 +44,16 @@ const registerJobs = () => {
   const rotationJobs = registerSecretRotationJobs();
   const inboxDrain = startWebhookInboxDrain();
   const outboxReconciler = startOutboxReconciler();
+
+  // Only start the alert delivery test poller when at least one route is
+  // configured. An interval of 0 is an explicit disable signal.
+  let alertDeliveryPoller = null;
+  if (config.alertDeliveryTest?.intervalMs > 0) {
+    alertDeliveryPoller = startAlertDeliveryTestPoller({ db: prisma, config });
+  } else {
+    logger.info('alert_delivery_test_poller_disabled', { reason: 'ALERT_DELIVERY_TEST_INTERVAL_MS=0' });
+  }
+
   return {
     whatsappWorker,
     depositPoller,
@@ -49,12 +61,14 @@ const registerJobs = () => {
     rotationJobs,
     inboxDrain,
     outboxReconciler,
+    alertDeliveryPoller,
     processorNames: ['whatsapp-inbound'],
     stop: async () => {
       depositPoller.stop();
       auditPoller.stop();
       inboxDrain.stop();
       outboxReconciler.stop();
+      alertDeliveryPoller?.stop();
     },
   };
 };
