@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ADMIN_URL, GITHUB_URL, STELLAR_URL, whatsappUrl } from './links.js';
+import { ADMIN_URL, GITHUB_URL, STELLAR_URL, normalizeAdminUrl, whatsappUrl } from './links.js';
 
 describe('whatsappUrl', () => {
   it('falls back to the open wa.me chat when no number is configured', () => {
@@ -27,5 +27,18 @@ describe('configured link constants', () => {
   it('exposes the project GitHub and Stellar links', () => {
     expect(GITHUB_URL).toBe('https://github.com/Gozirimdev/SendAm');
     expect(STELLAR_URL).toBe('https://stellar.org');
+  });
+});
+
+describe('normalizeAdminUrl', () => {
+  it('falls back when the variable is undefined, empty, or blank', () => {
+    expect(normalizeAdminUrl(undefined)).toBe('http://localhost:3001');
+    expect(normalizeAdminUrl('')).toBe('http://localhost:3001');
+    expect(normalizeAdminUrl('   ')).toBe('http://localhost:3001');
+  });
+
+  it('trims and keeps a configured URL', () => {
+    expect(normalizeAdminUrl('https://admin.sendam.io')).toBe('https://admin.sendam.io');
+    expect(normalizeAdminUrl('  https://admin.sendam.io  ')).toBe('https://admin.sendam.io');
   });
 });

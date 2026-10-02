@@ -20,28 +20,48 @@ const faqs = [
   },
 ];
 
-function FaqItem({ q, a }) {
+function FaqItem({ q, a, index }) {
   const [open, setOpen] = useState(false);
+  const triggerId = `faq-trigger-${index}`;
+  const panelId = `faq-panel-${index}`;
   return (
     <div className="border-b border-slate-100">
       <h3>
         <button
           type="button"
+          id={triggerId}
           onClick={() => setOpen((v) => !v)}
           aria-expanded={open}
+          aria-controls={panelId}
           className="flex w-full items-center justify-between gap-4 py-5 text-left text-base font-semibold text-dark transition-colors hover:text-primary focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
         >
           {q}
           <ChevronDown
             size={20}
             aria-hidden="true"
-            className={`shrink-0 text-slate-400 transition-transform ${open ? 'rotate-180' : ''}`}
+            className={`shrink-0 text-slate-400 transition-transform duration-300 motion-reduce:transition-none ${open ? 'rotate-180' : ''}`}
           />
         </button>
       </h3>
-      {open && (
-        <p className="pb-5 text-sm leading-relaxed text-slate-600">{a}</p>
-      )}
+      {/* The panel stays mounted so its height can animate: a 0fr -> 1fr grid row
+          interpolates to the content height without measuring it. While closed
+          it is hidden from assistive tech and removed from the tab order. */}
+      <div
+        className={`grid transition-[grid-template-rows,opacity] duration-300 ease-out motion-reduce:transition-none ${
+          open ? 'grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0'
+        }`}
+      >
+        <div
+          id={panelId}
+          role="region"
+          aria-labelledby={triggerId}
+          aria-hidden={!open}
+          inert={!open}
+          className="overflow-hidden"
+        >
+          <p className="pb-5 text-sm leading-relaxed text-slate-600">{a}</p>
+        </div>
+      </div>
     </div>
   );
 }
@@ -56,8 +76,8 @@ export default function Faq() {
           </h2>
         </div>
         <div>
-          {faqs.map((f) => (
-            <FaqItem key={f.q} {...f} />
+          {faqs.map((f, index) => (
+            <FaqItem key={f.q} index={index} {...f} />
           ))}
         </div>
       </div>

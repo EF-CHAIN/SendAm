@@ -59,6 +59,153 @@ src/
 - `queues/jobs`: BullMQ processors for asynchronous webhook and voice processing.
 - `admin`: Monitoring endpoints for transactions, KYC, audit logs, and system health.
 
+## WhatsApp Message Payloads
+
+SendAm talks to the WhatsApp Business Cloud API directly from `apps/api/src/services/whatsapp.service.js`. Every outbound call is a `POST` to
+`https://graph.facebook.com/<META_GRAPH_API_VERSION | v19.0>/<WHATSAPP_PHONE_NUMBER_ID>/messages` with `Authorization: Bearer <WHATSAPP_TOKEN>`.
+
+This section documents the payload shapes the code actually sends and accepts, including what happens to interactive (quick-reply button / list picker) messages. See [`docs/PRODUCTION-WHATSAPP-WEBHOOK.md`](docs/PRODUCTION-WHATSAPP-WEBHOOK.md) for the webhook, secrets, and rollout runbook, and [`docs/COMMANDS.md`](docs/COMMANDS.md) for the user-facing command reference.
+
+### Outbound: what SendAm sends today
+
+**Plain text** — `sendTextMessage()` is the only payload used for conversation replies (menus, balances, receipts, confirmation prompts):
+
+```json
+{
+  "messaging_product": "whatsapp",
+  "recipient_type": "individual",
+  "to": "15551234567",
+  "type": "text",
+  "text": {
+    "preview_url": false,
+    "body": "Please confirm this payment: ... Reply with your PIN to send, or \"no\" to cancel."
+  },
+  "biz_opaque_callback_data": "correlation-id-for-log-matching"
+}
+```
+
+`biz_opaque_callback_data` carries the send's correlation id (truncated to 512 characters) so Meta's delivery-status callbacks can be matched back to logs; `preview_url` is always `false`.
+
+**Template** — `sendTemplateMessage()`. Required once Meta's 24-hour customer service window has closed, because free-form text is rejected outside it:
+
+```json
+{
+  "messaging_product": "whatsapp",
+  "recipient_type": "individual",
+  "to": "15551234567",
+  "type": "template",
+  "template": {
+    "name": "payment_window_reopened",
+    "language": { "code": "en" },
+    "components": []
+  }
+}
+```
+
+`components` is omitted entirely when empty. `sendTextMessage()` enforces the 24-hour rule only when a caller passes `enforceWindow: true` together with the user's `lastCustomerInteractionAt`.
+
+Setting `MESSAGE_TRANSPORT=sim` short-circuits both senders into the local `SimMessage` table instead of Meta — that is what the chat simulator and the test suite use.
+
+### Interactive (button and list) messages
+
+**SendAm does not emit interactive messages today.** The Cloud API surfaces below are the canonical payloads a quick-reply button or list picker uses. They are documented here so developers know the exact structures a future implementation must produce and so the inbound side is unambiguous. The only reference to `interactive` in the repo is the inbound allow-list in `apps/api/src/whatsapp/webhook.validator.js`.
+
+**Reply buttons** (`type: "button"`, up to 3 buttons):
+
+```json
+{
+  "messaging_product": "whatsapp",
+  "recipient_type": "individual",
+  "to": "15551234567",
+  "type": "interactive",
+  "interactive": {
+    "type": "button",
+    "header": { "type": "text", "text": "Confirm transfer" },
+    "body": { "text": "Send 5 XLM to ada?" },
+    "footer": { "text": "This request expires in 10 minutes." },
+    "action": {
+      "buttons": [
+        { "type": "reply", "reply": { "id": "confirm_send", "title": "Confirm" } },
+        { "type": "reply", "reply": { "id": "cancel_send", "title": "Cancel" } }
+      ]
+    }
+  }
+}
+```
+
+**List picker** (`type: "list"`, one level of sections and rows):
+
+```json
+{
+  "messaging_product": "whatsapp",
+  "recipient_type": "individual",
+  "to": "15551234567",
+  "type": "interactive",
+  "interactive": {
+    "type": "list",
+    "header": { "type": "text", "text": "Choose an asset" },
+    "body": { "text": "Which asset do you want to send?" },
+    "action": {
+      "button": "Choose",
+      "sections": [
+        {
+          "title": "Assets",
+          "rows": [
+            { "id": "asset_xlm", "title": "XLM", "description": "Stellar native asset" },
+            { "id": "asset_usdc", "title": "USDC", "description": "USD Coin on Stellar" }
+          ]
+        }
+      ]
+    }
+  }
+}
+```
+
+Field limits that matter: a button `title` is at most 20 characters and its `id` at most 256; a list action `button` label is at most 20 characters, with up to 10 sections and 10 rows in total, row `title` at most 24 characters and `description` at most 72; `body.text` is at most 1024 characters; `header` and `footer` are optional.
+
+**Inbound replies** to either surface arrive as `messages[].interactive`:
+
+```json
+{
+  "type": "interactive",
+  "interactive": {
+    "type": "button_reply",
+    "button_reply": { "id": "confirm_send", "title": "Confirm" }
+  }
+}
+```
+
+`list_reply` has the same shape with `{ "id", "title", "description" }`. `validateInboundMessage()` accepts `interactive`, but `processMessage()` in `apps/api/src/controllers/webhook.controller.js` only handles `text`, `audio`, and `voice`, so an interactive reply is currently acknowledged and dropped with the `unsupported` outcome. Wiring buttons in means (a) adding an interactive sender in `whatsapp.service.js` and (b) translating `button_reply.id` / `list_reply.id` into the text tokens the assistant already understands.
+
+### Action IDs
+
+SendAm has no button IDs yet, so the "action id" for every flow is a **plain-text token** parsed by `apps/api/src/whatsapp/assistant.service.js`. These are the values an interactive implementation would map button IDs onto:
+
+| Flow | Token(s) | Handler |
+| --- | --- | --- |
+| Transfer / quote confirmation | any digits (the user's PIN), or `no` / `cancel` to cancel | `handlePendingPin()` |
+| High-risk recipient confirmation | `yes` / `oui` / `si` to confirm; anything else returns the invalid-reply prompt | `handlePendingPin()` |
+| Cancel a pending send | `no` / `cancel` | `handlePendingPin()` |
+| Menu / capabilities | `hi`, `hello`, `help`, `menu` | `processMessage()` |
+| Balance | `balance` | `processMessage()` |
+| Receive address | `receive` | `processMessage()` |
+| Transaction history | `history`, `transactions` | `processMessage()` |
+| Prepare a transfer | `send` / `pay` / `transfer <amount> [asset] <recipient>` | `parsePaymentIntent()` |
+| Locale / account language switch | `lang <code>`, `language <code>`, `locale <code>` (`en`, `fr`, `es`) | `processMessage()` |
+| Consent opt-out / opt-in | `STOP` / `START` keywords | `parseConsentCommand()` |
+
+Two flows that are often assumed to be buttons are worth calling out:
+
+- **KYC trigger** — there is no chat command or action id for KYC. Verification is started through `POST /api/compliance/kyc/start`, which has no per-user authentication and is disabled in production by default (see the security notes below).
+- **Account switch** — SendAm has a single wallet per user; the closest command is the locale switch above. There is no multi-account switcher in the assistant.
+
+### Fallback behavior without interactive support
+
+- Every SendAm flow is text-first, so a WhatsApp client that does not render interactive elements loses nothing: the same commands and confirmation tokens are sent as messages and voice notes.
+- Inbound types other than `text`, `audio`, and `voice` — including `interactive`, `location`, `image`, `document`, and `sticker` — pass schema validation but are dropped as `unsupported` instead of failing the batch.
+- Outside Meta's 24-hour customer service window, free-form text is refused: the caller must supply an approved `templateName` (the template payload above) or the send is recorded as a permanent failure with `Meta customer service window expired (24h). Approved template required.`
+- When a sender exceeds the per-sender rate limit, the bot sends one `replies.rateLimited()` notice and then stays quiet, rather than returning a non-2xx that would make Meta retry the webhook.
+
 ## API Summary
 
 ```text

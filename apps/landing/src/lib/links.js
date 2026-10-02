@@ -3,7 +3,14 @@
 
 const WHATSAPP_NUMBER = import.meta.env.VITE_WHATSAPP_NUMBER || '';
 
-export const ADMIN_URL = import.meta.env.VITE_ADMIN_URL || 'http://localhost:3001';
+const ADMIN_FALLBACK_URL = 'http://localhost:3001';
+
+// An env var that is unset, empty, or only whitespace means "not configured"
+// (plain `||` would let a whitespace-only value through as a broken href).
+export const normalizeAdminUrl = (value) =>
+  value && value.trim() ? value.trim() : ADMIN_FALLBACK_URL;
+
+export const ADMIN_URL = normalizeAdminUrl(import.meta.env.VITE_ADMIN_URL);
 export const GITHUB_URL = 'https://github.com/Gozirimdev/SendAm';
 export const STELLAR_URL = 'https://stellar.org';
 

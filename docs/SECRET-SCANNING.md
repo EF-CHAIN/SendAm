@@ -41,15 +41,13 @@ Creates a temporary file containing seeded fake secrets (a fake Stellar key, dat
 
 Runs `gitleaks/gitleaks-action@v2` against the full repository history using `.gitleaks.toml`. Any detection fails the check and blocks the PR.
 
-## Running the Self-Test Locally
+## Run It Locally
 
-Before pushing, contributors can verify the scanner works:
+Run the same scan CI runs before you push. It uses the rules in [`.gitleaks.toml`](../.gitleaks.toml) and the self-test in [`scripts/secret-scan-self-test.sh`](../scripts/secret-scan-self-test.sh).
 
-```bash
-./scripts/secret-scan-self-test.sh
-```
+### 1. Install gitleaks
 
-This requires gitleaks to be installed locally:
+CI pins gitleaks `8.18.4` (see `.github/workflows/secret-scan.yml`); any 8.x release works.
 
 ```bash
 # macOS
@@ -58,9 +56,58 @@ brew install gitleaks
 # Go
 go install github.com/gitleaks/gitleaks/v8@latest
 
-# Docker
+# Docker (prefix the commands below with the docker run line shown in step 4)
 docker pull ghcr.io/gitleaks/gitleaks:latest
 ```
+
+Confirm it is on your `PATH`:
+
+```bash
+gitleaks version
+```
+
+### 2. Check that the scanner works (self-test)
+
+From the repository root:
+
+```bash
+./scripts/secret-scan-self-test.sh
+```
+
+The script writes seeded fake secrets to a temporary directory, runs `gitleaks detect --no-git` against it, and expects gitleaks to report them. It prints `Self-test PASSED` and exits `0` when the scanner is working, and exits `1` if gitleaks is missing or fails to detect the fakes. It does not touch tracked files and removes its temporary directory on exit.
+
+### 3. Scan your changes
+
+From the repository root, scan the commits your branch adds on top of `main` (this is what CI checks for a pull request):
+
+```bash
+git fetch origin main
+gitleaks detect --source=. --config=.gitleaks.toml --log-opts="origin/main..HEAD" --verbose --redact
+```
+
+To scan only what you have staged, before committing:
+
+```bash
+gitleaks protect --staged --config=.gitleaks.toml --verbose --redact
+```
+
+Exit code `0` means no leaks were found. Exit code `1` means at least one finding was printed; follow [False-Positive Review](#false-positive-review) if it is not a real secret, or [Credential Rotation Response](#credential-rotation-response) if it is.
+
+### 4. Optional: full history or working tree
+
+```bash
+# Every commit reachable from HEAD (the CI job scans full history)
+gitleaks detect --source=. --config=.gitleaks.toml --redact
+
+# Current files only, ignoring git history
+gitleaks detect --source=. --config=.gitleaks.toml --no-git --redact
+
+# Same as above using Docker instead of a local install
+docker run --rm -v "$PWD:/repo" ghcr.io/gitleaks/gitleaks:latest \
+  detect --source=/repo --config=/repo/.gitleaks.toml --no-git --redact
+```
+
+A whole-repository scan can report findings in existing test fixtures and workflow files that a pull-request scan does not touch, so compare against `main` before treating them as caused by your change.
 
 ## False-Positive Review
 
@@ -89,7 +136,7 @@ paths = [
 ```
 
 **Allowlist a specific regex pattern:**
-```tomools
+```toml
 [[allowlists]]
 description = "Known test placeholder values"
 regexes = [

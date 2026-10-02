@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { 
   getAdminUsers, 
   getUserOnboardingStatus, 
@@ -13,9 +13,102 @@ import Loader from '@shared/Loader';
 import StatusBadge from '@/components/StatusBadge';
 import Pagination from '@/components/Pagination';
 import FilterBar from '@/components/FilterBar';
+import PasskeyPromptModal, { usePasskeyStepUp } from '@/components/PasskeyPromptModal';
+
+// Anything that can hold focus inside a dialog, in DOM order.
+const FOCUSABLE_IN_DIALOG = [
+  'a[href]',
+  'button:not([disabled])',
+  'input:not([disabled]):not([type="hidden"])',
+  'select:not([disabled])',
+  'textarea:not([disabled])',
+  '[tabindex]:not([tabindex="-1"])',
+].join(',');
+
+const focusableIn = (root) =>
+  Array.from(root.querySelectorAll(FOCUSABLE_IN_DIALOG)).filter(
+    (el) => !el.hasAttribute('aria-hidden') && el.tabIndex !== -1
+  );
+
+/**
+ * Keyboard containment for a modal dialog (WCAG 2.2: 2.1.2 No Keyboard Trap
+ * still needs a documented way out — Escape; 2.4.3 Focus Order — focus must
+ * enter the dialog when it opens and return to the trigger when it closes).
+ *
+ * Returns a ref to attach to the dialog element. Tab and Shift+Tab cycle within
+ * the dialog only, Escape invokes `onClose`, and the element focused before the
+ * dialog opened is refocused on close.
+ */
+function useDialogFocusTrap(isOpen, onClose) {
+  const dialogRef = useRef(null);
+  const returnFocusRef = useRef(null);
+  // onClose is a fresh closure every render; keeping it in a ref lets the effect
+  // below depend on `isOpen` alone, so opening the dialog re-runs it once
+  // instead of stealing focus on every subsequent render.
+  const onCloseRef = useRef(onClose);
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  });
+
+  useEffect(() => {
+    const dialog = dialogRef.current;
+    if (!isOpen || !dialog) return undefined;
+
+    returnFocusRef.current = document.activeElement;
+    const items = focusableIn(dialog);
+    (items[0] || dialog).focus();
+
+    const onKeyDown = (event) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        event.stopPropagation();
+        onCloseRef.current?.();
+        return;
+      }
+      if (event.key !== 'Tab') return;
+
+      const focusable = focusableIn(dialog);
+      if (focusable.length === 0) {
+        event.preventDefault();
+        dialog.focus();
+        return;
+      }
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      const active = document.activeElement;
+      // When the dialog container itself holds focus, pull focus to the correct
+      // end rather than letting the browser continue behind the dialog.
+      if (active === dialog) {
+        event.preventDefault();
+        (event.shiftKey ? last : first).focus();
+      } else if (event.shiftKey && active === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && active === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+
+    document.addEventListener('keydown', onKeyDown, true);
+    return () => {
+      document.removeEventListener('keydown', onKeyDown, true);
+      const trigger = returnFocusRef.current;
+      if (trigger && document.contains(trigger) && typeof trigger.focus === 'function') {
+        trigger.focus();
+      }
+    };
+  }, [isOpen]);
+
+  return dialogRef;
+}
 
 export default function Users() {
   const { params, getFilter, setFilter, resetFilters, goNext, goPrev } = useListQuery(['phone']);
+  // High-risk actions on this page (deactivate / reactivate / evidence
+  // download) are gated behind a WebAuthn passkey assertion. The hook only
+  // invokes the mutation callback after the device prompt succeeds.
+  const { startStepUp, stepUpModalProps } = usePasskeyStepUp();
   const [users, setUsers] = useState([]);
   const [pagination, setPagination] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -37,6 +130,17 @@ export default function Users() {
   const [reactivateNotes, setReactivateNotes] = useState('');
   const [reactivateApprovedBy, setReactivateApprovedBy] = useState('');
   const [refreshKey, setRefreshKey] = useState(0);
+
+  const closeOnboarding = useCallback(() => {
+    setOnboardingUser(null);
+    setOnboardingData(null);
+  }, []);
+  const closeDeactivate = useCallback(() => setDeactivateModalUser(null), []);
+  const closeReactivate = useCallback(() => setReactivateModalUser(null), []);
+
+  const onboardingDialogRef = useDialogFocusTrap(Boolean(onboardingUser), closeOnboarding);
+  const deactivateDialogRef = useDialogFocusTrap(Boolean(deactivateModalUser), closeDeactivate);
+  const reactivateDialogRef = useDialogFocusTrap(Boolean(reactivateModalUser), closeReactivate);
 
   useEffect(() => {
     let active = true;
@@ -75,59 +179,81 @@ export default function Users() {
     }
   };
 
-  const handleDownloadEvidence = async (userId) => {
+  // Downloading a compliance evidence package is a high-risk export, so it is
+  // intercepted by the passkey step-up before the request is issued.
+  const handleDownloadEvidence = (userId) => {
     setActionError('');
     setActionSuccess('');
-    try {
-      await downloadUserEvidencePackage(userId);
-      setActionSuccess('Compliance evidence package downloaded successfully.');
-    } catch (err) {
-      setActionError(err.response?.data?.message || 'Failed to export compliance evidence');
-    }
+    startStepUp('user.evidence.download', async ({ passkeyAssertion, passkeyFallback }) => {
+      try {
+        await downloadUserEvidencePackage(userId, { passkeyAssertion, passkeyFallback });
+        setActionSuccess('Compliance evidence package downloaded successfully.');
+      } catch (err) {
+        setActionError(err.response?.data?.message || 'Failed to export compliance evidence');
+      }
+    });
   };
 
-  const handleDeactivate = async (e) => {
+  // Manual account deactivation is irreversible for the customer, so the
+  // passkey challenge runs between the confirmation form and the mutation.
+  const handleDeactivate = (e) => {
     e.preventDefault();
     if (!deactivateModalUser) return;
-    setSubmittingAction(true);
-    setActionError('');
-    try {
-      await deactivateUserAccount(deactivateModalUser.id, {
-        reason: deactivateReason,
-        notes: deactivateNotes,
-        force: deactivateForce,
-      });
-      setDeactivateModalUser(null);
-      setDeactivateNotes('');
-      setActionSuccess('Account deactivated successfully.');
-      setRefreshKey((k) => k + 1);
-    } catch (err) {
-      setActionError(err.response?.data?.message || err.message || 'Failed to deactivate account');
-    } finally {
-      setSubmittingAction(false);
-    }
+    const target = deactivateModalUser;
+    const payload = {
+      reason: deactivateReason,
+      notes: deactivateNotes,
+      force: deactivateForce,
+    };
+    startStepUp('user.deactivate', async ({ passkeyAssertion, passkeyFallback }) => {
+      setSubmittingAction(true);
+      setActionError('');
+      try {
+        await deactivateUserAccount(target.id, {
+          ...payload,
+          passkeyAssertion,
+          passkeyFallback,
+        });
+        setDeactivateModalUser(null);
+        setDeactivateNotes('');
+        setActionSuccess('Account deactivated successfully.');
+        setRefreshKey((k) => k + 1);
+      } catch (err) {
+        setActionError(err.response?.data?.message || err.message || 'Failed to deactivate account');
+      } finally {
+        setSubmittingAction(false);
+      }
+    });
   };
 
-  const handleReactivate = async (e) => {
+  const handleReactivate = (e) => {
     e.preventDefault();
     if (!reactivateModalUser) return;
-    setSubmittingAction(true);
-    setActionError('');
-    try {
-      await reactivateUserAccount(reactivateModalUser.id, {
-        notes: reactivateNotes,
-        approvedBy: reactivateApprovedBy || undefined,
-      });
-      setReactivateModalUser(null);
-      setReactivateNotes('');
-      setReactivateApprovedBy('');
-      setActionSuccess('Account reactivated successfully.');
-      setRefreshKey((k) => k + 1);
-    } catch (err) {
-      setActionError(err.response?.data?.message || err.message || 'Failed to reactivate account');
-    } finally {
-      setSubmittingAction(false);
-    }
+    const target = reactivateModalUser;
+    const payload = {
+      notes: reactivateNotes,
+      approvedBy: reactivateApprovedBy || undefined,
+    };
+    startStepUp('user.reactivate', async ({ passkeyAssertion, passkeyFallback }) => {
+      setSubmittingAction(true);
+      setActionError('');
+      try {
+        await reactivateUserAccount(target.id, {
+          ...payload,
+          passkeyAssertion,
+          passkeyFallback,
+        });
+        setReactivateModalUser(null);
+        setReactivateNotes('');
+        setReactivateApprovedBy('');
+        setActionSuccess('Account reactivated successfully.');
+        setRefreshKey((k) => k + 1);
+      } catch (err) {
+        setActionError(err.response?.data?.message || err.message || 'Failed to reactivate account');
+      } finally {
+        setSubmittingAction(false);
+      }
+    });
   };
 
   const columns = [
@@ -208,7 +334,7 @@ export default function Users() {
       )}
 
       {actionSuccess && (
-        <div className="mb-4 p-3 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-lg text-sm">
+        <div className="mb-4 p-3 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-lg text-sm" role="status">
           {actionSuccess}
         </div>
       )}
@@ -224,7 +350,7 @@ export default function Users() {
         <div className="flex justify-center py-20"><Loader /></div>
       ) : (
         <>
-          <DataTable columns={columns} data={users} keyField="_id" />
+          <DataTable caption="Users" columns={columns} data={users} keyField="_id" />
           <Pagination pagination={pagination} onNext={goNext} onPrev={goPrev} />
         </>
       )}
@@ -232,16 +358,24 @@ export default function Users() {
       {/* Onboarding Checkpoints Modal */}
       {onboardingUser && (
         <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-xl max-h-[90vh] overflow-y-auto">
-            <div className="flex justify-between items-center pb-4 border-b border-slate-100 mb-4">
+          <div
+            ref={onboardingDialogRef}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="onboarding-status-dialog-title"
+            tabIndex={-1}
+            className="bg-white dark:bg-slate-900 rounded-2xl max-w-lg w-full p-6 shadow-xl max-h-[90vh] overflow-y-auto border border-gray-100 dark:border-slate-800"
+          >
+            <div className="flex justify-between items-center pb-4 border-b border-slate-100 dark:border-slate-800 mb-4">
               <div>
-                <h2 className="text-lg font-bold text-slate-900">Onboarding Status</h2>
-                <p className="text-xs text-slate-500">{onboardingUser.phoneNumber}</p>
+                <h2 id="onboarding-status-dialog-title" className="text-lg font-bold text-slate-900 dark:text-slate-100">Onboarding Status</h2>
+                <p className="text-xs text-slate-500 dark:text-slate-400">{onboardingUser.phoneNumber}</p>
               </div>
               <button
                 type="button"
-                onClick={() => { setOnboardingUser(null); setOnboardingData(null); }}
-                className="text-slate-400 hover:text-slate-600 text-lg font-bold px-2"
+                onClick={closeOnboarding}
+                aria-label="Close onboarding status"
+                className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 text-lg font-bold px-2"
               >
                 ✕
               </button>
@@ -297,16 +431,25 @@ export default function Users() {
       {/* Deactivate User Modal */}
       {deactivateModalUser && (
         <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
-          <form onSubmit={handleDeactivate} className="bg-white rounded-2xl max-w-md w-full p-6 shadow-xl">
-            <h2 className="text-lg font-bold text-red-900 mb-1">Deactivate Customer Account</h2>
+          <form
+            ref={deactivateDialogRef}
+            onSubmit={handleDeactivate}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="deactivate-user-dialog-title"
+            tabIndex={-1}
+            className="bg-white rounded-2xl max-w-md w-full p-6 shadow-xl"
+          >
+            <h2 id="deactivate-user-dialog-title" className="text-lg font-bold text-red-900 mb-1">Deactivate Customer Account</h2>
             <p className="text-xs text-slate-600 mb-4">
               Disables wallet and payment operations for <strong>{deactivateModalUser.phoneNumber}</strong>.
             </p>
 
             <div className="space-y-4">
               <div>
-                <label className="block text-xs font-medium text-slate-700 mb-1">Deactivation Reason *</label>
+                <label htmlFor="deactivate-reason" className="block text-xs font-medium text-slate-700 mb-1">Deactivation Reason *</label>
                 <select
+                  id="deactivate-reason"
                   value={deactivateReason}
                   onChange={(e) => setDeactivateReason(e.target.value)}
                   className="w-full text-sm rounded-lg border border-slate-300 p-2 focus:ring-2 focus:ring-red-500 outline-none"
@@ -324,8 +467,9 @@ export default function Users() {
               </div>
 
               <div>
-                <label className="block text-xs font-medium text-slate-700 mb-1">Operational Notes</label>
+                <label htmlFor="deactivate-notes" className="block text-xs font-medium text-slate-700 mb-1">Operational Notes</label>
                 <textarea
+                  id="deactivate-notes"
                   value={deactivateNotes}
                   onChange={(e) => setDeactivateNotes(e.target.value)}
                   placeholder="Detail context for compliance audit..."
@@ -347,10 +491,15 @@ export default function Users() {
               </div>
             </div>
 
+            <p className="mt-4 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-600">
+              Passkey verification is required. You will confirm with your device biometrics or
+              security key before this deactivation is submitted.
+            </p>
+
             <div className="flex justify-end gap-3 mt-6">
               <button
                 type="button"
-                onClick={() => setDeactivateModalUser(null)}
+                onClick={closeDeactivate}
                 className="px-4 py-2 text-xs font-medium text-slate-600 hover:bg-slate-100 rounded-lg transition"
               >
                 Cancel
@@ -370,16 +519,25 @@ export default function Users() {
       {/* Reactivate User Modal */}
       {reactivateModalUser && (
         <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
-          <form onSubmit={handleReactivate} className="bg-white rounded-2xl max-w-md w-full p-6 shadow-xl">
-            <h2 className="text-lg font-bold text-slate-900 mb-1">Reactivate Customer Account</h2>
+          <form
+            ref={reactivateDialogRef}
+            onSubmit={handleReactivate}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="reactivate-user-dialog-title"
+            tabIndex={-1}
+            className="bg-white rounded-2xl max-w-md w-full p-6 shadow-xl"
+          >
+            <h2 id="reactivate-user-dialog-title" className="text-lg font-bold text-slate-900 mb-1">Reactivate Customer Account</h2>
             <p className="text-xs text-slate-600 mb-4">
               Restores wallet and payment operations for <strong>{reactivateModalUser.phoneNumber}</strong>.
             </p>
 
             <div className="space-y-4">
               <div>
-                <label className="block text-xs font-medium text-slate-700 mb-1">Reactivation Notes *</label>
+                <label htmlFor="reactivate-notes" className="block text-xs font-medium text-slate-700 mb-1">Reactivation Notes *</label>
                 <textarea
+                  id="reactivate-notes"
                   value={reactivateNotes}
                   onChange={(e) => setReactivateNotes(e.target.value)}
                   placeholder="State resolution rationale (e.g. Identity verified / False positive resolved)..."
@@ -389,8 +547,9 @@ export default function Users() {
               </div>
 
               <div>
-                <label className="block text-xs font-medium text-slate-700 mb-1">Second Approver ID (Maker-Checker)</label>
+                <label htmlFor="reactivate-approved-by" className="block text-xs font-medium text-slate-700 mb-1">Second Approver ID (Maker-Checker)</label>
                 <input
+                  id="reactivate-approved-by"
                   type="text"
                   value={reactivateApprovedBy}
                   onChange={(e) => setReactivateApprovedBy(e.target.value)}
@@ -400,10 +559,15 @@ export default function Users() {
               </div>
             </div>
 
+            <p className="mt-4 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-600">
+              Passkey verification is required. You will confirm with your device biometrics or
+              security key before this reactivation is submitted.
+            </p>
+
             <div className="flex justify-end gap-3 mt-6">
               <button
                 type="button"
-                onClick={() => setReactivateModalUser(null)}
+                onClick={closeReactivate}
                 className="px-4 py-2 text-xs font-medium text-slate-600 hover:bg-slate-100 rounded-lg transition"
               >
                 Cancel
@@ -419,6 +583,9 @@ export default function Users() {
           </form>
         </div>
       )}
+
+      {/* WebAuthn / passkey step-up prompt for high-risk actions */}
+      <PasskeyPromptModal {...stepUpModalProps} />
     </div>
   );
 }

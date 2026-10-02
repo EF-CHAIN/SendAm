@@ -111,7 +111,7 @@ export default function OnboardingStatus() {
       {loading && !status ? (
         <div className="flex justify-center py-20"><Loader size={36} /></div>
       ) : error && !status ? (
-        <div className="p-6 bg-red-50 border border-red-200 rounded-2xl text-red-700 flex items-start gap-3">
+        <div role="alert" className="p-6 bg-red-50 border border-red-200 rounded-2xl text-red-700 flex items-start gap-3">
           <AlertCircle className="w-6 h-6 shrink-0 mt-0.5" />
           <div>
             <h2 className="font-bold text-red-900">Unable to load onboarding status</h2>

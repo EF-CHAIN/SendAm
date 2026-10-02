@@ -68,6 +68,31 @@ const isWriteMethod = (config) => {
 
 const isPayloadTooLarge = (err) => !!(err && (err.code === 'ERR_BODY_LENGTH_LIMIT' || err.code === 'ERR_CONTENT_LENGTH_LIMIT' || err.isPayloadTooLarge));
 
+// Default timeout in milliseconds for individual HTTP requests to a Horizon endpoint.
+// 10s provides adequate headroom for standard Horizon query execution and network latency before failing over.
+const DEFAULT_REQUEST_TIMEOUT_MS = 10000;
+
+// Maximum total execution time in milliseconds across all retry/failover attempts.
+// 30s prevents operations from hanging indefinitely while trying multiple failover endpoints.
+const DEFAULT_TOTAL_TIMEOUT_MS = 30000;
+
+// Consecutive failure count threshold before tripping an endpoint's circuit breaker to open.
+// 3 consecutive failures indicates sustained endpoint disruption rather than a transient blip.
+const DEFAULT_CIRCUIT_FAILURE_THRESHOLD = 3;
+
+// Duration in milliseconds to keep a tripped circuit breaker open before allowing retry attempts (half-open).
+// 30s allows the remote Horizon instance or upstream load balancer sufficient time to recover.
+const DEFAULT_CIRCUIT_COOLDOWN_MS = 30000;
+
+// One megabyte expressed in bytes (1024 * 1024), used as the base unit for payload and content limit calculations.
+const ONE_MB_IN_BYTES = 1024 * 1024;
+
+// Default maximum request body size (2 MB) for transaction submission endpoints where signed XDR envelopes can be large.
+const DEFAULT_TRANSACTION_BODY_LIMIT_BYTES = ONE_MB_IN_BYTES * 2;
+
+// Default maximum response size (1 MB) for standard querying endpoints (accounts, payments, effects, operations, trades).
+const DEFAULT_QUERY_CONTENT_LIMIT_BYTES = ONE_MB_IN_BYTES * 1;
+
 /**
  * Attach failover + circuit-breaking to an axios-compatible HTTP client
  * (the Stellar SDK's `server.httpClient`). Returns a handle with `getHealth`.
@@ -86,8 +111,8 @@ const isPayloadTooLarge = (err) => !!(err && (err.code === 'ERR_BODY_LENGTH_LIMI
  */
 const attachHorizonResilience = (httpClient, {
   baseUrls = [],
-  timeoutMs = 10000,
-  totalTimeoutMs = 30000,
+  timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS,
+  totalTimeoutMs = DEFAULT_TOTAL_TIMEOUT_MS,
   maxBodyLength,
   maxContentLength,
   routeLimits = {},
@@ -97,8 +122,8 @@ const attachHorizonResilience = (httpClient, {
   if (!httpClient || !httpClient.interceptors) {
     return httpClient || { getHealth: () => [], _endpoints: [] };
   }
-  const threshold = circuit.threshold ?? 3;
-  const cooldownMs = circuit.cooldownMs ?? 30000;
+  const threshold = circuit.threshold ?? DEFAULT_CIRCUIT_FAILURE_THRESHOLD;
+  const cooldownMs = circuit.cooldownMs ?? DEFAULT_CIRCUIT_COOLDOWN_MS;
 
   const endpoints = baseUrls.map((url, index) => ({
     url,
@@ -131,12 +156,12 @@ const attachHorizonResilience = (httpClient, {
 
   // Default route-specific body/limit configuration for common Horizon endpoints.
   const defaultRouteLimits = {
-    '/transactions': { maxBodyLength: 1024 * 1024 * 2 }, // 2 MB for transaction submission (XDR can be large)
-    '/accounts/': { maxContentLength: 1024 * 1024 * 1 }, // 1 MB for account responses
-    '/payments': { maxContentLength: 1024 * 1024 * 1 },
-    '/effects': { maxContentLength: 1024 * 1024 * 1 },
-    '/operations': { maxContentLength: 1024 * 1024 * 1 },
-    '/trades': { maxContentLength: 1024 * 1024 * 1 },
+    '/transactions': { maxBodyLength: DEFAULT_TRANSACTION_BODY_LIMIT_BYTES }, // 2 MB for transaction submission (XDR can be large)
+    '/accounts/': { maxContentLength: DEFAULT_QUERY_CONTENT_LIMIT_BYTES }, // 1 MB for account responses
+    '/payments': { maxContentLength: DEFAULT_QUERY_CONTENT_LIMIT_BYTES },
+    '/effects': { maxContentLength: DEFAULT_QUERY_CONTENT_LIMIT_BYTES },
+    '/operations': { maxContentLength: DEFAULT_QUERY_CONTENT_LIMIT_BYTES },
+    '/trades': { maxContentLength: DEFAULT_QUERY_CONTENT_LIMIT_BYTES },
   };
   const effectiveRouteLimits = { ...defaultRouteLimits, ...routeLimits };
 

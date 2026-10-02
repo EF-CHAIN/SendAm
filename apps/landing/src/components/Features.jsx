@@ -35,15 +35,15 @@ export default function Features() {
         </p>
       </div>
 
-      <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
+      <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
         {features.map((f) => {
           const Icon = f.icon;
           return (
             <div
               key={f.title}
-              className="rounded-2xl border border-slate-100 bg-white p-6 shadow-sm transition-shadow hover:shadow-md sm:p-7"
+              className="group rounded-2xl border border-slate-100 bg-white p-6 shadow-sm transition duration-300 ease-out hover:-translate-y-1 hover:border-primary/40 hover:shadow-lg motion-reduce:transition-none motion-reduce:hover:translate-y-0 sm:p-7"
             >
-              <div className="mb-5 flex h-14 w-14 items-center justify-center rounded-xl bg-secondary text-primary">
+              <div className="mb-5 flex h-14 w-14 items-center justify-center rounded-xl bg-secondary text-primary transition duration-300 ease-out group-hover:scale-110 group-hover:-rotate-6 group-hover:bg-primary group-hover:text-white motion-reduce:transition-none motion-reduce:group-hover:scale-100 motion-reduce:group-hover:rotate-0">
                 <Icon size={26} aria-hidden="true" />
               </div>
               <h3 className="mb-2 text-lg font-bold text-dark">{f.title}</h3>
