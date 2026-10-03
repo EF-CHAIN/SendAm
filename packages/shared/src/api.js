@@ -19,11 +19,14 @@ const api = axios.create({
 api.interceptors.response.use(
   (response) => response,
   (error) => {
+    // Queue only while the browser reports offline: a queued request settles
+    // when the `online` event replays it. If the browser is online, the API is
+    // unreachable for another reason — reject so callers can show their error UI.
+    const isOffline = typeof navigator !== 'undefined' && navigator.onLine === false;
     const isNetworkError =
       !error.response &&
-      (error.code === 'ERR_NETWORK' ||
-        error.message?.includes('Network Error') ||
-        (typeof navigator !== 'undefined' && !navigator.onLine));
+      isOffline &&
+      (error.code === 'ERR_NETWORK' || error.message?.includes('Network Error'));
 
     // Only queue idempotent queries (GET / HEAD) or explicitly marked retryable requests
     if (isNetworkError && error.config && !error.config._queuedForOfflineRetry) {
