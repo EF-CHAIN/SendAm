@@ -39,6 +39,8 @@ export default defineConfig({
       name: 'tablet',
       use: {
         ...devices['iPad Mini'],
+        // CI installs Chromium only; keep the iPad viewport/touch profile but not WebKit.
+        defaultBrowserType: 'chromium',
         viewport: { width: 768, height: 1024 },
       },
     },
@@ -46,6 +48,7 @@ export default defineConfig({
       name: 'mobile',
       use: {
         ...devices['iPhone SE'],
+        defaultBrowserType: 'chromium',
         viewport: { width: 375, height: 667 },
       },
     },

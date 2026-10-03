@@ -8,6 +8,11 @@ on:
       - 'playwright.config.js'
       - '.github/workflows/visual-test.yml'
   workflow_dispatch:
+    inputs:
+      update_snapshots:
+        description: 'Regenerate baseline screenshots and upload them as an artifact'
+        type: boolean
+        default: false
 
 concurrency:
   group: visual-${{ github.workflow }}-${{ github.ref }}
@@ -36,9 +41,26 @@ jobs:
         run: npx playwright install --with-deps chromium
 
       - name: Run Visual Regression Suite
+        if: ${{ !inputs.update_snapshots }}
         run: npm run test:visual
         env:
           CI: true
+
+      # Baselines must be rendered on the CI runner (fonts differ per OS).
+      # Dispatch with update_snapshots=true, download the artifact, commit the PNGs.
+      - name: Regenerate baseline screenshots
+        if: ${{ inputs.update_snapshots }}
+        run: npm run test:visual -- --update-snapshots
+        env:
+          CI: true
+
+      - name: Upload regenerated baselines
+        if: ${{ inputs.update_snapshots }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: visual-baselines
+          path: apps/*/e2e/*-snapshots/
+          retention-days: 7
 
       - name: Upload Visual Failure Artifacts & Diffs
         if: failure()
