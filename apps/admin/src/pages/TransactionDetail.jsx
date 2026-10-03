@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { lazy, Suspense, useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ChevronDown, ChevronUp, Copy, Check, Code } from 'lucide-react';
 import { getAdminTransaction } from '@/lib/adminApi';
@@ -7,7 +7,10 @@ import StatusBadge from '@/components/StatusBadge';
 import Loader from '@shared/Loader';
 import { exportReceiptPdf } from '@/lib/receiptPdf';
 import { Download, FileCode } from 'lucide-react';
-import XdrDecoderModal from '@/components/XdrDecoderModal';
+
+// @stellar/stellar-sdk (~900 KB) is only needed once an operator opens the decoder,
+// so keep it out of the TransactionDetail route chunk.
+const XdrDecoderModal = lazy(() => import('@/components/XdrDecoderModal'));
 
 const Field = ({ label, value, mono = false, children }) => (
   <div className="py-3 sm:grid sm:grid-cols-3 sm:gap-4">
@@ -204,12 +207,16 @@ export default function TransactionDetail() {
         </div>
       </div>
 
-      <XdrDecoderModal
-        isOpen={isDecoderOpen}
-        onClose={() => setIsDecoderOpen(false)}
-        initialXdr={rawXdr}
-        txHash={tx.txHash || tx._id || tx.id}
-      />
+      {isDecoderOpen && (
+        <Suspense fallback={null}>
+          <XdrDecoderModal
+            isOpen={isDecoderOpen}
+            onClose={() => setIsDecoderOpen(false)}
+            initialXdr={rawXdr}
+            txHash={tx.txHash || tx._id || tx.id}
+          />
+        </Suspense>
+      )}
 
       <div className="bg-white dark:bg-slate-900 shadow-sm border border-gray-200 dark:border-slate-800 rounded-xl overflow-hidden">
         {/* Core identifiers */}
