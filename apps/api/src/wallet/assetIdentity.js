@@ -8,15 +8,38 @@
 // the one asset that has no issuer at all. Every place in the codebase that
 // labels, values, notifies about, or applies policy to a Stellar asset must
 // go through this module rather than comparing `asset_code` on its own.
+//
+// ── Supported assets (#455) ────────────────────────────────────────────────
+//
+//   XLM   Native. Always recognised on every network; it has no issuer, so
+//         its canonical key is just `stellar:<network>:XLM`.
+//   USDC  Issued. Trusted only when the payment's issuer is exactly the one
+//         configured for the current network in `config/networkProfiles.js`
+//         (`usdcIssuer`, driven by the `STELLAR_USDC_ISSUER` env var on
+//         mainnet and the profile default on testnet). A same-code asset
+//         from any other issuer is deliberately reported `trusted: false`.
+//
+// Adding a new trusted asset code:
+//   1. Add the per-network issuer to the network profiles (the way
+//      `usdcIssuer` is declared, one issuer per network id), so the issuer
+//      lives in exactly one place and is validated at startup.
+//   2. Add an entry to `TRUSTED_ISSUERS` below mapping the code to those
+//      per-network issuers.
+//   3. Extend `apps/api/test/assetIdentity.test.js` with the new code's
+//      trusted/spoofed cases. No resolution logic changes are needed —
+//      every function here reads from `TRUSTED_ISSUERS`.
 
 const { NETWORK_PROFILES } = require('../config/networkProfiles');
 
+/** Chain discriminator used in every canonical asset key this module mints. */
 const CHAIN = 'stellar';
 
-// Issued assets this service recognises as trusted, keyed by asset code and
-// then by network id to the single issuer that code means on that network.
-// Sourced from the network profiles (#284) so the testnet/mainnet USDC
-// issuers are declared in exactly one place.
+/**
+ * Issued assets this service recognises as trusted, keyed by asset code and
+ * then by network id to the single issuer that code means on that network.
+ * Sourced from the network profiles (#284) so the testnet/mainnet USDC
+ * issuers are declared in exactly one place. Frozen: policy data, not state.
+ */
 const TRUSTED_ISSUERS = Object.freeze({
   USDC: Object.freeze(
     Object.fromEntries(

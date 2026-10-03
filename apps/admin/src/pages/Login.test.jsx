@@ -3,6 +3,8 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import Login from './Login';
 import { describe, it, expect, beforeEach } from 'vitest';
+import { http, HttpResponse } from 'msw';
+import { server } from '../mocks/server';
 
 // Use MemoryRouter to avoid jsdom's "Not implemented: navigation" error that
 // fires when Login calls navigate('/') after a successful login via BrowserRouter.
@@ -26,6 +28,47 @@ describe('Login Component', () => {
     renderLogin();
     expect(screen.getByPlaceholderText('Enter password')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /sign in/i })).toBeInTheDocument();
+  });
+
+  it('toggles password visibility with an accessible control', async () => {
+    const user = userEvent.setup();
+    renderLogin();
+    const passwordInput = screen.getByLabelText('Password');
+
+    expect(passwordInput).toHaveAttribute('type', 'password');
+    await user.click(screen.getByRole('button', { name: 'Show password' }));
+    expect(passwordInput).toHaveAttribute('type', 'text');
+
+    await user.click(screen.getByRole('button', { name: 'Hide password' }));
+    expect(passwordInput).toHaveAttribute('type', 'password');
+  });
+
+  it('shows a spinner and disables submit while authenticating', async () => {
+    let resolveLogin;
+    const loginResponse = new Promise((resolve) => {
+      resolveLogin = resolve;
+    });
+    server.use(
+      http.post('*/api/admin/login', async () => {
+        await loginResponse;
+        return HttpResponse.json({ data: { token: 'fake_token' } });
+      })
+    );
+
+    const user = userEvent.setup();
+    renderLogin();
+    await user.type(screen.getByLabelText('Email'), 'operator@example.com');
+    await user.type(screen.getByLabelText('Password'), 'correct_password');
+    await user.click(screen.getByRole('button', { name: /sign in/i }));
+
+    const submitButton = screen.getByRole('button', { name: /signing in/i });
+    expect(submitButton).toBeDisabled();
+    expect(submitButton.querySelector('svg')).toHaveClass('animate-spin');
+
+    resolveLogin();
+    await waitFor(() => {
+      expect(screen.getByTestId('dashboard')).toBeInTheDocument();
+    });
   });
 
   it('handles successful login and redirects to dashboard', async () => {
@@ -61,6 +104,12 @@ describe('Login Component', () => {
     await waitFor(() => {
       expect(screen.getByText('Invalid credentials')).toBeInTheDocument();
     });
+
+    expect(passwordInput).toHaveAttribute('aria-invalid', 'true');
+    expect(passwordInput).toHaveAttribute('aria-describedby', 'login-error');
+    expect(emailInput).toHaveAttribute('aria-invalid', 'true');
+    expect(emailInput).toHaveAttribute('aria-describedby', 'login-error');
+    expect(screen.getByRole('alert')).toHaveAttribute('id', 'login-error');
     
     expect(localStorage.getItem('adminToken')).toBeNull();
   });

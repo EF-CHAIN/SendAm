@@ -1,3 +1,4 @@
+import { ExternalLink } from 'lucide-react';
 import { ADMIN_URL, GITHUB_URL, STELLAR_URL, whatsappUrl } from '@/lib/links.js';
 
 const columns = [
@@ -54,9 +55,15 @@ export default function Footer() {
                     {...(link.external
                       ? { target: '_blank', rel: 'noopener noreferrer' }
                       : {})}
-                    className="text-sm text-slate-600 transition-colors hover:text-primary"
+                    className="inline-flex items-center gap-1 text-sm text-slate-600 transition-colors hover:text-primary focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
                   >
                     {link.label}
+                    {link.external && (
+                      <>
+                        <ExternalLink size={12} aria-hidden="true" className="shrink-0" />
+                        <span className="sr-only">(opens in new window)</span>
+                      </>
+                    )}
                   </a>
                 </li>
               ))}

@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `docs/SECRET-SCANNING.md` has a "Run It Locally" section with the exact gitleaks install, self-test and scan commands (#466).
+- Landing `Navbar`: below the `md` breakpoint a hamburger button (`aria-expanded`, `aria-controls`, `aria-label`) opens an accessible slide-out drawer with a backdrop, the section and onboarding links and the WhatsApp CTA. The drawer traps focus, closes on Escape, backdrop click or link click (smooth-scrolling to the section), locks page scroll while open and returns focus to the toggle (#493).
 - Automated accessibility coverage for the admin dashboard: jest-axe scans
   plus keyboard/focus/landmark/label assertions over the real admin workflows
   (navigation, tables, pagination, forms, status indicators) in

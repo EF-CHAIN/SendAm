@@ -5,50 +5,54 @@
 const { CATALOG, byCode } = require('./catalog');
 
 class AppError extends Error {
-  constructor(code, message, { statusCode, details, safe } = {}) {
+  constructor(code, message, { statusCode, details, safe, cause } = {}) {
     const entry = typeof code === 'string' ? byCode(code) : null;
-    super(message || (entry && entry.defaultMessage) || CATALOG.INTERNAL.defaultMessage);
+    super(
+      message || (entry && entry.defaultMessage) || CATALOG.INTERNAL.defaultMessage,
+      cause !== undefined ? { cause } : undefined
+    );
     this.name = 'AppError';
     this.code = entry ? entry.code : code;
     this.statusCode = statusCode || (entry ? entry.statusCode : CATALOG.INTERNAL.statusCode);
     this.safe = safe !== undefined ? safe : (entry ? entry.safe : CATALOG.INTERNAL.safe);
     if (details !== undefined) this.details = details;
+    if (cause !== undefined && this.cause === undefined) this.cause = cause;
   }
 
-  static validation(message, details) {
-    return new AppError('validation_error', message, { details });
+  static validation(message, details, { cause } = {}) {
+    return new AppError('validation_error', message, { details, cause });
   }
 
-  static unauthorized(message) {
-    return new AppError('unauthorized', message);
+  static unauthorized(message, { cause } = {}) {
+    return new AppError('unauthorized', message, { cause });
   }
 
-  static forbidden(message) {
-    return new AppError('forbidden', message);
+  static forbidden(message, { cause } = {}) {
+    return new AppError('forbidden', message, { cause });
   }
 
-  static notFound(message) {
-    return new AppError('not_found', message);
+  static notFound(message, { cause } = {}) {
+    return new AppError('not_found', message, { cause });
   }
 
-  static conflict(message, details) {
-    return new AppError('conflict', message, { details });
+  static conflict(message, details, { cause } = {}) {
+    return new AppError('conflict', message, { details, cause });
   }
 
-  static rateLimited(message) {
-    return new AppError('rate_limited', message);
+  static rateLimited(message, { cause } = {}) {
+    return new AppError('rate_limited', message, { cause });
   }
 
-  static provider(message, details) {
-    return new AppError('provider_error', message, { details });
+  static provider(message, details, { cause } = {}) {
+    return new AppError('provider_error', message, { details, cause });
   }
 
-  static unavailable(message) {
-    return new AppError('service_unavailable', message);
+  static unavailable(message, { cause } = {}) {
+    return new AppError('service_unavailable', message, { cause });
   }
 
-  static internal(message) {
-    return new AppError('internal_error', message, { safe: false });
+  static internal(message, { cause } = {}) {
+    return new AppError('internal_error', message, { safe: false, cause });
   }
 }
 

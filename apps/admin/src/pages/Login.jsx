@@ -1,11 +1,12 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { adminLogin } from '@/lib/adminApi';
-import { Lock } from 'lucide-react';
+import { Eye, EyeOff, Loader2, Lock } from 'lucide-react';
 
 export default function Login() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
@@ -50,30 +51,47 @@ export default function Login() {
         <form onSubmit={handleLogin} className="space-y-6">
           <div>
             <label htmlFor="login-email" className="block text-sm font-medium text-gray-700 mb-2">Email</label>
-            <input id="login-email" type="email" required autoComplete="username" value={email} onChange={(e) => setEmail(e.target.value)} className="w-full px-4 py-3 rounded-lg border border-gray-200 focus:ring-2 focus:ring-primary outline-none transition-all" placeholder="you@example.com" />
+            <input id="login-email" type="email" required autoComplete="username" value={email} onChange={(e) => setEmail(e.target.value)} aria-invalid={error ? 'true' : undefined} aria-describedby={error ? 'login-error' : undefined} className="w-full px-4 py-3 rounded-lg border border-gray-200 focus:ring-2 focus:ring-primary outline-none transition-all" placeholder="you@example.com" />
           </div>
           <div>
             <label htmlFor="login-password" className="block text-sm font-medium text-gray-700 mb-2">Password</label>
-            <input
-              id="login-password"
-              type="password"
-              required
-              autoComplete="current-password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              className="w-full px-4 py-3 rounded-lg border border-gray-200 focus:ring-2 focus:ring-primary outline-none transition-all"
-              placeholder="Enter password"
-            />
+            <div className="relative">
+              <input
+                id="login-password"
+                type={showPassword ? 'text' : 'password'}
+                required
+                autoComplete="current-password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                aria-invalid={error ? 'true' : undefined}
+                aria-describedby={error ? 'login-error' : undefined}
+                className="w-full px-4 py-3 pr-12 rounded-lg border border-gray-200 focus:ring-2 focus:ring-primary outline-none transition-all"
+                placeholder="Enter password"
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword((visible) => !visible)}
+                aria-label={showPassword ? 'Hide password' : 'Show password'}
+                className="absolute inset-y-0 right-0 flex items-center px-4 text-gray-500 hover:text-gray-700 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-primary rounded-r-lg"
+              >
+                {showPassword ? <EyeOff size={20} aria-hidden="true" /> : <Eye size={20} aria-hidden="true" />}
+              </button>
+            </div>
           </div>
           {error && (
-            <p role="alert" className="text-sm text-red-600 text-center">{error}</p>
+            <p id="login-error" role="alert" className="text-sm text-red-600 text-center">{error}</p>
           )}
           <button
             type="submit"
             disabled={loading}
             className="w-full bg-dark hover:bg-gray-800 text-white font-medium py-3 rounded-lg transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
           >
-            {loading ? 'Signing in...' : 'Sign In'}
+            {loading ? (
+              <span className="flex items-center justify-center gap-2">
+                <Loader2 size={18} className="animate-spin" aria-hidden="true" />
+                Signing in...
+              </span>
+            ) : 'Sign In'}
           </button>
         </form>
       </div>

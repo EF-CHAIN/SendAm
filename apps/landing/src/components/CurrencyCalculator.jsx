@@ -114,7 +114,7 @@ export default function CurrencyCalculator() {
                     id={sourceSelectId}
                     value={sourceCurrency}
                     onChange={(e) => setSourceCurrency(e.target.value)}
-                    className="bg-transparent text-sm font-semibold text-dark outline-none cursor-pointer"
+                    className="bg-transparent text-sm font-semibold text-dark outline-none cursor-pointer focus-visible:ring-2 focus-visible:ring-primary rounded"
                   >
                     {SOURCE_CURRENCIES.map((c) => (
                       <option key={c.code} value={c.code}>
@@ -165,7 +165,7 @@ export default function CurrencyCalculator() {
               <label htmlFor={targetSelectId} className="block text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1.5">
                 Recipient Gets (Est.)
               </label>
-              <div className="relative flex rounded-2xl border-2 border-emerald-100 bg-emerald-50/50 p-2">
+              <div className="relative flex rounded-2xl border-2 border-emerald-100 bg-emerald-50/50 p-2 focus-within:border-emerald-500 focus-within:ring-2 focus-within:ring-emerald-500/20">
                 <div className="w-full px-3 py-2 text-2xl font-extrabold text-emerald-800 sm:text-3xl truncate">
                   {currentTarget.symbol} {receivedAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                 </div>
@@ -174,7 +174,7 @@ export default function CurrencyCalculator() {
                     id={targetSelectId}
                     value={targetCurrency}
                     onChange={(e) => setTargetCurrency(e.target.value)}
-                    className="bg-transparent text-sm font-semibold text-emerald-900 outline-none cursor-pointer"
+                    className="bg-transparent text-sm font-semibold text-emerald-900 outline-none cursor-pointer focus-visible:ring-2 focus-visible:ring-emerald-500 rounded"
                   >
                     {TARGET_CURRENCIES.map((c) => (
                       <option key={c.code} value={c.code}>

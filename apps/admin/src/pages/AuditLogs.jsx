@@ -176,7 +176,7 @@ export default function AuditLogs() {
       />
 
       {error && <div className="mb-4 p-3 bg-red-50 text-red-600 border border-red-200 rounded" role="alert">{error}</div>}
-      <DataTable columns={columns} data={rows} keyField="_id" />
+      <DataTable caption="Audit log entries" columns={columns} data={rows} keyField="_id" />
       <Pagination pagination={pagination} onNext={goNext} onPrev={goPrev} />
     </div>
   );

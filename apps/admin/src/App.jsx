@@ -1,6 +1,8 @@
 import { lazy, Suspense } from 'react';
 import { Routes, Route } from 'react-router-dom';
 import ErrorBoundary from '@shared/ErrorBoundary.jsx';
+import NetworkStatusBanner from '@shared/NetworkStatusBanner.jsx';
+import { ThemeProvider } from './context/ThemeContext.jsx';
 import AdminLayout from './components/AdminLayout.jsx';
 
 // Route-level code splitting: each page is its own JS chunk.
@@ -19,8 +21,10 @@ const SystemHealth = lazy(() => import('./pages/SystemHealth.jsx'));
 
 export default function App() {
   return (
-    <ErrorBoundary variant="admin">
-      <Suspense fallback={null}>
+    <ThemeProvider>
+      <ErrorBoundary variant="admin">
+        <NetworkStatusBanner />
+        <Suspense fallback={null}>
         <Routes>
           <Route path="/login" element={<Login />} />
           <Route path="/set-password" element={<SetPassword />} />
@@ -38,5 +42,6 @@ export default function App() {
         </Routes>
       </Suspense>
     </ErrorBoundary>
+  </ThemeProvider>
   );
 }
