@@ -1,6 +1,7 @@
 import { lazy, Suspense } from 'react';
 import { Routes, Route } from 'react-router-dom';
 import ErrorBoundary from '@shared/ErrorBoundary.jsx';
+import NetworkStatusBanner from '@shared/NetworkStatusBanner.jsx';
 import { ThemeProvider } from './context/ThemeContext.jsx';
 import AdminLayout from './components/AdminLayout.jsx';
 
@@ -22,6 +23,7 @@ export default function App() {
   return (
     <ThemeProvider>
       <ErrorBoundary variant="admin">
+        <NetworkStatusBanner />
         <Suspense fallback={null}>
         <Routes>
           <Route path="/login" element={<Login />} />
