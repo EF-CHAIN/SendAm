@@ -1,6 +1,9 @@
 import { test, expect } from '@playwright/test';
 
 test.describe('Landing App - Visual Regression Suite', () => {
+  // Root config starts both dev servers; point relative goto() at this app's.
+  test.use({ baseURL: 'http://localhost:5173' });
+
   test.beforeEach(async ({ page }) => {
     // Wait until fonts and critical assets are loaded
     await page.addInitScript(() => {

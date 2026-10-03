@@ -1,6 +1,9 @@
 import { test, expect } from '@playwright/test';
 
 test.describe('Admin App - Visual Regression Suite', () => {
+  // Root config starts both dev servers; point relative goto() at this app's.
+  test.use({ baseURL: 'http://localhost:5174' });
+
   test.beforeEach(async ({ page }) => {
     // Disable CSS animations & transitions for deterministic visual diffs
     await page.addInitScript(() => {
