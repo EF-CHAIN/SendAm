@@ -19,6 +19,8 @@ export default function FilterBar({ fields = [], getFilter, setFilter, onReset }
   return (
     <div className="mb-4">
       <form
+        role="search"
+        aria-label="Filter controls"
         className="flex flex-wrap items-end gap-3"
         onSubmit={(e) => e.preventDefault()}
       >
