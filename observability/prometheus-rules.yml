@@ -208,3 +208,30 @@ groups:
         annotations:
           summary: SendAm dead-letter queue is receiving failed poison message jobs
           runbook_url: https://github.com/EF-CHAIN/SendAm/blob/main/docs/OBSERVABILITY.md#dead-letter-queue
+
+      # ── Alert delivery self-test (issue #228) ─────────────────────────────
+      # These rules fire when the continuous alert-delivery test mechanism has
+      # not successfully verified end-to-end alert delivery within the expected
+      # window. A firing rule means alerting itself may be broken — this should
+      # be treated as a high-priority incident.
+      - alert: SendAmAlertDeliveryTestMissed
+        expr: |
+          (time() - sendam_alert_delivery_test_last_success_timestamp_seconds) > 1800
+        for: 5m
+        labels:
+          severity: critical
+          service: sendam-worker
+        annotations:
+          summary: SendAm alert delivery test has not succeeded in the past 30 minutes
+          runbook_url: https://github.com/EF-CHAIN/SendAm/blob/main/docs/OBSERVABILITY.md#alert-delivery-test
+
+      - alert: SendAmAlertDeliveryTestFailing
+        expr: |
+          increase(sendam_alert_delivery_test_failures_total[30m]) > 2
+        for: 5m
+        labels:
+          severity: warning
+          service: sendam-worker
+        annotations:
+          summary: SendAm alert delivery tests are repeatedly failing
+          runbook_url: https://github.com/EF-CHAIN/SendAm/blob/main/docs/OBSERVABILITY.md#alert-delivery-test

@@ -258,4 +258,22 @@ module.exports = {
     secretRotationAlertWebhookUrl: process.env.SECRET_ROTATION_ALERT_WEBHOOK_URL || process.env.ERROR_MONITOR_WEBHOOK_URL,
     secretRotationAlertToken: process.env.SECRET_ROTATION_ALERT_TOKEN || process.env.ERROR_MONITOR_TOKEN,
   },
+  // Continuous alert-delivery testing (issue #228).
+  // Schedules periodic synthetic end-to-end tests so monitoring cannot appear
+  // healthy while alert routing is actually broken.
+  alertDeliveryTest: {
+    // How often to run a synthetic test (ms). Default: 15 minutes.
+    // Set to 0 to disable the poller entirely (useful in environments that
+    // have no configured alert routes).
+    intervalMs: Number(process.env.ALERT_DELIVERY_TEST_INTERVAL_MS || 15 * 60 * 1000),
+    // How long to wait for a delivery acknowledgement (ms). Default: 10 s.
+    timeoutMs: Number(process.env.ALERT_DELIVERY_TEST_TIMEOUT_MS || 10000),
+    // Dedicated phone number for synthetic WhatsApp test messages.
+    // Must be set to exercise the WhatsApp/Meta route; without it, only the
+    // webhook fallback route is tested.
+    testPhone: process.env.ALERT_DELIVERY_TEST_PHONE || null,
+    // How many missed intervals before the health status becomes 'missed'
+    // rather than 'degraded'. Default: 2 (flag as missed after 2× interval).
+    missedFactor: Number(process.env.ALERT_DELIVERY_TEST_MISSED_FACTOR || 2),
+  },
 };

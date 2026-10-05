@@ -598,6 +598,22 @@ const exportAuditLogs = async (req, res, next) => {
 
 const getSystemHealth = async (_req, res, next) => {
   try {
+    const { getLastTestResult, getLastSuccessfulTestResult, evaluateAlertDeliveryHealth } = require('../observability/alertDeliveryTest.service');
+    const config = require('../config/env');
+
+    const [lastTest, lastSuccess] = await Promise.all([
+      getLastTestResult(prisma),
+      getLastSuccessfulTestResult(prisma),
+    ]);
+
+    const alertDeliveryHealth = evaluateAlertDeliveryHealth({
+      lastTest,
+      lastSuccess,
+      intervalMs: config.alertDeliveryTest?.intervalMs || 15 * 60 * 1000,
+      missedFactor: config.alertDeliveryTest?.missedFactor || 2,
+      now: Date.now(),
+    });
+
     sendSuccess(res, {
       api: 'ok',
       database: 'ok',
@@ -605,6 +621,17 @@ const getSystemHealth = async (_req, res, next) => {
       settlementRail: 'stellar',
       custodyModel: 'direct',
       timestamp: new Date().toISOString(),
+      alertDelivery: {
+        status: alertDeliveryHealth.status,
+        message: alertDeliveryHealth.message,
+        lastTestAt: alertDeliveryHealth.lastTestAt,
+        lastSuccessAt: alertDeliveryHealth.lastSuccessAt,
+        overdueBy: alertDeliveryHealth.overdueBy,
+        lastResult: lastTest?.overallResult ?? null,
+        routes: lastTest?.routes ?? null,
+        testId: lastTest?.testId ?? null,
+        intervalMs: config.alertDeliveryTest?.intervalMs || 15 * 60 * 1000,
+      },
     });
   } catch (error) {
     next(error);

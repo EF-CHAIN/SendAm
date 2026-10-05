@@ -994,3 +994,27 @@ model MessagingConsentRecord {
   @@index([userId])
   @@index([category, status])
 }
+
+// ─── Issue #228: Continuous alert-delivery test state ─────────────────────────
+// Persists the result of every synthetic end-to-end alert-delivery test so
+// operators can verify that alerting actually works, even across application
+// restarts. The most-recent row and most-recent successful row answer the
+// operator questions "when was alerting last tested?" and "when did it last
+// work?" without relying on in-memory state.
+model AlertDeliveryTest {
+  id            String   @id @default(cuid())
+  /// Unique run identifier (UUID). Generated fresh for every scheduled run.
+  testId        String   @unique
+  /// Overall test outcome: success | fallback_success | failure | timeout | skipped
+  overallResult String
+  startedAt     DateTime
+  completedAt   DateTime
+  /// Elapsed time from start to finish in milliseconds.
+  durationMs    Int
+  /// Per-route details: [{name, attempted, result, error, providerMessageId}]
+  routes        Json     @default("[]")
+  createdAt     DateTime @default(now())
+
+  @@index([completedAt])
+  @@index([overallResult, completedAt])
+}
