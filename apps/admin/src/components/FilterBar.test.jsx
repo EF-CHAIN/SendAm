@@ -27,6 +27,11 @@ const renderFilterBar = () => {
 };
 
 describe('FilterBar accessibility and interactions', () => {
+  it('exposes a search landmark with an accessible label for assistive tech', () => {
+    renderFilterBar();
+    expect(screen.getByRole('search', { name: 'Filter controls' })).toBeInTheDocument();
+  });
+
   it('gives the text filter an accessible name from its label', () => {
     renderFilterBar();
     expect(screen.getByRole('textbox', { name: 'Phone' })).toBeInTheDocument();
