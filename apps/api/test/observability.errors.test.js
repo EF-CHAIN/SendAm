@@ -128,15 +128,29 @@ test('captureException returns false and does not throw on network error', async
 // ---------------------------------------------------------------------------
 test('captureException cancels a hung monitor request at the configured deadline', async () => {
   process.env.ERROR_MONITOR_WEBHOOK_URL = 'https://alerts.example.test/events';
-  process.env.ERROR_MONITOR_TIMEOUT_MS = '50'; // very short so the test stays fast
+  // 200 ms gives CI enough headroom; the test still completes in ~200 ms because
+  // the fake fetch rejects as soon as the signal fires (no truly-hung promise).
+  process.env.ERROR_MONITOR_TIMEOUT_MS = '200';
 
   const delivered = await withFetch(
     (_url, options) =>
       new Promise((_resolve, reject) => {
-        // Simulate a hung connection: never resolve until aborted.
-        options.signal.addEventListener('abort', () =>
-          reject(Object.assign(new Error('aborted'), { name: 'AbortError' })),
-        );
+        // If the signal has already fired by the time fetch() is called (e.g.
+        // under heavy load), reject synchronously so the promise settles
+        // immediately and the test runner is never left with a pending promise.
+        if (options.signal.aborted) {
+          reject(Object.assign(new Error('aborted'), { name: 'AbortError' }));
+          return;
+        }
+        // Simulate a hung connection: only resolve once the AbortController
+        // fires.  A real setTimeout keeps the Node.js event loop alive for the
+        // duration so the test runner does not see a stalled microtask queue
+        // and cancel the test with ERR_TEST_FAILURE / cancelledByParent.
+        const tid = setTimeout(() => {}, 10_000);
+        options.signal.addEventListener('abort', () => {
+          clearTimeout(tid);
+          reject(Object.assign(new Error('aborted'), { name: 'AbortError' }));
+        });
       }),
     () => captureException(new Error('slow monitor'), { source: 'test' }),
   );
