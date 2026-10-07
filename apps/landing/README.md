@@ -76,6 +76,82 @@ Output Directory:  apps/landing/dist
 In that layout Vercel does not read `apps/landing/vercel.json`, so copy it to
 the repository root if you need the headers and rewrite there.
 
+## Security Headers And CSP
+
+The landing site sends a strict Content Security Policy (CSP) plus four
+companion headers. They are declared in two places, one per environment:
+
+| Environment | Declared in | Scope |
+| --- | --- | --- |
+| `npm run dev:landing` | `server.headers` in [`vite.config.js`](vite.config.js) | every dev-server response on `http://localhost:3000` |
+| Deployed site | `headers` in [`vercel.json`](vercel.json) | every response, plus two per-path rules |
+
+Vercel reads `vercel.json` only from the project root directory, so the
+deployed headers require **Root Directory** set to `apps/landing` as described
+in [Deployment](#deployment).
+
+To see what the dev server actually sends:
+
+```bash
+npm run dev:landing
+curl -I http://localhost:3000/
+```
+
+### Directives
+
+| Directive | Value | Purpose |
+| --- | --- | --- |
+| `default-src` | `'self'` | fallback for any fetch type not listed below |
+| `script-src` | `'self' 'unsafe-inline'` | bundled modules plus the inline React Refresh preamble Vite injects in dev |
+| `style-src` | `'self' 'unsafe-inline' https://fonts.googleapis.com` | Tailwind output, inline `style={{}}` props, Google Fonts stylesheet |
+| `font-src` | `'self' https://fonts.gstatic.com` | Inter webfont files |
+| `img-src` | `'self' data:` | bundled assets and inline data-URL images |
+| `connect-src` | `'self'` (deployed) / `'self' ws: wss:` (dev) | fetch/XHR/EventSource; dev adds the HMR web socket |
+| `frame-ancestors` | `'none'` | the site cannot be embedded in a frame |
+| `base-uri` | `'none'` | blocks `<base>` hijacking of relative URLs |
+| `form-action` | `'none'` | no form can submit off-origin |
+| `upgrade-insecure-requests` | deployed only | rewrites `http://` subresources to `https://` |
+
+The non-CSP headers are the same in both environments:
+`X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`,
+`Referrer-Policy: strict-origin-when-cross-origin`, and
+`Permissions-Policy: geolocation=(), microphone=(), camera=()`.
+
+### Local vs deployed differences
+
+| Behaviour | Dev server | Deployed (Vercel) |
+| --- | --- | --- |
+| `connect-src` | `'self' ws: wss:` | `'self'` |
+| `upgrade-insecure-requests` | absent | present |
+| `/sw.js` | falls back to `index.html` (`Content-Type: text/html`) | served as JavaScript with `Service-Worker-Allowed: /` |
+| `/manifest.json` | `Content-Type: application/json` | `Content-Type: application/manifest+json` |
+
+Only the deployed site applies the two per-path rules in `vercel.json`, so
+service-worker behaviour has to be verified there rather than against the dev
+server.
+
+### Allowing another origin
+
+Anything the page fetches — a local backend proxy, a webhook receiver, an
+analytics beacon — must be listed in `connect-src`, otherwise the browser
+blocks the request and logs a CSP violation in the console. The policy exists
+twice, so add the origin to **both** files or it will work in one environment
+and fail in the other:
+
+1. `apps/landing/vite.config.js` — `server.headers['Content-Security-Policy']`
+2. `apps/landing/vercel.json` — the `Content-Security-Policy` header under `headers`
+
+To let the page call the API while developing, widen `connect-src` to
+`'self' ws: wss: http://localhost:3002`; for the deployed site use the API's
+own HTTPS origin, for example `'self' https://api.your-domain.com` (do not add
+`http://` origins to the deployed policy). The same pattern applies to the
+other fetch types: `img-src` for remote images, `style-src` for a remote
+stylesheet, `font-src` for a remote font.
+
+Vite watches its own config, so saving `vite.config.js` restarts the server and
+picks up the new header — the log prints `vite.config.js changed, restarting
+server...`. Deployed header changes take effect on the next Vercel deployment.
+
 ## Test
 
 From the repository root:
