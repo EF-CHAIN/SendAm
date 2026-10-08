@@ -248,6 +248,36 @@ Use `apps/api/.env.example` as the source of truth. The local `apps/api/.env` ha
 
 > The REST wallet API (`/api/wallet/*`) is unauthenticated and is disabled in production unless `ENABLE_WALLET_REST_API=true`. Outside production it defaults to enabled for local testing. WhatsApp is the real, signature-verified surface.
 
+### Frontend build-time variables (Vercel)
+
+Vite inlines `import.meta.env.VITE_*` into the bundle **at build time**, so these are not runtime
+configuration: changing one in the Vercel dashboard has no effect until the project is redeployed.
+Only the `VITE_` prefix is exposed to the browser — a variable without it (for example
+`NON_VITE_SECRET`) is never inlined into `dist/`, which is why no secret may ever be given that
+prefix.
+
+| Variable | App | Required | Local default | Production (Vercel) | Read by |
+| --- | --- | --- | --- | --- | --- |
+| `VITE_API_BASE_URL` | `apps/admin` | Yes, for a deployed admin | `http://localhost:3002/api` | `https://<api-host>/api` | `packages/shared/src/api.js` (axios `baseURL`) |
+| `VITE_ADMIN_URL` | `apps/landing` | No | `http://localhost:3001` | `https://admin.<domain>` | `apps/landing/src/lib/links.js` (nav, hero and CTA links) |
+| `VITE_WHATSAPP_NUMBER` | `apps/landing` | No | empty (falls back to `https://wa.me/`, letting WhatsApp pick the chat) | digits only with country code, no `+` (for example `2348012345678`) | `apps/landing/src/lib/links.js` (`whatsappUrl()`) |
+| `VITE_WS_URL` | `apps/admin` | No | derived as `ws://` or `wss://<current-hostname>:3002/ws` | `wss://<api-host>/ws` | `apps/admin/src/lib/websocket.js` (`getDefaultUrl()`) |
+
+Notes for the deployment checklist:
+
+- `VITE_ADMIN_URL` treats an unset, empty, or whitespace-only value as "not configured" and falls
+  back to `http://localhost:3001` (see `normalizeAdminUrl()`), so a half-filled value silently
+  points the landing CTAs at localhost. Set the full origin, including the scheme.
+- `VITE_WHATSAPP_NUMBER` ships empty in `apps/landing/.env.example`. Left empty, the CTA opens
+  `https://wa.me/` and WhatsApp asks the user to pick a chat; it is the only way to deep-link
+  straight to the SendAm bot.
+- `VITE_WS_URL` is read by the admin websocket client but is **not** present in
+  `apps/admin/.env.example`. Leave it unset unless the API's websocket is served from a different
+  host or path than `<admin-host>:3002/ws`; the default already matches the local API port.
+- No analytics variable is consumed by the frontend today — a repo-wide search for `VITE_*` in
+  application source returns only the four variables above. Adding one (for example a Vercel
+  Analytics or Sentry DSN) requires a code change first; setting the variable alone does nothing.
+
 ## Local Development
 
 For the admin app (`apps/admin/.env`), configure:
