@@ -85,6 +85,50 @@ Endpoints you'll meet in this codebase:
 Horizon error responses carry `extras.result_codes` — that's where
 `op_no_trust`, `op_underfunded`, `tx_bad_seq` live.
 
+## Frontend display: precision, issuer labels, explorer links
+
+Amounts reach the UI as decimal strings; the UI only picks how many digits to
+show. Precision is decided in one place — `ASSET_RULES` in
+`apps/api/src/utils/money.js` — and the admin API returns it per row:
+
+| Asset | Precision | Why |
+|---|---|---|
+| XLM | 7 | 1 XLM = 10,000,000 stroops |
+| USDC | 7 | on-chain amount, same 7-dp scale |
+| USD, EUR, GBP, NGN | 2 | fiat display currencies |
+
+`apps/admin/src/pages/Dashboard.jsx` renders each row with
+`minimumFractionDigits: row.precision ?? 2`, so `12.5000000` XLM prints as
+`12.5000000` while a USD row prints `12.50`. When the API cannot price an asset
+it returns `precision: null` with `source: 'unsupported_asset'` and the `?? 2`
+fallback applies — read that as "not validated", not as a real 2-dp rule. The
+other `source` values are `identity`, `exchangerate-api`, and `unavailable`.
+
+Fiat equivalents render as currency (`$12.50`), never as a 7-dp string. The
+landing `CurrencyCalculator.jsx` deliberately shows 2 decimals: it is a
+marketing estimate, not a ledger amount.
+
+Decoded XDR in the admin goes through `stroopsToXlm()`
+(`apps/admin/src/lib/xdrDecoder.js`): stroops ÷ 10,000,000 with
+`maximumFractionDigits: 7`, so `1234567` → `0.1234567` and `10000000` → `1` —
+unlike the balance table it drops trailing zeros.
+
+Issuers are shown as text, not a graphical badge: `formatAsset()` renders
+`USDC (GBBD47IF…)` for issued assets and `Native (XLM)` for XLM, which has no
+issuer. Any UI that judges trust must call `assetIdentity.js` — same code from a
+different issuer is a different, untrusted asset.
+
+Explorer links are derived from the network, never hardcoded: `getTransactionUrl()`
+in `stellar.adapter.js` returns `https://stellar.expert/explorer/testnet/tx/{hash}`
+on testnet and `https://stellar.expert/explorer/public/tx/{hash}` on mainnet;
+account pages use the same base plus `/account/{G...}`. Both bases are declared
+as `explorerBaseUrl` in `apps/api/src/config/networkProfiles.js`.
+
+SEP-38 (quote) and SEP-24 (interactive deposit/withdraw) are **not implemented**
+here — only SEP-10 auth is. The `rate` behind the balance table comes from
+`apps/api/src/pricing/` (off-chain FX), not from an anchor quote, so it is a
+display convenience rather than an executable price.
+
 ## Funding-account health and operator runbook
 
 SendAm now measures the live funding account's base fee, native XLM balance, and projected reserve pressure before wallet creation or payouts block. The monitor is implemented in `stellar.adapter.js` via `getFundingAccountHealth()` and reads thresholds from `config.stellar.thresholds`.
