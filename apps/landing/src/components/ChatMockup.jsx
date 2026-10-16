@@ -87,16 +87,19 @@ export function ReceiptTick({ status = 'read' }) {
     <span
       className="inline-flex items-center transition-all duration-300 ease-in-out motion-reduce:transition-none"
       title={statusLabel}
-      aria-label={statusLabel}
       data-testid="receipt-tick"
       data-state={status}
     >
+      <span className="sr-only">{statusLabel}</span>
       {getIcon()}
     </span>
   );
 }
 
-export default function ChatMockup({ autoAnimate = true, loop = true } = {}) {
+export default function ChatMockup({
+  autoAnimate = typeof import.meta !== 'undefined' && import.meta.env?.MODE !== 'test',
+  loop = true,
+} = {}) {
   const isReducedMotion =
     typeof window !== 'undefined' &&
     window.matchMedia &&
