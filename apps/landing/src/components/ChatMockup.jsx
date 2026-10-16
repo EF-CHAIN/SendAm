@@ -1,4 +1,5 @@
-import { Check, CheckCheck, Mic } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { Check, CheckCheck, Clock, Mic } from 'lucide-react';
 import PhoneFrame from './PhoneFrame.jsx';
 
 const messages = [
@@ -22,7 +23,128 @@ const messages = [
   },
 ];
 
-export default function ChatMockup() {
+const TICK_TIMELINE = [
+  { delay: 500, index: 0, status: 'sent' },
+  { delay: 1100, index: 0, status: 'delivered' },
+  { delay: 1700, index: 0, status: 'read' },
+  { delay: 2300, index: 2, status: 'sent' },
+  { delay: 2900, index: 2, status: 'delivered' },
+  { delay: 3500, index: 2, status: 'read' },
+  { delay: 4100, index: 4, status: 'sent' },
+  { delay: 4700, index: 4, status: 'delivered' },
+  { delay: 5300, index: 4, status: 'read' },
+];
+
+const LOOP_DELAY = 10000;
+
+export function ReceiptTick({ status = 'read' }) {
+  const getIcon = () => {
+    switch (status) {
+      case 'sending':
+        return (
+          <Clock
+            size={12}
+            className="text-slate-400 transition-opacity duration-300 motion-reduce:transition-none"
+            aria-hidden="true"
+          />
+        );
+      case 'sent':
+        return (
+          <Check
+            size={12}
+            className="text-slate-400 transition-all duration-300 motion-reduce:transition-none"
+            aria-hidden="true"
+          />
+        );
+      case 'delivered':
+        return (
+          <CheckCheck
+            size={12}
+            className="text-slate-400 transition-all duration-300 motion-reduce:transition-none"
+            aria-hidden="true"
+          />
+        );
+      case 'read':
+      default:
+        return (
+          <CheckCheck
+            size={12}
+            className="text-sky-500 transition-colors duration-300 motion-reduce:transition-none"
+            aria-hidden="true"
+          />
+        );
+    }
+  };
+
+  const statusLabel = {
+    sending: 'Sending',
+    sent: 'Sent',
+    delivered: 'Delivered',
+    read: 'Read and settled',
+  }[status] || 'Read and settled';
+
+  return (
+    <span
+      className="inline-flex items-center transition-all duration-300 ease-in-out motion-reduce:transition-none"
+      title={statusLabel}
+      aria-label={statusLabel}
+      data-testid="receipt-tick"
+      data-state={status}
+    >
+      {getIcon()}
+    </span>
+  );
+}
+
+export default function ChatMockup({ autoAnimate = true, loop = true } = {}) {
+  const isReducedMotion =
+    typeof window !== 'undefined' &&
+    window.matchMedia &&
+    window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  const shouldAnimate = autoAnimate && !isReducedMotion;
+
+  const [tickStates, setTickStates] = useState(() =>
+    shouldAnimate
+      ? { 0: 'sending', 2: 'sending', 4: 'sending' }
+      : { 0: 'read', 2: 'read', 4: 'read' }
+  );
+
+  useEffect(() => {
+    if (!shouldAnimate) {
+      return;
+    }
+
+    let timeouts = [];
+
+    const startAnimationSequence = () => {
+      TICK_TIMELINE.forEach(({ delay, index, status }) => {
+        const timer = setTimeout(() => {
+          setTickStates((prev) => ({ ...prev, [index]: status }));
+        }, delay);
+        timeouts.push(timer);
+      });
+
+      if (loop) {
+        const loopTimer = setTimeout(() => {
+          setTickStates({
+            0: 'sending',
+            2: 'sending',
+            4: 'sending',
+          });
+          startAnimationSequence();
+        }, LOOP_DELAY);
+        timeouts.push(loopTimer);
+      }
+    };
+
+    startAnimationSequence();
+
+    return () => {
+      timeouts.forEach(clearTimeout);
+    };
+  }, [shouldAnimate, loop]);
+
   return (
     <PhoneFrame statusBarClassName="bg-whatsapp-dark text-white">
       <div className="flex h-full flex-col bg-[#ece5dd] bg-[url('/whatsapp-bg.png')] bg-cover bg-center">
@@ -55,10 +177,8 @@ export default function ChatMockup() {
                   {m.text}
                   <span className="ml-2 inline-flex items-center gap-0.5 align-bottom text-[10px] text-slate-400">
                     {m.time}
-                    {isUser ? (
-                      <CheckCheck size={12} className="text-sky-500" />
-                    ) : (
-                      <Check size={12} />
+                    {isUser && (
+                      <ReceiptTick status={tickStates[i] || 'read'} />
                     )}
                   </span>
                 </div>
