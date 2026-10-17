@@ -372,20 +372,39 @@ Landing app (`apps/landing`):
 
 ```text
 /                 Landing page
+/onboarding       Onboarding readiness checkpoints and identity status
+*                 404 page for any unmatched URL
 ```
 
 Admin app (`apps/admin`):
 
 ```text
 /login            Admin login screen
+/set-password     Forced admin password rotation screen
 /                 Dashboard overview
 /users            User table
 /wallets          Wallet table
 /transactions     Transaction table
+/transactions/:id Transaction detail (receipt export, XDR decoder)
 /kyc              KYC review
 /audit-logs       Audit logs
 /system-health    System health
+*                 Any other path renders the Dashboard
 ```
+
+Routes are declared in `apps/landing/src/App.jsx` and `apps/admin/src/App.jsx`.
+
+- `/transactions/:id` takes a transaction id — open it by clicking a row on
+  `/transactions` or by picking a result in the admin global search.
+- `/login` and `/set-password` render **outside** the admin shell, so they have
+  no sidebar navigation. `/set-password` is where an operator replaces a
+  bootstrap or rotated credential; the new password must be at least 12
+  characters.
+- The admin `*` route renders the Dashboard **inside** the admin shell, so an
+  unknown admin path looks like a working page rather than a 404.
+- `/onboarding` reads `GET /api/compliance/onboarding`, which requires an
+  authenticated REST session. Without one the API answers 401/403 and the page
+  falls back to a built-in sample checklist so it stays demoable.
 
 ## Security Notes
 
