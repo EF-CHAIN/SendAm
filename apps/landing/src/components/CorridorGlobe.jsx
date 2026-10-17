@@ -63,8 +63,10 @@ function rotateVector3(v, yaw, pitch) {
 
 export default function CorridorGlobe() {
   const canvasRef = useRef(null);
+  const corridorTabRefs = useRef([]);
   const [selectedCorridor, setSelectedCorridor] = useState(CORRIDORS[0]);
   const [isInteracting, setIsInteracting] = useState(false);
+  const [useSvgFallback, setUseSvgFallback] = useState(false);
   const [prefersReducedMotion, setPrefersReducedMotion] = useState(() =>
     typeof window !== 'undefined' && window.matchMedia
       ? window.matchMedia('(prefers-reduced-motion: reduce)').matches
@@ -123,14 +125,33 @@ export default function CorridorGlobe() {
     const canvas = canvasRef.current;
     if (!canvas) return;
     let ctx = null;
+    let animationFrameId;
+    let resumeRender = () => {};
+    const handleContextLost = (event) => {
+      event.preventDefault();
+      if (animationFrameId) cancelAnimationFrame(animationFrameId);
+      setUseSvgFallback(true);
+    };
+    const handleContextRestored = () => {
+      try {
+        ctx = canvas.getContext('2d');
+        setUseSvgFallback(!ctx);
+        if (ctx) resumeRender();
+      } catch {
+        setUseSvgFallback(true);
+      }
+    };
+    canvas.addEventListener('contextlost', handleContextLost);
+    canvas.addEventListener('contextrestored', handleContextRestored);
+    canvas.addEventListener('webglcontextlost', handleContextLost);
+    canvas.addEventListener('webglcontextrestored', handleContextRestored);
+
     try {
       ctx = canvas.getContext('2d');
     } catch {
-      return;
+      ctx = null;
     }
-    if (!ctx) return;
-
-    let animationFrameId;
+    setUseSvgFallback(!ctx);
 
     const render = () => {
       const state = stateRef.current;
@@ -404,12 +425,40 @@ export default function CorridorGlobe() {
       animationFrameId = requestAnimationFrame(render);
     };
 
-    render();
+    resumeRender = () => render();
+    if (ctx) render();
 
     return () => {
       if (animationFrameId) cancelAnimationFrame(animationFrameId);
+      canvas.removeEventListener('contextlost', handleContextLost);
+      canvas.removeEventListener('contextrestored', handleContextRestored);
+      canvas.removeEventListener('webglcontextlost', handleContextLost);
+      canvas.removeEventListener('webglcontextrestored', handleContextRestored);
     };
   }, [selectedCorridor, prefersReducedMotion]);
+
+  const handleCorridorKeyDown = (event, index) => {
+    let nextIndex;
+    if (event.key === 'ArrowRight' || event.key === 'ArrowDown') {
+      nextIndex = (index + 1) % CORRIDORS.length;
+    } else if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') {
+      nextIndex = (index - 1 + CORRIDORS.length) % CORRIDORS.length;
+    } else if (event.key === 'Home') {
+      nextIndex = 0;
+    } else if (event.key === 'End') {
+      nextIndex = CORRIDORS.length - 1;
+    } else {
+      return;
+    }
+    event.preventDefault();
+    focusCorridor(CORRIDORS[nextIndex]);
+    corridorTabRefs.current[nextIndex]?.focus();
+  };
+
+  const projectFallbackPoint = (hub) => ({
+    x: 300 + (hub.lng / 180) * 245,
+    y: 190 - (hub.lat / 90) * 145,
+  });
 
   // Mouse & Touch interaction handlers for interactive drag
   const handlePointerDown = (e) => {
@@ -490,8 +539,38 @@ export default function CorridorGlobe() {
                 onPointerMove={handlePointerMove}
                 onPointerUp={handlePointerUp}
                 onPointerLeave={handlePointerUp}
-                className="h-full w-full cursor-grab touch-none active:cursor-grabbing"
+                className={`${useSvgFallback ? 'hidden' : 'h-full w-full cursor-grab touch-none active:cursor-grabbing'}`}
               />
+              {useSvgFallback && (
+                <svg
+                  viewBox="0 0 600 380"
+                  role="img"
+                  aria-label="Interactive map of SendAm remittance corridors"
+                  className="h-full w-full"
+                >
+                  <rect width="600" height="380" rx="24" fill="#020617" />
+                  <path d="M65 125 150 85 230 105 275 150 245 195 180 210 145 265 90 230Z M300 90 365 65 430 90 470 145 435 175 385 160 350 205 315 160Z" fill="#1e293b" stroke="#334155" />
+                  {CORRIDORS.map((corridor) => {
+                    const from = projectFallbackPoint(corridor.from);
+                    const to = projectFallbackPoint(corridor.to);
+                    const isCurrent = selectedCorridor.id === corridor.id;
+                    return (
+                      <g key={corridor.id} onClick={() => focusCorridor(corridor)}>
+                        <path
+                          d={`M ${from.x} ${from.y} Q ${(from.x + to.x) / 2} ${Math.min(from.y, to.y) - 65} ${to.x} ${to.y}`}
+                          fill="none"
+                          stroke={isCurrent ? '#34d399' : '#14b8a6'}
+                          strokeWidth={isCurrent ? 4 : 2}
+                          opacity={isCurrent ? 1 : 0.55}
+                        />
+                        {[from, to].map((point, pointIndex) => (
+                          <circle key={pointIndex} cx={point.x} cy={point.y} r={isCurrent ? 5 : 3} fill={isCurrent ? '#34d399' : '#5eead4'} />
+                        ))}
+                      </g>
+                    );
+                  })}
+                </svg>
+              )}
 
               {/* Interaction Hint Overlay */}
               <div
@@ -499,7 +578,7 @@ export default function CorridorGlobe() {
                   isInteracting ? 'opacity-0' : 'opacity-100'
                 }`}
               >
-                Drag to rotate globe • Click a route below
+                {useSvgFallback ? '2D corridor map' : 'Drag to rotate globe • Click a route below'}
               </div>
             </div>
 
@@ -522,18 +601,22 @@ export default function CorridorGlobe() {
             </h3>
 
             <div
-              role="radiogroup"
+              role="tablist"
               aria-label="Select remittance corridor"
+              aria-orientation="vertical"
               className="flex flex-col gap-3"
             >
-              {CORRIDORS.map((corridor) => {
+              {CORRIDORS.map((corridor, index) => {
                 const isSelected = corridor.id === selectedCorridor.id;
                 return (
                   <button
                     key={corridor.id}
                     type="button"
-                    role="radio"
-                    aria-checked={isSelected}
+                    role="tab"
+                    ref={(element) => { corridorTabRefs.current[index] = element; }}
+                    aria-selected={isSelected}
+                    tabIndex={isSelected ? 0 : -1}
+                    onKeyDown={(event) => handleCorridorKeyDown(event, index)}
                     onClick={() => focusCorridor(corridor)}
                     className={`group flex items-center justify-between rounded-2xl border p-4 text-left transition-all ${
                       isSelected
@@ -574,6 +657,10 @@ export default function CorridorGlobe() {
                 );
               })}
             </div>
+
+            <p className="sr-only" aria-live="polite" aria-atomic="true">
+              {selectedCorridor.from.name} to {selectedCorridor.to.name}. {selectedCorridor.pair}. Fee {selectedCorridor.fee}. Settlement {selectedCorridor.avgSpeed}.
+            </p>
 
             {/* Selected Corridor Deep-dive Card */}
             <div className="mt-2 rounded-2xl border border-slate-800 bg-gradient-to-br from-slate-900/90 to-slate-950 p-5 shadow-inner">

@@ -23,14 +23,54 @@ const STEPS = [
   },
 ];
 
+const PHONE_COUNTRIES = [
+  { code: 'NG', name: 'Nigeria', dialCode: '234', flag: '🇳🇬', groups: [3, 3, 4], length: 10 },
+  { code: 'GH', name: 'Ghana', dialCode: '233', flag: '🇬🇭', groups: [3, 3, 3], length: 9 },
+  { code: 'KE', name: 'Kenya', dialCode: '254', flag: '🇰🇪', groups: [3, 3, 3], length: 9 },
+  { code: 'GB', name: 'United Kingdom', dialCode: '44', flag: '🇬🇧', groups: [4, 3, 3], length: 10 },
+  { code: 'US', name: 'United States', dialCode: '1', flag: '🇺🇸', groups: [3, 3, 4], length: 10 },
+];
+
+function formatNationalNumber(digits, country) {
+  const nationalDigits = digits.slice(0, country.length);
+  const groups = [];
+  let cursor = 0;
+  for (const size of country.groups) {
+    if (cursor >= nationalDigits.length) break;
+    groups.push(nationalDigits.slice(cursor, cursor + size));
+    cursor += size;
+  }
+  return groups.join(' ');
+}
+
 export default function OnboardingWizard() {
   const [currentStep, setCurrentStep] = useState(1);
-  const [phone, setPhone] = useState('+234 801 234 5678');
+  const [phoneCountryCode, setPhoneCountryCode] = useState('NG');
+  const [phoneDigits, setPhoneDigits] = useState('8012345678');
   const [pin, setPin] = useState(['', '', '', '']);
   const [transferAmount, setTransferAmount] = useState('25.00');
   const [recipient, setRecipient] = useState('+233 241 987 654');
   const [simulating, setSimulating] = useState(false);
   const [completed, setCompleted] = useState(false);
+
+  const phoneCountry = PHONE_COUNTRIES.find((country) => country.code === phoneCountryCode);
+  const formattedPhone = `+${phoneCountry.dialCode} ${formatNationalNumber(phoneDigits, phoneCountry)}`.trim();
+  const e164Phone = `+${phoneCountry.dialCode}${phoneDigits}`;
+  const isPhoneValid = new RegExp(`^\\+${phoneCountry.dialCode}\\d{${phoneCountry.length}}$`).test(e164Phone);
+
+  const handlePhoneChange = (value) => {
+    let digits = value.replace(/\D/g, '');
+    if (value.trim().startsWith('+') && digits.startsWith(phoneCountry.dialCode)) {
+      digits = digits.slice(phoneCountry.dialCode.length);
+    }
+    setPhoneDigits(digits.slice(0, phoneCountry.length));
+  };
+
+  const handlePhoneCountryChange = (code) => {
+    const nextCountry = PHONE_COUNTRIES.find((country) => country.code === code);
+    setPhoneCountryCode(code);
+    setPhoneDigits((digits) => digits.slice(0, nextCountry.length));
+  };
 
   const handlePinChange = (index, value) => {
     if (value.length > 1) value = value.slice(-1);
@@ -134,17 +174,38 @@ export default function OnboardingWizard() {
                       <label htmlFor="wizard-phone" className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-2">
                         WhatsApp Phone Number
                       </label>
-                      <div className="relative max-w-md">
-                        <Smartphone className="absolute left-3.5 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
+                      <div className="grid max-w-md grid-cols-[minmax(130px,auto)_1fr] gap-2">
+                        <label htmlFor="wizard-country" className="sr-only">Country code</label>
+                        <select
+                          id="wizard-country"
+                          value={phoneCountryCode}
+                          onChange={(e) => handlePhoneCountryChange(e.target.value)}
+                          className="min-w-0 rounded-xl border border-slate-200 bg-white px-2 py-3 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary"
+                        >
+                          {PHONE_COUNTRIES.map((country) => (
+                            <option key={country.code} value={country.code}>
+                              {country.flag} {country.name} (+{country.dialCode})
+                            </option>
+                          ))}
+                        </select>
+                        <div className="relative min-w-0">
+                          <Smartphone className="absolute left-3.5 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" aria-hidden="true" />
                         <input
                           id="wizard-phone"
-                          type="text"
-                          value={phone}
-                          onChange={(e) => setPhone(e.target.value)}
+                          type="tel"
+                          inputMode="tel"
+                          value={formattedPhone}
+                          onChange={(e) => handlePhoneChange(e.target.value)}
+                          aria-invalid={!isPhoneValid}
+                          aria-describedby="wizard-phone-validity"
                           className="w-full pl-11 pr-4 py-3 rounded-xl border border-slate-200 text-slate-900 font-medium focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition"
-                          placeholder="+234 800 000 0000"
+                          placeholder={`+${phoneCountry.dialCode}`}
                         />
+                        </div>
                       </div>
+                      <p id="wizard-phone-validity" aria-live="polite" className={`mt-2 text-xs ${isPhoneValid ? 'text-emerald-700' : 'text-rose-600'}`}>
+                        {isPhoneValid ? `Valid ${phoneCountry.name} number: ${formattedPhone}` : `Enter a valid ${phoneCountry.name} number.`}
+                      </p>
                     </div>
                     <div className="p-4 bg-emerald-50/70 border border-emerald-200/60 rounded-xl flex items-start gap-3">
                       <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0 mt-0.5" />
@@ -287,7 +348,7 @@ export default function OnboardingWizard() {
                 <button
                   type="button"
                   onClick={handleNext}
-                  disabled={simulating}
+                  disabled={simulating || (currentStep === 1 && !isPhoneValid)}
                   className="inline-flex items-center gap-2 px-6 py-2.5 rounded-xl bg-primary text-white text-sm font-semibold hover:bg-emerald-600 shadow-sm transition"
                 >
                   {simulating ? (

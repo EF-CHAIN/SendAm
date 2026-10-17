@@ -10,6 +10,24 @@ describe('OnboardingWizard Component', () => {
     expect(screen.getByLabelText(/WhatsApp Phone Number/i)).toBeInTheDocument();
   });
 
+  it('formats numbers and validates using the selected country code', () => {
+    render(<OnboardingWizard />);
+    const phone = screen.getByLabelText(/WhatsApp Phone Number/i);
+    const country = screen.getByLabelText('Country code');
+
+    expect(phone).toHaveValue('+234 801 234 5678');
+    fireEvent.change(country, { target: { value: 'GH' } });
+    fireEvent.change(phone, { target: { value: '+233 24' } });
+    expect(phone).toHaveValue('+233 24');
+    expect(phone).toHaveAttribute('aria-invalid', 'true');
+    expect(screen.getByRole('button', { name: /next step/i })).toBeDisabled();
+
+    fireEvent.change(phone, { target: { value: '+233 241987654' } });
+    expect(phone).toHaveValue('+233 241 987 654');
+    expect(phone).toHaveAttribute('aria-invalid', 'false');
+    expect(screen.getByRole('button', { name: /next step/i })).toBeEnabled();
+  });
+
   it('allows user to advance to Step 2 (PIN) and Step 3 (Transfer)', async () => {
     render(<OnboardingWizard />);
     
