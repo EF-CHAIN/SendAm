@@ -26,6 +26,7 @@ const drawerLinkClass =
 
 export default function Navbar() {
   const [open, setOpen] = useState(false);
+  const [shown, setShown] = useState(false);
   const toggleRef = useRef(null);
   const drawerRef = useRef(null);
 
@@ -67,6 +68,16 @@ export default function Navbar() {
       document.removeEventListener('keydown', onKeyDown);
       setScrollLock(false, previousOverflow);
       toggle?.focus();
+    };
+  }, [open]);
+
+  // Mount closed, then flip on the next frame so the backdrop fades in.
+  useEffect(() => {
+    if (!open) return undefined;
+    const frame = requestAnimationFrame(() => setShown(true));
+    return () => {
+      cancelAnimationFrame(frame);
+      setShown(false);
     };
   }, [open]);
 
@@ -145,7 +156,7 @@ export default function Navbar() {
           <div className="fixed inset-0 z-50 md:hidden">
             <div
               data-testid="nav-backdrop"
-              className="absolute inset-0 bg-slate-900/40"
+              className={`absolute inset-0 bg-slate-900/40 backdrop-blur-md transition-opacity duration-300 motion-reduce:transition-none ${shown ? 'opacity-100' : 'opacity-0'}`}
               aria-hidden="true"
               onClick={close}
             />
