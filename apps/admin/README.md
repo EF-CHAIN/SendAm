@@ -81,6 +81,10 @@ creation date.
 1. Filter the table by status (`pending`, `processing`, `success`, `failed`), asset, rail, user
    phone, user ID, transaction ID or hash, and a from/to date range. Use **Export** to pull the
    current filtered view.
+   Click the Type, Amount, Status or Date header to sort the loaded page. Sorting is
+   client-side and does not refetch. The sort is stored in the URL as `?sort=<field>&dir=asc|desc`,
+   next to the filters, page size (`limit`) and cursors (`after` / `before`), so a reload or a
+   shared link restores the same view.
 2. Click any row to open `/transactions/:id`, which groups the record into Identifiers, Amount,
    Routing, Parties, Timestamps, and Metadata.
 3. From the detail view an operator can **Decode XDR** (opens `XdrDecoderModal`), **Download PDF
@@ -152,6 +156,27 @@ The admin app expects the backend running on `http://localhost:3002` (see `apps/
 ```bash
 npm run build --workspace=apps/admin
 ```
+
+## Test
+
+```bash
+npm run test:admin            # Vitest + Testing Library + MSW
+npx playwright install chromium   # once per machine
+npm run test:e2e:admin        # Playwright, starts the dev server on 5174
+```
+
+`e2e/datatable.spec.js` drives the Transactions table against mock data from
+[`e2e/fixtures/transactions.js`](e2e/fixtures/transactions.js). It intercepts
+`GET /api/admin/transactions` and applies the same filters and cursor
+pagination the API does. It covers:
+
+- text search and the from/to date range;
+- column sorting (direction, row order and no refetch);
+- Prev/Next pagination and page size;
+- URL synchronisation, including restoring the view from a deep link.
+
+The pixel-diff suite (`e2e/visual-regression.spec.js`) runs from the root
+config with `npm run test:visual`.
 
 ## Tech Stack
 

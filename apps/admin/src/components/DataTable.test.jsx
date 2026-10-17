@@ -266,3 +266,76 @@ describe('DataTable Virtualization & Keyboard Navigation', () => {
     expect(onRowClick).toHaveBeenCalledWith(data[0]);
   });
 });
+
+describe('DataTable URL-synced sorting', () => {
+  const sortColumns = [
+    { header: 'Name', accessor: 'name', sortable: true },
+    { header: 'Amount', accessor: 'amount', sortable: true },
+    { header: 'Note', accessor: 'note' },
+  ];
+  const sortRowsData = [
+    { id: 1, name: 'Bea', amount: '100', note: 'x' },
+    { id: 2, name: 'Ada', amount: '25.5', note: 'y' },
+    { id: 3, name: 'Cy', amount: '9', note: 'z' },
+  ];
+  const firstColumn = () =>
+    screen.getAllByRole('row').slice(1).map((row) => row.querySelector('td').textContent);
+  const amounts = () =>
+    screen.getAllByRole('row').slice(1).map((row) => row.querySelectorAll('td')[1].textContent);
+
+  it('writes sort key and direction to the URL and toggles on repeat clicks', async () => {
+    const user = userEvent.setup();
+    renderTable(<DataTable columns={sortColumns} data={sortRowsData} syncSortWithUrl />, ['/?status=ok']);
+
+    await user.click(screen.getByRole('button', { name: /name/i }));
+    expect(screen.getByTestId('location-search')).toHaveTextContent('?status=ok&sort=name&dir=asc');
+    expect(screen.getByRole('columnheader', { name: /name/i })).toHaveAttribute('aria-sort', 'ascending');
+    expect(firstColumn()).toEqual(['Ada', 'Bea', 'Cy']);
+
+    await user.click(screen.getByRole('button', { name: /name/i }));
+    expect(screen.getByTestId('location-search')).toHaveTextContent('sort=name&dir=desc');
+    expect(firstColumn()).toEqual(['Cy', 'Bea', 'Ada']);
+  });
+
+  it('restores the sort from the URL on first render', () => {
+    renderTable(<DataTable columns={sortColumns} data={sortRowsData} syncSortWithUrl />, [
+      '/?sort=amount&dir=desc',
+    ]);
+    expect(screen.getByRole('columnheader', { name: /amount/i })).toHaveAttribute('aria-sort', 'descending');
+    expect(amounts()).toEqual(['100', '25.5', '9']);
+  });
+
+  it('ignores unknown sort keys, non-sortable columns and bad directions', () => {
+    for (const search of ['?sort=bogus&dir=asc', '?sort=note&dir=asc', '?sort=name&dir=sideways']) {
+      const { unmount } = renderTable(
+        <DataTable columns={sortColumns} data={sortRowsData} syncSortWithUrl />,
+        [`/${search}`]
+      );
+      expect(firstColumn()).toEqual(['Bea', 'Ada', 'Cy']);
+      expect(screen.getByRole('columnheader', { name: /name/i })).toHaveAttribute('aria-sort', 'none');
+      unmount();
+    }
+  });
+
+  it('keeps sorting local when URL sync is off', async () => {
+    const user = userEvent.setup();
+    renderTable(<DataTable columns={sortColumns} data={sortRowsData} />);
+    await user.click(screen.getByRole('button', { name: /amount/i }));
+    expect(screen.getByTestId('location-search')).toHaveTextContent('');
+    expect(amounts()).toEqual(['9', '25.5', '100']);
+  });
+
+  it('does not count sort params as active filters in the empty state', () => {
+    renderTable(<DataTable columns={sortColumns} data={[]} syncSortWithUrl />, ['/?sort=name&dir=asc']);
+    expect(screen.queryByRole('button', { name: /reset filters/i })).not.toBeInTheDocument();
+  });
+});
+
+describe('compareValues', () => {
+  it('orders decimal strings numerically rather than as dates or text', async () => {
+    const { compareValues } = await import('./dataTableSort');
+    expect(['100', '25.5', '9'].sort(compareValues)).toEqual(['9', '25.5', '100']);
+    expect(compareValues('2026-01-02', '2026-01-01')).toBeGreaterThan(0);
+    expect(compareValues('', '1')).toBe(1);
+  });
+});

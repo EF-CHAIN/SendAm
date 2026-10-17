@@ -36,6 +36,7 @@
     "test:admin": "npm run test --workspace=apps/admin",
     "test:landing": "npm run test --workspace=apps/landing",
     "test:e2e:landing": "npm run test:e2e --workspace=apps/landing",
+    "test:e2e:admin": "npm run test:e2e --workspace=apps/admin",
     "a11y:report": "node scripts/a11y-report.mjs",
     "test:visual": "playwright test",
     "load": "npm run load --workspace=apps/api --",

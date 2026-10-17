@@ -2,10 +2,20 @@ import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import path from 'node:path';
 import { VitePWA } from 'vite-plugin-pwa';
+import criticalCss from './build/criticalCss.js';
+import { renderAboveTheFold } from './build/renderShell.js';
+
+const alias = {
+  '@': path.resolve(__dirname, './src'),
+  '@shared': path.resolve(__dirname, '../../packages/shared/src'),
+};
 
 // https://vite.dev/config/
 export default defineConfig({
-  plugins: [react(), VitePWA({
+  plugins: [react(), criticalCss({
+    // Inline the CSS used by the navbar + hero; load the rest of Tailwind async.
+    renderMarkup: () => renderAboveTheFold({ root: __dirname, alias, plugins: [react()] }),
+  }), VitePWA({
     registerType: 'prompt',
     includeAssets: ['favicon.svg', 'icons/*.png', 'icons/*.svg'],
     manifest: {
@@ -94,10 +104,7 @@ export default defineConfig({
   })],
   resolve: {
     dedupe: ['react', 'react-dom'],
-    alias: {
-      '@': path.resolve(__dirname, './src'),
-      '@shared': path.resolve(__dirname, '../../packages/shared/src'),
-    },
+    alias,
   },
   server: {
     port: 3000,

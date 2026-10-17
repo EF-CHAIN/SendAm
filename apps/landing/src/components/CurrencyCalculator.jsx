@@ -2,11 +2,16 @@ import { useState, useId } from 'react';
 import { ArrowRight, CheckCircle2, TrendingDown, RefreshCw, Zap } from 'lucide-react';
 import { whatsappUrl } from '@/lib/links.js';
 import {
-  EXCHANGE_RATES,
   SOURCE_CURRENCIES,
   TARGET_CURRENCIES,
   PRESET_AMOUNTS,
 } from '@/lib/currencyConstants.js';
+import {
+  calculateQuote,
+  sendCommand,
+  SENDAM_FEE_PERCENT,
+  TRADITIONAL_FEE_PERCENT,
+} from '@/lib/calculator.js';
 
 export default function CurrencyCalculator() {
   const [amount, setAmount] = useState('100');
@@ -17,24 +22,18 @@ export default function CurrencyCalculator() {
   const sourceSelectId = useId();
   const targetSelectId = useId();
 
-  const parsedAmount = Math.max(0, parseFloat(amount) || 0);
-
-  // SendAm fee is flat 1%
-  const sendAmFeePercent = 1;
-  const sendAmFee = parsedAmount * 0.01;
-  const netSendAmount = Math.max(0, parsedAmount - sendAmFee);
-
-  // Traditional bank wire / money transfer fees typically range from 6% to 8%
-  const traditionalFeePercent = 7;
-  const traditionalFee = parsedAmount * 0.07;
-
-  // Rate lookup
-  const currentRate = EXCHANGE_RATES[sourceCurrency]?.[targetCurrency] || 1;
-  const receivedAmount = netSendAmount * currentRate;
-
-  // Estimated savings
-  const estimatedSavings = Math.max(0, traditionalFee - sendAmFee);
-  const estimatedSavingsInTarget = estimatedSavings * currentRate;
+  const quote = calculateQuote({ amount, source: sourceCurrency, target: targetCurrency });
+  const parsedAmount = quote.amount;
+  const sendAmFeePercent = SENDAM_FEE_PERCENT;
+  const sendAmFee = quote.fee;
+  const traditionalFeePercent = TRADITIONAL_FEE_PERCENT;
+  const traditionalFee = quote.traditionalFee;
+  const currentRate = quote.rate;
+  const receivedAmount = quote.received;
+  const estimatedSavings = quote.savings;
+  const estimatedSavingsInTarget = quote.savingsInTarget;
+  const formatMoney = (value) =>
+    value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
   const currentSource = SOURCE_CURRENCIES.find((c) => c.code === sourceCurrency) || SOURCE_CURRENCIES[0];
   const currentTarget = TARGET_CURRENCIES.find((c) => c.code === targetCurrency) || TARGET_CURRENCIES[0];
@@ -153,8 +152,10 @@ export default function CurrencyCalculator() {
             {/* Exchange rate display */}
             <div className="flex items-center gap-2 text-xs font-medium text-slate-500 bg-slate-50 rounded-xl p-3 border border-slate-100">
               <RefreshCw size={14} className="text-primary shrink-0" aria-hidden="true" />
-              <span>
-                1 {sourceCurrency} = {currentRate.toLocaleString()} {targetCurrency}
+              <span data-testid="calculator-rate">
+                {currentRate === null
+                  ? `${sourceCurrency} to ${targetCurrency} is not available`
+                  : `1 ${sourceCurrency} = ${currentRate.toLocaleString()} ${targetCurrency}`}
               </span>
             </div>
           </div>
@@ -166,8 +167,12 @@ export default function CurrencyCalculator() {
                 Recipient Gets (Est.)
               </label>
               <div className="relative flex rounded-2xl border-2 border-emerald-100 bg-emerald-50/50 p-2 focus-within:border-emerald-500 focus-within:ring-2 focus-within:ring-emerald-500/20">
-                <div className="w-full px-3 py-2 text-2xl font-extrabold text-emerald-800 sm:text-3xl truncate">
-                  {currentTarget.symbol} {receivedAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                <div
+                  data-testid="calculator-payout"
+                  aria-live="polite"
+                  className="w-full px-3 py-2 text-2xl font-extrabold text-emerald-800 sm:text-3xl truncate"
+                >
+                  {receivedAmount === null ? '—' : `${currentTarget.symbol} ${formatMoney(receivedAmount)}`}
                 </div>
                 <div className="flex items-center gap-1 border-l border-emerald-200 pl-3 pr-2">
                   <select
@@ -190,19 +195,21 @@ export default function CurrencyCalculator() {
             <div className="rounded-xl border border-slate-100 bg-slate-50/80 p-3.5 space-y-2 text-xs">
               <div className="flex justify-between text-slate-600">
                 <span>SendAm Fee ({sendAmFeePercent}%)</span>
-                <span className="font-semibold text-slate-800">{currentSource.symbol}{sendAmFee.toFixed(2)}</span>
+                <span data-testid="calculator-fee" className="font-semibold text-slate-800">{currentSource.symbol}{sendAmFee.toFixed(2)}</span>
               </div>
               <div className="flex justify-between text-slate-600">
                 <span>Traditional Wire (~{traditionalFeePercent}%)</span>
-                <span className="line-through text-slate-400">{currentSource.symbol}{traditionalFee.toFixed(2)}</span>
+                <span data-testid="calculator-traditional-fee" className="line-through text-slate-400">{currentSource.symbol}{traditionalFee.toFixed(2)}</span>
               </div>
               <div className="pt-2 border-t border-slate-200 flex justify-between items-center text-emerald-700 font-semibold">
                 <span className="flex items-center gap-1">
                   <TrendingDown size={14} aria-hidden="true" />
                   Estimated Savings
                 </span>
-                <span className="text-sm">
-                  {currentSource.symbol}{estimatedSavings.toFixed(2)} ({currentTarget.symbol}{Math.round(estimatedSavingsInTarget).toLocaleString()})
+                <span data-testid="calculator-savings" className="text-sm">
+                  {currentSource.symbol}{estimatedSavings.toFixed(2)}
+                  {estimatedSavingsInTarget !== null &&
+                    ` (${currentTarget.symbol}${Math.round(estimatedSavingsInTarget).toLocaleString()})`}
                 </span>
               </div>
             </div>
@@ -223,7 +230,8 @@ export default function CurrencyCalculator() {
           </ul>
 
           <a
-            href={whatsappUrl(`send ${amount} ${sourceCurrency} to ${targetCurrency}`)}
+            href={whatsappUrl(sendCommand(amount, sourceCurrency, targetCurrency))}
+            data-testid="calculator-whatsapp-link"
             target="_blank"
             rel="noopener noreferrer"
             className="w-full sm:w-auto inline-flex items-center justify-center gap-2 rounded-xl bg-primary px-6 py-3 text-sm font-semibold text-white shadow-md shadow-primary/20 transition-all hover:bg-whatsapp"

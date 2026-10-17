@@ -7,22 +7,22 @@ import { useSearchParams } from 'react-router-dom';
 export function useListQuery(filterKeys = []) {
   const [searchParams, setSearchParams] = useSearchParams();
 
-  // Capture the serialised query string as a primitive so the dependency array
-  // only contains a simple expression (required by react-hooks/exhaustive-deps).
-  const searchString = searchParams.toString();
-
-  // Stable across renders so the fetch effect doesn't loop: identity only
-  // changes when the serialised query string changes.
-  const queryString = searchParams.toString();
+  // Only the cursor, page size and filter keys reach the API. Keying the memo
+  // on just those keeps `params` stable when unrelated URL state changes (for
+  // example the DataTable's `sort`/`dir`), so the fetch effect does not refetch.
+  const apiKeys = ['after', 'before', 'limit', ...filterKeys];
+  const apiQuery = apiKeys
+    .filter((key) => searchParams.get(key))
+    .map((key) => `${key}=${encodeURIComponent(searchParams.get(key))}`)
+    .join('&');
   const params = useMemo(() => {
-    const entries = Object.fromEntries(new URLSearchParams(searchString).entries());
     const result = {};
-    for (const key of ['after', 'before', 'limit', ...filterKeys]) {
-      if (entries[key]) result[key] = entries[key];
+    for (const pair of apiQuery ? apiQuery.split('&') : []) {
+      const [key, value] = pair.split('=');
+      result[key] = decodeURIComponent(value);
     }
     return result;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [queryString]);
+  }, [apiQuery]);
 
   const entries = Object.fromEntries(searchParams.entries());
 

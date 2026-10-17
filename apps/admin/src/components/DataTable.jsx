@@ -1,26 +1,13 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { SearchX, FilterX, ArrowDown, ArrowUp, ChevronsUpDown } from 'lucide-react';
 import { useSearchParams } from 'react-router-dom';
+import { compareValues, sortFromSearchParams, DIRECTION_TO_DIR } from './dataTableSort';
 
 const FOCUSABLE_HEADER = 'focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary';
 
 // Pagination cursors and page size are not filters — they must not trigger the
 // "Reset Filters" recovery action in the empty state.
-const NON_FILTER_PARAMS = new Set(['after', 'before', 'limit']);
-
-function compareValues(a, b) {
-  if (a === b) return 0;
-  if (a === null || a === undefined || a === '') return 1;
-  if (b === null || b === undefined || b === '') return -1;
-  if (typeof a === 'number' && typeof b === 'number') return a - b;
-  if (typeof a === 'boolean' && typeof b === 'boolean') return Number(a) - Number(b);
-
-  const aTime = Date.parse(a);
-  const bTime = Date.parse(b);
-  if (!Number.isNaN(aTime) && !Number.isNaN(bTime)) return aTime - bTime;
-
-  return String(a).localeCompare(String(b), undefined, { numeric: true, sensitivity: 'base' });
-}
+const NON_FILTER_PARAMS = new Set(['after', 'before', 'limit', 'sort', 'dir']);
 
 function sortRows(data, columns, sort) {
   if (!sort || !data) return data || [];
@@ -46,9 +33,16 @@ export default function DataTable({
   maxHeight = 600,
   overscan = 5,
   virtualizeThreshold = 50,
+  syncSortWithUrl = false,
 }) {
-  const [sort, setSort] = useState(defaultSort);
+  const [localSort, setLocalSort] = useState(defaultSort);
   const [searchParams, setSearchParams] = useSearchParams();
+  // With URL sync the query string is the single source of truth, so a sorted
+  // view survives reloads, shared links and back/forward navigation. Unknown
+  // keys or directions fall back to `defaultSort`.
+  const sort = syncSortWithUrl
+    ? sortFromSearchParams(searchParams, columns) ?? defaultSort
+    : localSort;
   const hasActiveFilters =
     filtersActive ??
     Array.from(searchParams.keys()).some((key) => !NON_FILTER_PARAMS.has(key));
@@ -56,12 +50,26 @@ export default function DataTable({
   const sortKeyOf = (column) => column.accessor ?? column.header;
   const sortedData = useMemo(() => sortRows(data, columns, sort), [data, columns, sort]);
 
+  const nextSort = (current, key) =>
+    current?.key !== key
+      ? { key, direction: 'ascending' }
+      : { key, direction: current.direction === 'ascending' ? 'descending' : 'ascending' };
+
   const handleSort = (column) => {
     const key = sortKeyOf(column);
-    setSort((current) =>
-      current?.key !== key
-        ? { key, direction: 'ascending' }
-        : { key, direction: current.direction === 'ascending' ? 'descending' : 'ascending' }
+    if (!syncSortWithUrl) {
+      setLocalSort((current) => nextSort(current, key));
+      return;
+    }
+    const next = nextSort(sort, key);
+    setSearchParams(
+      (prev) => {
+        const params = new URLSearchParams(prev);
+        params.set('sort', next.key);
+        params.set('dir', DIRECTION_TO_DIR[next.direction]);
+        return params;
+      },
+      { replace: true }
     );
   };
 
