@@ -76,6 +76,54 @@ Output Directory:  apps/landing/dist
 In that layout Vercel does not read `apps/landing/vercel.json`, so copy it to
 the repository root if you need the headers and rewrite there.
 
+## Hero images
+
+The hero phone wallpaper is served through `ResponsivePicture`
+([`src/components/ResponsivePicture.jsx`](src/components/ResponsivePicture.jsx)):
+a `<picture>` with AVIF, then WebP, then the original `whatsapp-bg.png` as the
+fallback `<img>`. Variants are described with width descriptors
+(`srcset="... 600w, ... 1200w, ... 1800w"`, `sizes="600px"`), so a phone picks
+the 600px file at 1x and the 1200px file at 2x. The manifest lives in
+[`src/lib/heroImages.js`](src/lib/heroImages.js); files live in
+`public/img/hero-wallpaper-<width>.<avif|webp>`.
+
+`Hero` passes `priority` down to the wallpaper, which sets `loading="eager"`
+and `fetchpriority="high"`; every other use defaults to lazy loading. Mobile
+1x and 2x variants are asserted to stay under 100KB in
+`ResponsivePicture.test.jsx`.
+
+To regenerate the variants from `public/whatsapp-bg.png` (Pillow 11.3+):
+
+```bash
+python3 - <<'PY'
+from PIL import Image
+src = Image.open("public/whatsapp-bg.png").convert("RGBA")
+for w in (600, 1200, 1800):
+    im = src.resize((w, w), Image.LANCZOS)
+    im.save(f"public/img/hero-wallpaper-{w}.webp", quality=82, method=6)
+    im.save(f"public/img/hero-wallpaper-{w}.avif", quality=60, speed=4)
+PY
+```
+
+## Structured data
+
+`index.html` carries one schema.org JSON-LD block (`#sendam-structured-data`)
+with an `Organization` and a `FinancialService` node. `areaServed` mirrors the
+calculator corridors and `currenciesAccepted` mirrors the source currencies in
+`src/lib/currencyConstants.js`; `src/test/structured-data.test.js` fails when
+they drift. Validate changes with Google's Rich Results Test or the Schema.org
+validator after deploying.
+
+## Calculator rendering priority
+
+`CurrencyCalculator` keeps the amount field urgent and derives the quote from
+`useDeferredValue` copies of the amount and currencies, so typing is never
+blocked by the fee maths or locale formatting. Corridor tabs and quick-amount
+presets update inside `startTransition`. The output column is memoised and sets
+`aria-busy` / `data-stale` while it catches up. The maths itself lives in
+[`src/lib/quote.js`](src/lib/quote.js). Measure INP with Chrome DevTools
+Performance (CPU 6x slowdown) or Lighthouse timespan mode.
+
 ## Test
 
 From the repository root:

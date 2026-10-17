@@ -55,7 +55,7 @@ export default function Hero() {
 
         {/* Visual */}
         <div className="animate-fade-up [animation-delay:120ms]">
-          <ChatMockup />
+          <ChatMockup priority />
         </div>
       </div>
     </section>
