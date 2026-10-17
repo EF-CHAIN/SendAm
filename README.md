@@ -324,6 +324,64 @@ npm run build:landing
 npm run build:admin
 ```
 
+### Complete Local Dev Walkthrough
+
+`chat-sim` talks to the same `assistant.service.js#processMessage` pipeline the WhatsApp webhook does, so a full round trip can be exercised with no Meta account. Finish [Prerequisites](#prerequisites), [Local Postgres](#local-postgres-no-cloud-account-needed) and [Install Dependencies](#install-dependencies) first, then run the four steps below in separate terminals. The simulator's own contract lives in [`docs/CHAT-SIM.md`](docs/CHAT-SIM.md).
+
+**1. Start Postgres and the API.** Copy the env template and fill in the minimum set:
+
+```bash
+cp apps/api/.env.example apps/api/.env
+```
+
+| Variable | Local value | Why |
+|---|---|---|
+| `DATABASE_URL` | `postgresql://sendam:sendam@localhost:5432/sendam` | The Docker Postgres above; drop `sslmode=require` |
+| `ENCRYPTION_KEY` | `openssl rand -hex 32` | The API refuses to start without 32 bytes of hex |
+| `JWT_SECRET` | `openssl rand -hex 32` | Must be at least 32 characters |
+| `ENABLE_CHAT_SIM` | `true` | Mounts `/api/sim/*`; the template ships `false` |
+| `MESSAGE_TRANSPORT` | `sim` | Writes outbound sends to the `SimMessage` table instead of calling Meta |
+| `ADMIN_PASSWORD` | any **12+ character** string | Step 4 login; shorter passwords are rejected when the account is hashed |
+| `ADMIN_BOOTSTRAP_EMAIL` | `admin@example.com` | The identity that shared password bootstraps |
+
+```bash
+npm run prisma:generate --workspace=apps/api
+npm run prisma:deploy --workspace=apps/api
+npm run dev:api            # http://localhost:3002
+```
+
+**2. Start the chat simulator.**
+
+```bash
+npm run dev:chat-sim       # Expo Metro on http://localhost:8081
+```
+
+Press `w` for the browser build, or scan the QR code with Expo Go. The API base URL comes from `EXPO_PUBLIC_API_BASE_URL` in `apps/chat-sim/src/config.js` and defaults to `http://localhost:3002`; set it to your LAN IP (physical device) or `http://10.0.2.2:3002` (Android emulator) and restart Metro, since Expo inlines it at bundle time.
+
+**3. Send a test prompt.** Enter a phone number such as `+2348000000001` and send `balance`. The first message creates that `User`, `balance` provisions the wallet, and the reply returns inline:
+
+```bash
+curl -X POST http://localhost:3002/api/sim/message \
+  -H 'content-type: application/json' \
+  -d '{"phoneNumber":"+2348000000001","name":"Ada","text":"balance"}'
+# 200 {"replies":["Your SendAm balances: ..."]}
+```
+
+This is exactly what the simulator does on each send; `help` lists the other commands — see [`docs/COMMANDS.md`](docs/COMMANDS.md).
+
+**4. Inspect the result in the admin dashboard.** Set `VITE_API_BASE_URL=http://localhost:3002/api` in `apps/admin/.env` (see [Local Development](#local-development)), then:
+
+```bash
+npm run dev:admin          # http://localhost:3001
+```
+
+Sign in with `ADMIN_BOOTSTRAP_EMAIL` and `ADMIN_PASSWORD`. The first successful sign-in mints the bootstrap administrator and forwards you to `/set-password`: an account created from the shared password is refused by every admin route (403, `PASSWORD_CHANGE_REQUIRED`) until it has a private password. **Users** and **Wallets** then list the identity and wallet created in step 3; **Transactions** lists completed transfers, each row opening `/transactions/:id`.
+
+Two things that trip people up:
+
+- `balance` creates a user and a wallet, **not** a transaction. Rows appear under **Transactions** only after a completed `send 5 xlm <address>` plus PIN confirmation — see [the confirmation flow](docs/COMMANDS.md#the-confirmation-flow).
+- The conversation the simulator renders (`GET /api/sim/messages/:phone`) is kept in an in-memory `Map` in `sim.controller.js`, not in the `SimMessage` table: it resets when the API restarts and is not shared between API instances. Wallets and transactions themselves are persisted in Postgres, so they survive a restart.
+
 ## Production Readiness Gaps
 
 - ~~Support non-native Stellar assets via `changeTrust` (USDC and anchor-issued assets)~~ — **Done.** XLM and USDC are both built; `resolveAsset('USDC')`, `getBalances()`, and `establishTrustline()` are in the adapter and wallets auto-open the USDC trustline at creation. See [`ROADMAP.md`](ROADMAP.md#usdc--non-native-asset-support--built).
