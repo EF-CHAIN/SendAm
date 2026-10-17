@@ -116,6 +116,109 @@ Renders every key/value pair returned by the admin system-health endpoint as a c
 client-side shaping, so the exact fields depend on the API response. A failed probe shows a
 sanitized message with a **Try again** button; raw error details are deliberately not rendered.
 
+## List Query Architecture
+
+Every list screen (`/users`, `/wallets`, `/transactions`, `/kyc`, `/audit-logs`) keeps its filters
+and its pagination position in the **URL query string**, not in component state. `src/lib/useListQuery.js`
+bridges React Router's `useSearchParams()` to the admin API, so a reload, a browser Back/Forward, or a
+copied link all restore the exact same view:
+
+```text
+/transactions?status=success&asset=XLM&limit=25&after=eyJpIjoi...
+```
+
+Because the request is derived from the URL, the same `params` object drives both the list request and
+the export request — there is no second, hidden copy of the filter state.
+
+### The hook
+
+```jsx
+import { useListQuery } from '@/lib/useListQuery';
+
+const { params, getFilter, setFilter, resetFilters, goNext, goPrev } =
+  useListQuery(['status', 'asset']);
+```
+
+`params` contains only `after`, `before`, `limit` and the filter keys you declare; empty values are
+dropped, so an untouched filter never reaches the API. Its object identity is memoized on the
+serialised query string, which means the fetch effect (`useEffect(..., [params])`) fires once per
+distinct query instead of on every render.
+
+| Return | Signature | Effect on the URL |
+| --- | --- | --- |
+| `params` | object | The API query object built from the current search params |
+| `getFilter` | `(key) => string` | Reads a filter; `''` when absent |
+| `setFilter` | `(key, value)` | Sets `key`, deletes it when `value` is falsy, and always clears `after`/`before` |
+| `resetFilters` | `() => void` | Deletes every declared filter key plus `after`/`before`; **`limit` is preserved** |
+| `goNext` | `(cursor) => void` | Sets `after=<cursor>` and deletes `before` |
+| `goPrev` | `(cursor) => void` | Sets `before=<cursor>` and deletes `after` |
+
+`setFilter` and `resetFilters` discard the cursors on purpose: a cursor only addresses a position
+inside the window it was minted for, so changing the filter has to re-mint it from page one.
+`limit` survives both, so a reset does not silently undo the operator's page-size choice.
+
+### Filter keys per page
+
+| Page | Declared filter keys |
+| --- | --- |
+| `/users` | `phone` |
+| `/wallets` | `phone`, `chain`, `fundingState` |
+| `/transactions` | `status`, `asset`, `rail`, `phone`, `userId`, `identifier`, `from`, `to` |
+| `/kyc` | `status`, `phone`, `country` |
+| `/audit-logs` | `action`, `actorType`, `actorId`, `entityType`, `identifier`, `from`, `to` |
+
+### Keyset cursor pagination
+
+The admin API paginates by **keyset**, not by offset (`apps/api/src/utils/cursorPagination.js`): offset
+pagination skips or duplicates rows when new rows are inserted between two page requests. Cursors are
+opaque base64url strings that encode the sort tuple:
+
+```js
+JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8'));
+// { i: '665f...', s: 'createdAt', v: '2026-01-08T00:00:00.000Z' }
+```
+
+`i` is the row id (the tie-breaker that makes the ordering total), `s` the sort field and `v` its
+value. `decodeCursor()` rejects a cursor whose `s` does not match the endpoint's sort field with
+`400 Invalid cursor`, so a cursor minted by one list cannot be replayed against another.
+
+| Query | Meaning |
+| --- | --- |
+| `after=<cursor>` | Walk forward — rows strictly after the cursor in display order |
+| `before=<cursor>` | Walk backward — rows strictly before the cursor in display order |
+| `limit=<n>` | Page size: defaults to `50`, clamped to `100`; non-numeric or `<= 0` falls back to `50` |
+
+Each response carries a `pagination` block (`sendCursorPaginated` in `apps/api/src/utils/response.js`):
+
+```json
+{ "limit": 50, "nextCursor": "eyJp...", "prevCursor": "eyJp...", "hasMore": true }
+```
+
+`total` is included only when the endpoint computes it. `hasMore` describes the direction the server
+actually scanned, not the display order: navigating with `before` scans in reverse, so `hasMore` then
+refers to rows above the current window.
+
+### The pager component
+
+`src/components/Pagination.jsx` turns that block into controls:
+
+- `canPrev = Boolean(prevCursor)` and `canNext = Boolean(nextCursor) && hasMore`.
+- The whole Prev/Next row is **hidden** when both are false — there is no absolute page count with
+  keyset pagination, only the optional `total`.
+- The **Items per page** select offers `10`, `25`, `50`, `100`; changing it writes `limit` and clears
+  `after`/`before`.
+
+One consequence worth knowing: a page fetched with `before` that lands on the top of the window comes
+back with `prevCursor: null` and `hasMore: false`, so `canPrev` and `canNext` are both false and the
+pager disappears instead of offering **Next**. Changing the page size or re-applying a filter clears
+both cursors and re-mints a first page, which restores navigation.
+
+### Exports ignore the cursor window
+
+Export helpers (`exportAdminTransactions`, `exportAdminKyc`, `exportAdminAuditLogs`) strip `after`,
+`before` and `limit` before calling the API, so an export always covers the full filtered set rather
+than only the visible page. The server caps an export at `MAX_EXPORT_ROWS` (`5000`).
+
 ## How Auth Works
 
 The dashboard authenticates against the backend admin API in `apps/api`:
