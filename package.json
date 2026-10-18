@@ -35,6 +35,7 @@
     "test": "npm run test --workspace=apps/api",
     "test:admin": "npm run test --workspace=apps/admin",
     "test:landing": "npm run test --workspace=apps/landing",
+    "test:shared": "npm run test --workspace=packages/shared",
     "test:e2e:landing": "npm run test:e2e --workspace=apps/landing",
     "a11y:report": "node scripts/a11y-report.mjs",
     "test:visual": "playwright test",
