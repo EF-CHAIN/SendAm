@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import {
   LayoutDashboard,
@@ -10,6 +10,7 @@ import {
   ScrollText,
   Activity,
   ShieldCheck,
+  X,
 } from 'lucide-react';
 import { removeToken } from '@/lib/auth';
 import { getAdminMe } from '@/lib/adminApi';
@@ -25,10 +26,51 @@ const ALL_LINKS = [
   { name: 'Health', path: '/system-health', icon: Activity, permission: 'operations.write' },
 ];
 
-export default function AdminSidebar({ onOpenSearch }) {
+export default function AdminSidebar({ onOpenSearch, isOpen = false, onClose }) {
   const { pathname } = useLocation();
   const navigate = useNavigate();
   const [permissions, setPermissions] = useState(null);
+  const [isDesktop, setIsDesktop] = useState(() => window.matchMedia?.('(min-width: 1024px)').matches ?? true);
+  const dialogRef = useRef(null);
+  const swipeStart = useRef(null);
+
+  useEffect(() => {
+    const query = window.matchMedia?.('(min-width: 1024px)');
+    if (!query) return;
+    const resize = (event) => {
+      setIsDesktop(event.matches);
+      if (event.matches) onClose?.();
+    };
+    query.addEventListener('change', resize);
+    return () => query.removeEventListener('change', resize);
+  }, [onClose]);
+
+  useEffect(() => {
+    const dialog = dialogRef.current;
+    if (!dialog || isDesktop || !isOpen) {
+      if (dialog?.open) dialog.close();
+      return;
+    }
+    // Native modal semantics provide focus trapping and inert background content.
+    dialog.showModal();
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      if (dialog.open) dialog.close();
+    };
+  }, [isDesktop, isOpen]);
+
+  const closeDrawer = () => onClose?.();
+  const openSearch = () => { closeDrawer(); onOpenSearch?.(); };
+  const finishSwipe = (event) => {
+    const start = swipeStart.current;
+    swipeStart.current = null;
+    const end = event.changedTouches[0];
+    if (!start || !end) return;
+    const distance = start.x - end.clientX;
+    if (distance >= 60 && distance > Math.abs(start.y - end.clientY) * 1.5) closeDrawer();
+  };
 
   useEffect(() => {
     let active = true;
@@ -49,23 +91,24 @@ export default function AdminSidebar({ onOpenSearch }) {
     : [];
 
   const handleLogout = () => {
+    closeDrawer();
     removeToken();
     navigate('/login');
   };
 
-  return (
-    <aside className="w-full md:w-64 bg-white dark:bg-slate-900 border-b md:border-b-0 md:border-r border-gray-100 dark:border-slate-800 md:min-h-[calc(100vh-73px)] flex flex-col shrink-0">
+  const content = (
+    <>
       <div className="p-3 sm:p-4 md:p-6">
         <div className="flex items-center justify-between mb-4">
-          <h2 className="hidden md:block text-xs font-bold text-gray-400 dark:text-gray-500 uppercase tracking-wider">
+          <h2 id="admin-navigation-title" className="text-xs font-bold text-gray-400 dark:text-gray-500 uppercase tracking-wider">
             Admin Panel
           </h2>
           {onOpenSearch && (
             <button
               type="button"
-              onClick={onOpenSearch}
-              tabIndex={-1}
-              className="hidden md:flex items-center gap-1.5 px-2 py-1 text-xs text-gray-500 dark:text-gray-400 bg-gray-100 dark:bg-slate-800 hover:bg-gray-200 dark:hover:bg-slate-700 rounded-md transition-colors"
+              onClick={openSearch}
+              tabIndex={isDesktop ? -1 : 0}
+              className="flex items-center gap-1.5 px-2 py-1 text-xs text-gray-500 dark:text-gray-400 bg-gray-100 dark:bg-slate-800 hover:bg-gray-200 dark:hover:bg-slate-700 rounded-md transition-colors"
               title="Global search (Cmd+K)"
               data-testid="sidebar-search-btn"
             >
@@ -75,8 +118,13 @@ export default function AdminSidebar({ onOpenSearch }) {
               </kbd>
             </button>
           )}
+          {!isDesktop && (
+            <button type="button" onClick={closeDrawer} aria-label="Close navigation" className="p-2 rounded-lg text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-slate-800">
+              <X className="w-5 h-5" aria-hidden="true" />
+            </button>
+          )}
         </div>
-        <nav className="grid grid-cols-2 sm:grid-cols-4 md:block gap-2 md:space-y-1">
+        <nav aria-label="Admin navigation" className="space-y-1">
           {links.map((link) => {
             const Icon = link.icon;
             const isActive = pathname === link.path;
@@ -84,6 +132,7 @@ export default function AdminSidebar({ onOpenSearch }) {
               <Link
                 key={link.path}
                 to={link.path}
+                onClick={closeDrawer}
                 aria-current={isActive ? 'page' : undefined}
                 className={`flex items-center gap-2 md:gap-3 px-3 md:px-4 py-2.5 md:py-3 rounded-lg text-sm font-medium transition-colors ${
                   isActive
@@ -116,6 +165,58 @@ export default function AdminSidebar({ onOpenSearch }) {
           Logout
         </button>
       </div>
-    </aside>
+    </>
+  );
+
+  if (isDesktop) {
+    return <aside className="w-64 bg-white dark:bg-slate-900 border-r border-gray-100 dark:border-slate-800 min-h-[calc(100vh-73px)] flex flex-col shrink-0">{content}</aside>;
+  }
+
+  return (
+    <>
+      <style>{`
+        .admin-mobile-drawer {
+          transform: translateX(-100%);
+          opacity: 0;
+          transition: transform 200ms ease, opacity 200ms ease, display 200ms allow-discrete, overlay 200ms allow-discrete;
+        }
+        .admin-mobile-drawer[open] { transform: translateX(0); opacity: 1; }
+        .admin-mobile-drawer::backdrop {
+          background: rgb(15 23 42 / 50%);
+          opacity: 0;
+          transition: opacity 200ms ease, display 200ms allow-discrete, overlay 200ms allow-discrete;
+        }
+        .admin-mobile-drawer[open]::backdrop { opacity: 1; }
+        @starting-style {
+          .admin-mobile-drawer[open] { transform: translateX(-100%); opacity: 0; }
+          .admin-mobile-drawer[open]::backdrop { opacity: 0; }
+        }
+        @media (prefers-reduced-motion: reduce) {
+          .admin-mobile-drawer, .admin-mobile-drawer::backdrop { transition: none; }
+        }
+      `}</style>
+      <dialog
+        id="admin-mobile-navigation"
+        ref={dialogRef}
+        aria-labelledby="admin-navigation-title"
+        aria-modal="true"
+        className="admin-mobile-drawer fixed inset-y-0 left-0 right-auto m-0 h-[100dvh] max-h-none w-72 max-w-[calc(100vw-3rem)] p-0 border-0 bg-white dark:bg-slate-900 text-gray-900 dark:text-gray-100 shadow-xl"
+        onCancel={(event) => { event.preventDefault(); closeDrawer(); }}
+        onClose={() => { if (!dialogRef.current?.open) closeDrawer(); }}
+        onClick={(event) => {
+          if (event.target !== event.currentTarget) return;
+          const rect = event.currentTarget.getBoundingClientRect();
+          if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) closeDrawer();
+        }}
+        onTouchStart={(event) => {
+          const touch = event.touches[0];
+          swipeStart.current = event.touches.length === 1 ? { x: touch.clientX, y: touch.clientY } : null;
+        }}
+        onTouchEnd={finishSwipe}
+        onTouchCancel={() => { swipeStart.current = null; }}
+      >
+        <div className="min-h-full flex flex-col">{content}</div>
+      </dialog>
+    </>
   );
 }
