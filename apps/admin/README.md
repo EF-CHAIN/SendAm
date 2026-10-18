@@ -160,3 +160,17 @@ npm run build --workspace=apps/admin
 - Tailwind CSS
 - Axios
 - Lucide React icons
+
+## Corridor chart time ranges
+
+The dashboard chart defaults to **7D**. The **24H**, **7D**, **30D**, and **1Y**
+pills group the supplied history into 24 hourly, 7 daily, 30 daily, or 12 monthly
+buckets respectively, including the current local hour/day/month. Corridor
+filters apply to the same history; future or invalid timestamps are excluded.
+The chart cannot retrieve history absent from the stats response.
+
+A shimmer covers the fixed 320px chart area while preparing a new selection;
+old KPI values and tooltips are hidden until the matching dataset is ready.
+The animation respects reduced-motion preferences. `CorridorChart` also accepts
+`loading` for callers awaiting data. Empty supplied history displays an empty
+state; the existing sample fallback is used only when no history array is supplied.
