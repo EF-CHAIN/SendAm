@@ -19,6 +19,54 @@ import {
 import { voiceService } from './engine/voiceService';
 import { API_BASE_URL } from './config';
 
+export function formatTranscriptText(messages, phoneNumber) {
+  const lines = [
+    '=== SendAm Chat Transcript ===',
+    `Phone Number: ${phoneNumber || 'Unknown'}`,
+    `Exported At: ${new Date().toISOString()}`,
+    `Total Messages: ${messages.length}`,
+    '==============================',
+    '',
+  ];
+  messages.forEach((msg) => {
+    const time = msg.timestamp || msg.createdAt || new Date().toISOString();
+    const sender = msg.sender === 'user' ? 'User' : 'SendAm';
+    lines.push(`[${time}] [${sender}]: ${msg.text}`);
+  });
+  return lines.join('\n');
+}
+
+export function formatTranscriptJson(messages, phoneNumber) {
+  const data = {
+    phoneNumber: phoneNumber || null,
+    exportedAt: new Date().toISOString(),
+    messageCount: messages.length,
+    messages: messages.map((m) => ({
+      id: m.id,
+      sender: m.sender,
+      text: m.text,
+      timestamp: m.timestamp || m.createdAt || new Date().toISOString(),
+    })),
+  };
+  return JSON.stringify(data, null, 2);
+}
+
+export function triggerDownload(content, filename, mimeType) {
+  if (typeof document !== 'undefined' && document.createElement) {
+    const blob = new Blob([content], { type: mimeType });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    return true;
+  }
+  return false;
+}
+
 function TypingIndicator() {
   const dot1 = useRef(new Animated.Value(0)).current;
   const dot2 = useRef(new Animated.Value(0)).current;
@@ -115,10 +163,12 @@ export default function ChatScreen() {
   }
 
   function appendBotReplies(replies) {
+    const now = new Date().toISOString();
     const newMsgs = replies.map((reply, index) => ({
       id: `b-${Date.now()}-${index}`,
       text: reply,
       sender: 'bot',
+      timestamp: now,
     }));
     setMessages((prev) => [...prev, ...newMsgs]);
 
@@ -177,7 +227,7 @@ export default function ChatScreen() {
 
     setMessages((prev) => [
       ...prev,
-      { id: `u-${Date.now()}`, text, sender: 'user' },
+      { id: `u-${Date.now()}`, text, sender: 'user', timestamp: new Date().toISOString() },
     ]);
     setInputText('');
     setSending(true);
@@ -220,7 +270,7 @@ export default function ChatScreen() {
       const errorReply = `Couldn't reach SendAm: ${error.message}`;
       setMessages((prev) => [
         ...prev,
-        { id: `err-${Date.now()}`, text: errorReply, sender: 'bot' },
+        { id: `err-${Date.now()}`, text: errorReply, sender: 'bot', timestamp: new Date().toISOString() },
       ]);
       if (voiceSynthesizeEnabled) {
         voiceService.speak(errorReply);
@@ -228,6 +278,20 @@ export default function ChatScreen() {
     } finally {
       setSending(false);
     }
+  }
+
+  function handleExportTxt() {
+    const content = formatTranscriptText(messages, phoneNumber);
+    const cleanPhone = (phoneNumber || 'session').replace(/[^a-zA-Z0-9]/g, '_');
+    const filename = `transcript_${cleanPhone}_${Date.now()}.txt`;
+    triggerDownload(content, filename, 'text/plain');
+  }
+
+  function handleExportJson() {
+    const content = formatTranscriptJson(messages, phoneNumber);
+    const cleanPhone = (phoneNumber || 'session').replace(/[^a-zA-Z0-9]/g, '_');
+    const filename = `transcript_${cleanPhone}_${Date.now()}.json`;
+    triggerDownload(content, filename, 'application/json');
   }
 
   function handleRollback(index) {
@@ -270,13 +334,29 @@ export default function ChatScreen() {
     >
       <View className="flex-row items-center justify-between px-3 py-2 border-b border-gray-200">
         <Text className="text-base font-semibold text-gray-900">{phoneNumber}</Text>
-        <Pressable
-          testID="reset-session-button"
-          className="border border-gray-300 rounded-lg px-3 py-1"
-          onPress={handleReset}
-        >
-          <Text className="text-sm font-semibold text-gray-700">Switch Account</Text>
-        </Pressable>
+        <View className="flex-row items-center gap-2">
+          <Pressable
+            testID="export-transcript-button"
+            className="border border-emerald-500 bg-emerald-50 rounded-lg px-2.5 py-1"
+            onPress={handleExportTxt}
+          >
+            <Text className="text-xs font-semibold text-emerald-700">Export .txt</Text>
+          </Pressable>
+          <Pressable
+            testID="export-transcript-json-button"
+            className="border border-emerald-500 bg-emerald-50 rounded-lg px-2.5 py-1"
+            onPress={handleExportJson}
+          >
+            <Text className="text-xs font-semibold text-emerald-700">Export .json</Text>
+          </Pressable>
+          <Pressable
+            testID="reset-session-button"
+            className="border border-gray-300 rounded-lg px-3 py-1"
+            onPress={handleReset}
+          >
+            <Text className="text-sm font-semibold text-gray-700">Switch Account</Text>
+          </Pressable>
+        </View>
       </View>
 
       {/* Dev Mode / State Machine Inspector Toolbar */}
