@@ -28,7 +28,15 @@ export default function ChatMockup() {
       <div className="flex h-full flex-col bg-[#ece5dd] bg-[url('/whatsapp-bg.png')] bg-cover bg-center">
         <div className="flex items-center gap-3 bg-whatsapp-dark px-4 pb-3 pt-10 text-white">
           <div className="flex h-9 w-9 items-center justify-center overflow-hidden rounded-full font-bold">
-            <img src="/logo-sent.svg" alt="" className="h-full w-full object-cover" />
+            <img
+              src="/logo-sent.svg"
+              alt=""
+              width="36"
+              height="36"
+              fetchPriority="high"
+              loading="eager"
+              className="h-full w-full object-cover"
+            />
           </div>
           <div className="leading-tight">
             <p className="text-sm font-semibold">SendAm</p>
