@@ -9,7 +9,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import MessageList from './MessageList';
+import MessageList, { parseQuickReplies } from './MessageList';
 import usePolling from './usePolling';
 import {
   PaymentStateMachine,
@@ -79,6 +79,7 @@ export default function ChatScreen() {
   const [isListening, setIsListening] = useState(false);
   const [voiceSynthesizeEnabled, setVoiceSynthesizeEnabled] = useState(true);
   const [devModeOpen, setDevModeOpen] = useState(false);
+  const [disabledReplies, setDisabledReplies] = useState({});
 
   // Initialize deterministic Payment State Machine engine
   const stateMachine = useMemo(() => new PaymentStateMachine(), []);
@@ -87,6 +88,17 @@ export default function ChatScreen() {
     context: stateMachine.getContext(),
     history: stateMachine.getHistory(),
   });
+
+  const latestBotMessage = useMemo(() => {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i].sender === 'bot') return messages[i];
+    }
+    return null;
+  }, [messages]);
+
+  const latestQuickReplies = useMemo(() => {
+    return latestBotMessage ? parseQuickReplies(latestBotMessage) : [];
+  }, [latestBotMessage]);
 
   useEffect(() => {
     const unsubscribe = stateMachine.subscribe(
@@ -112,6 +124,15 @@ export default function ChatScreen() {
     setInputText('');
     setSending(false);
     setIsListening(false);
+    setDisabledReplies({});
+  }
+
+  function handleQuickReply(payload, messageId) {
+    if (sending || (messageId && disabledReplies[messageId])) return;
+    if (messageId) {
+      setDisabledReplies((prev) => ({ ...prev, [messageId]: payload }));
+    }
+    handleSend(payload);
   }
 
   function appendBotReplies(replies) {
@@ -347,9 +368,36 @@ export default function ChatScreen() {
       )}
 
       <View className="flex-1">
-        <MessageList messages={messages} />
+        <MessageList
+          messages={messages}
+          onQuickReply={handleQuickReply}
+          disabledReplies={disabledReplies}
+          sending={sending}
+        />
       </View>
       {sending ? <TypingIndicator /> : null}
+
+      {/* WhatsApp interactive quick-reply suggestions bar above input */}
+      {latestQuickReplies.length > 0 && !disabledReplies[latestBotMessage?.id] && (
+        <View
+          testID="quick-replies-bottom-bar"
+          className="flex-row flex-wrap gap-2 px-3 py-2 bg-emerald-50/70 border-t border-emerald-100"
+        >
+          {latestQuickReplies.map((reply, idx) => (
+            <Pressable
+              key={reply.id || idx}
+              testID={`bottom-quick-reply-${idx}`}
+              disabled={sending || Boolean(disabledReplies[latestBotMessage?.id])}
+              onPress={() => handleQuickReply(reply.payload, latestBotMessage?.id)}
+              className="bg-white border border-emerald-500 rounded-full px-3 py-1 shadow-sm active:bg-emerald-50"
+            >
+              <Text className="text-xs font-semibold text-emerald-700">
+                {reply.label}
+              </Text>
+            </Pressable>
+          ))}
+        </View>
+      )}
 
       <View className="flex-row items-center gap-2 px-3 py-2 border-t border-gray-200">
         <Pressable
