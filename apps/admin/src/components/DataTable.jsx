@@ -1,5 +1,15 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
-import { SearchX, FilterX, ArrowDown, ArrowUp, ChevronsUpDown } from 'lucide-react';
+import {
+  SearchX,
+  FilterX,
+  ArrowDown,
+  ArrowUp,
+  ChevronsUpDown,
+  Columns3,
+  ChevronUp,
+  ChevronDown,
+  RotateCcw,
+} from 'lucide-react';
 import { useSearchParams } from 'react-router-dom';
 
 const FOCUSABLE_HEADER = 'focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary';
@@ -31,6 +41,41 @@ function sortRows(data, columns, sort) {
   return [...data].sort((a, b) => factor * compareValues(a[key], b[key]));
 }
 
+// Stable identity for a column, matching the sort key convention.
+const columnId = (column) => column.accessor ?? column.header;
+
+// Column preferences are stored as an ordered list of ids plus the ids that
+// are hidden, so both the order and the visibility survive a reload.
+function readColumnPrefs(storageId) {
+  if (typeof window === 'undefined' || !storageId) return null;
+  try {
+    const raw = window.localStorage.getItem(storageId);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || !Array.isArray(parsed.order) || !Array.isArray(parsed.hidden)) return null;
+    return { order: parsed.order, hidden: parsed.hidden };
+  } catch {
+    return null;
+  }
+}
+
+// Drops ids for columns that no longer exist and appends newly added columns.
+function reconcileColumnPrefs(current, columns) {
+  const known = columns.map(columnId);
+  const order = [
+    ...current.order.filter((id) => known.includes(id)),
+    ...known.filter((id) => !current.order.includes(id)),
+  ];
+  const hidden = current.hidden.filter((id) => known.includes(id));
+
+  const orderSame =
+    order.length === current.order.length && order.every((id, i) => id === current.order[i]);
+  const hiddenSame =
+    hidden.length === current.hidden.length && hidden.every((id, i) => id === current.hidden[i]);
+  if (orderSame && hiddenSame) return current;
+  return { order, hidden };
+}
+
 export default function DataTable({
   columns,
   data,
@@ -46,8 +91,21 @@ export default function DataTable({
   maxHeight = 600,
   overscan = 5,
   virtualizeThreshold = 50,
+  storageKey,
 }) {
   const [sort, setSort] = useState(defaultSort);
+
+  // Column visibility/order preferences, scoped to this table by storageKey or
+  // the caption so different tables do not share a saved layout.
+  const storageId = storageKey || `datatable:columns:${caption || 'default'}`;
+  const [columnPrefs, setColumnPrefs] = useState(() => {
+    const stored = readColumnPrefs(storageId);
+    if (!stored) return { order: columns.map(columnId), hidden: [] };
+    return reconcileColumnPrefs(stored, columns);
+  });
+  const [customizeOpen, setCustomizeOpen] = useState(false);
+  const customizeRef = useRef(null);
+
   const [searchParams, setSearchParams] = useSearchParams();
   const hasActiveFilters =
     filtersActive ??
@@ -78,6 +136,42 @@ export default function DataTable({
     typeof maxHeight === 'number' ? maxHeight : 600
   );
   const [focusedIndex, setFocusedIndex] = useState(null);
+
+  // Keep preferences in sync when the columns prop changes.
+  useEffect(() => {
+    setColumnPrefs((current) => reconcileColumnPrefs(current, columns));
+  }, [columns]);
+
+  // Persist preferences so the layout is restored on the next visit.
+  useEffect(() => {
+    if (typeof window === 'undefined' || !storageId) return;
+    try {
+      window.localStorage.setItem(storageId, JSON.stringify(columnPrefs));
+    } catch {
+      // Ignore storage quota or privacy-mode failures.
+    }
+  }, [storageId, columnPrefs]);
+
+  // Close the customize popover on outside click or Escape.
+  useEffect(() => {
+    if (!customizeOpen) return undefined;
+
+    const handlePointerDown = (event) => {
+      if (customizeRef.current && !customizeRef.current.contains(event.target)) {
+        setCustomizeOpen(false);
+      }
+    };
+    const handleEscape = (event) => {
+      if (event.key === 'Escape') setCustomizeOpen(false);
+    };
+
+    document.addEventListener('mousedown', handlePointerDown);
+    document.addEventListener('keydown', handleEscape);
+    return () => {
+      document.removeEventListener('mousedown', handlePointerDown);
+      document.removeEventListener('keydown', handleEscape);
+    };
+  }, [customizeOpen]);
 
   const totalRows = sortedData ? sortedData.length : 0;
   const isVirtualized = totalRows >= virtualizeThreshold;
@@ -135,6 +229,44 @@ export default function DataTable({
       visibleRows: sliced,
     };
   }, [isVirtualized, totalRows, scrollTop, rowHeight, overscan, containerHeight, sortedData]);
+
+  const columnsById = useMemo(() => new Map(columns.map((c) => [columnId(c), c])), [columns]);
+
+  const visibleColumns = useMemo(
+    () =>
+      columnPrefs.order
+        .filter((id) => !columnPrefs.hidden.includes(id))
+        .map((id) => columnsById.get(id))
+        .filter(Boolean),
+    [columnPrefs, columnsById]
+  );
+
+  const toggleColumn = (id) => {
+    setColumnPrefs((current) => {
+      if (current.hidden.includes(id)) {
+        return { ...current, hidden: current.hidden.filter((cid) => cid !== id) };
+      }
+      const visibleCount = current.order.filter((cid) => !current.hidden.includes(cid)).length;
+      // Keep at least one column visible so the table never collapses.
+      if (visibleCount <= 1) return current;
+      return { ...current, hidden: [...current.hidden, id] };
+    });
+  };
+
+  const moveColumn = (id, offset) => {
+    setColumnPrefs((current) => {
+      const index = current.order.indexOf(id);
+      const target = index + offset;
+      if (index < 0 || target < 0 || target >= current.order.length) return current;
+      const order = [...current.order];
+      [order[index], order[target]] = [order[target], order[index]];
+      return { ...current, order };
+    });
+  };
+
+  const resetColumns = () => {
+    setColumnPrefs({ order: columns.map(columnId), hidden: [] });
+  };
 
   const scrollRowIntoView = useCallback(
     (targetIndex) => {
@@ -273,11 +405,89 @@ export default function DataTable({
     : undefined;
 
   return (
-    <div
-      ref={containerRef}
-      onScroll={isVirtualized ? handleScroll : undefined}
-      style={containerStyles}
-      data-testid="datatable-container"
+    <div className="w-full">
+      <div className="mb-2 flex justify-end">
+        <div className="relative" ref={customizeRef}>
+          <button
+            type="button"
+            onClick={() => setCustomizeOpen((open) => !open)}
+            aria-haspopup="dialog"
+            aria-expanded={customizeOpen}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-600 transition-colors hover:bg-gray-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary dark:border-slate-700 dark:text-gray-300 dark:hover:bg-slate-800"
+          >
+            <Columns3 size={14} aria-hidden="true" />
+            Customize Columns
+          </button>
+
+          {customizeOpen && (
+            <div
+              role="dialog"
+              aria-label="Customize columns"
+              className="absolute right-0 z-30 mt-2 w-64 rounded-xl border border-gray-200 bg-white p-3 text-left shadow-lg dark:border-slate-700 dark:bg-slate-900"
+            >
+              <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                Columns
+              </p>
+              <ul className="space-y-1">
+                {columnPrefs.order.map((id, index) => {
+                  const column = columnsById.get(id);
+                  if (!column) return null;
+                  const isHidden = columnPrefs.hidden.includes(id);
+                  const isLastVisible = !isHidden && visibleColumns.length <= 1;
+                  return (
+                    <li
+                      key={id}
+                      className="flex items-center gap-1 rounded-lg px-1.5 py-1 hover:bg-gray-50 dark:hover:bg-slate-800"
+                    >
+                      <label className="flex flex-1 cursor-pointer items-center gap-2 text-sm text-gray-700 dark:text-gray-200">
+                        <input
+                          type="checkbox"
+                          checked={!isHidden}
+                          disabled={isLastVisible}
+                          onChange={() => toggleColumn(id)}
+                          className="h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary disabled:cursor-not-allowed"
+                        />
+                        {column.header}
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => moveColumn(id, -1)}
+                        disabled={index === 0}
+                        aria-label={`Move ${column.header} up`}
+                        className="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-700 disabled:opacity-30 disabled:hover:bg-transparent dark:hover:bg-slate-700"
+                      >
+                        <ChevronUp size={14} aria-hidden="true" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => moveColumn(id, 1)}
+                        disabled={index === columnPrefs.order.length - 1}
+                        aria-label={`Move ${column.header} down`}
+                        className="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-700 disabled:opacity-30 disabled:hover:bg-transparent dark:hover:bg-slate-700"
+                      >
+                        <ChevronDown size={14} aria-hidden="true" />
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+              <button
+                type="button"
+                onClick={resetColumns}
+                className="mt-2 inline-flex w-full items-center justify-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium text-gray-600 transition-colors hover:bg-gray-50 dark:text-gray-300 dark:hover:bg-slate-800"
+              >
+                <RotateCcw size={13} aria-hidden="true" />
+                Reset columns
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+      <div
+        ref={containerRef}
+        onScroll={isVirtualized ? handleScroll : undefined}
+        style={containerStyles}
+        data-testid="datatable-container"
       data-virtualized={isVirtualized}
       className="w-full max-w-full overflow-x-auto bg-white dark:bg-slate-900 rounded-xl border border-gray-100 dark:border-slate-800 shadow-sm focus:outline-none"
       tabIndex={isVirtualized ? 0 : undefined}
@@ -287,7 +497,7 @@ export default function DataTable({
         {caption && <caption className="sr-only">{caption}</caption>}
         <thead className="text-xs text-gray-500 dark:text-gray-400 uppercase bg-gray-50 dark:bg-slate-800/60 border-b border-gray-100 dark:border-slate-800 sticky top-0 z-10">
           <tr>
-            {columns.map((col, idx) => (
+            {visibleColumns.map((col, idx) => (
               <th
                 key={idx}
                 scope="col"
@@ -322,7 +532,7 @@ export default function DataTable({
           {/* Top virtual spacer */}
           {isVirtualized && topPadding > 0 && (
             <tr style={{ height: `${topPadding}px` }} aria-hidden="true">
-              <td colSpan={columns.length} style={{ padding: 0, border: 'none' }} />
+              <td colSpan={visibleColumns.length} style={{ padding: 0, border: 'none' }} />
             </tr>
           )}
 
@@ -346,7 +556,7 @@ export default function DataTable({
                 tabIndex={isClickable || isVirtualized ? 0 : undefined}
                 aria-label={isClickable ? `View details for row ${absoluteIdx + 1}` : undefined}
               >
-                {columns.map((col, colIdx) => (
+                {visibleColumns.map((col, colIdx) => (
                   <td key={colIdx} className="px-4 sm:px-6 py-4 whitespace-nowrap">
                     {col.render ? col.render(row) : row[col.accessor]}
                   </td>
@@ -358,11 +568,12 @@ export default function DataTable({
           {/* Bottom virtual spacer */}
           {isVirtualized && bottomPadding > 0 && (
             <tr style={{ height: `${bottomPadding}px` }} aria-hidden="true">
-              <td colSpan={columns.length} style={{ padding: 0, border: 'none' }} />
+              <td colSpan={visibleColumns.length} style={{ padding: 0, border: 'none' }} />
             </tr>
           )}
         </tbody>
       </table>
+      </div>
     </div>
   );
 }
