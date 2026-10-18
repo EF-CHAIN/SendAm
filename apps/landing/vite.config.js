@@ -1,6 +1,7 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import path from 'node:path';
+import { readFileSync } from 'node:fs';
 import { VitePWA } from 'vite-plugin-pwa';
 
 // https://vite.dev/config/
@@ -8,50 +9,8 @@ export default defineConfig({
   plugins: [react(), VitePWA({
     registerType: 'prompt',
     includeAssets: ['favicon.svg', 'icons/*.png', 'icons/*.svg'],
-    manifest: {
-      name: 'SendAm',
-      short_name: 'SendAm',
-      description: 'Send money like you send a text. WhatsApp-first payments powered by the Stellar network.',
-      theme_color: '#0d9488',
-      background_color: '#0d9488',
-      display: 'standalone',
-      orientation: 'portrait-primary',
-      start_url: '/',
-      scope: '/',
-      lang: 'en',
-      dir: 'ltr',
-      categories: ['finance', 'social'],
-      icons: [
-        { src: '/icons/icon-72x72.png', sizes: '72x72', type: 'image/png', purpose: 'any' },
-        { src: '/icons/icon-96x96.png', sizes: '96x96', type: 'image/png', purpose: 'any' },
-        { src: '/icons/icon-128x128.png', sizes: '128x128', type: 'image/png', purpose: 'any' },
-        { src: '/icons/icon-144x144.png', sizes: '144x144', type: 'image/png', purpose: 'any' },
-        { src: '/icons/icon-152x152.png', sizes: '152x152', type: 'image/png', purpose: 'any' },
-        { src: '/icons/icon-192x192.png', sizes: '192x192', type: 'image/png', purpose: 'any maskable' },
-        { src: '/icons/icon-384x384.png', sizes: '384x384', type: 'image/png', purpose: 'any' },
-        { src: '/icons/icon-512x512.png', sizes: '512x512', type: 'image/png', purpose: 'any maskable' },
-      ],
-      screenshots: [
-        { src: '/icons/icon-512x512.png', sizes: '512x512', type: 'image/png', form_factor: 'narrow', label: 'SendAm Home Screen' },
-        { src: '/icons/icon-512x512.png', sizes: '512x512', type: 'image/png', form_factor: 'wide', label: 'SendAm Desktop View' },
-      ],
-      shortcuts: [
-        {
-          name: 'Send Money',
-          short_name: 'Send',
-          description: 'Send money via WhatsApp',
-          url: '/',
-          icons: [{ src: '/icons/icon-192x192.png', sizes: '192x192' }],
-        },
-        {
-          name: 'Check Balance',
-          short_name: 'Balance',
-          description: 'Check your XLM balance',
-          url: '/',
-          icons: [{ src: '/icons/icon-192x192.png', sizes: '192x192' }],
-        },
-      ],
-    },
+    // Single source of truth: the same manifest is served at /manifest.json.
+    manifest: JSON.parse(readFileSync(path.resolve(__dirname, 'public/manifest.json'), 'utf8')),
     workbox: {
       globPatterns: ['**/*.{js,css,html,ico,png,svg,woff2,woff}'],
       runtimeCaching: [

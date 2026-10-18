@@ -7,6 +7,7 @@ import {
   TARGET_CURRENCIES,
   PRESET_AMOUNTS,
 } from '@/lib/currencyConstants.js';
+import { calculateQuote, SENDAM_FEE_BPS, TRADITIONAL_FEE_BPS } from '@/lib/currencyCalculator.js';
 
 export default function CurrencyCalculator() {
   const [amount, setAmount] = useState('100');
@@ -17,24 +18,21 @@ export default function CurrencyCalculator() {
   const sourceSelectId = useId();
   const targetSelectId = useId();
 
-  const parsedAmount = Math.max(0, parseFloat(amount) || 0);
+  // Fixed-point quote (7 decimals); see src/lib/currencyCalculator.js.
+  const quote = calculateQuote({ amount, sourceCurrency, targetCurrency, rates: EXCHANGE_RATES });
+  const parsedAmount = Number(quote.amount);
 
-  // SendAm fee is flat 1%
-  const sendAmFeePercent = 1;
-  const sendAmFee = parsedAmount * 0.01;
-  const netSendAmount = Math.max(0, parsedAmount - sendAmFee);
+  // SendAm fee is flat 1%; traditional wires typically charge 6% to 8%.
+  const sendAmFeePercent = Number(SENDAM_FEE_BPS) / 100;
+  const sendAmFee = Number(quote.fee);
+  const traditionalFeePercent = Number(TRADITIONAL_FEE_BPS) / 100;
+  const traditionalFee = Number(quote.traditionalFee);
 
-  // Traditional bank wire / money transfer fees typically range from 6% to 8%
-  const traditionalFeePercent = 7;
-  const traditionalFee = parsedAmount * 0.07;
+  const currentRate = Number(quote.rate);
+  const receivedAmount = Number(quote.receivedAmount);
 
-  // Rate lookup
-  const currentRate = EXCHANGE_RATES[sourceCurrency]?.[targetCurrency] || 1;
-  const receivedAmount = netSendAmount * currentRate;
-
-  // Estimated savings
-  const estimatedSavings = Math.max(0, traditionalFee - sendAmFee);
-  const estimatedSavingsInTarget = estimatedSavings * currentRate;
+  const estimatedSavings = Number(quote.savings);
+  const estimatedSavingsInTarget = Number(quote.savingsInTarget);
 
   const currentSource = SOURCE_CURRENCIES.find((c) => c.code === sourceCurrency) || SOURCE_CURRENCIES[0];
   const currentTarget = TARGET_CURRENCIES.find((c) => c.code === targetCurrency) || TARGET_CURRENCIES[0];
@@ -125,6 +123,13 @@ export default function CurrencyCalculator() {
                 </div>
               </div>
             </div>
+
+            {quote.exceedsLimit && (
+              <p role="alert" className="text-xs font-medium text-amber-700">
+                The maximum per transfer is {currentSource.symbol}
+                {Number(quote.maxAmount).toLocaleString()}. The quote below uses that amount.
+              </p>
+            )}
 
             {/* Presets */}
             <div>

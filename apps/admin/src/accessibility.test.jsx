@@ -4,8 +4,12 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import App from './App.jsx';
 import StatusBadge from './components/StatusBadge.jsx';
+import DataTable from './components/DataTable.jsx';
+import FilterBar from './components/FilterBar.jsx';
+import KycExportModal from './components/KycExportModal.jsx';
+import PasskeyPromptModal from './components/PasskeyPromptModal.jsx';
 import { setToken, removeToken } from './lib/auth';
-import { axe } from './test/axe';
+import { axe, axeWcag21AA } from './test/axe';
 import { server } from './mocks/server';
 import { http, HttpResponse } from 'msw';
 
@@ -14,8 +18,10 @@ import { http, HttpResponse } from 'msw';
 // operation and axe scans of the real rendered routes. Runs in CI via
 // `npm run test --workspace=apps/admin` (see .github/workflows/test.yml).
 //
-// Note: the admin dashboard currently has no dialogs/modals, so dialog
-// coverage is intentionally absent rather than testing invented markup.
+// Component-level axe audits at the end of this file run the WCAG 2.1 A/AA
+// ruleset (see `axeWcag21AA` in ./test/axe.js) against DataTable, FilterBar
+// and the KYC review dialogs, and prove the audit itself fails on missing
+// labels and ARIA role mismatches.
 
 // Render the real app (sidebar + protected layout + page) against MSW.
 const renderAdmin = (path = '/') => {
@@ -350,5 +356,168 @@ describe('admin dashboard accessibility', () => {
       const results = await axe(container);
       expect(results).toHaveNoViolations();
     }, 20000);
+  });
+
+  describe('component axe audits (WCAG 2.1 AA)', () => {
+    const COLUMNS = [
+      { header: 'Phone', accessor: 'phone', sortable: true },
+      { header: 'Amount', accessor: 'amount', sortable: true },
+      { header: 'Status', accessor: 'status', render: (row) => <StatusBadge status={row.status} /> },
+    ];
+    const ROWS = [
+      { id: 'r1', phone: '+2348000000001', amount: 120, status: 'success' },
+      { id: 'r2', phone: '+2348000000002', amount: 45, status: 'pending' },
+      { id: 'r3', phone: '+2348000000003', amount: 300, status: 'failed' },
+    ];
+    const FIELDS = [
+      { key: 'phone', label: 'Phone', placeholder: '+234...' },
+      { key: 'status', label: 'Status', type: 'select', options: ['pending', 'success', 'failed'] },
+      { key: 'from', label: 'From date', type: 'date' },
+    ];
+
+    const expectNoWcagViolations = async (container) => {
+      const results = await axeWcag21AA(container);
+      expect(results).toHaveNoViolations();
+      return results;
+    };
+
+    const renderTable = (props, path = '/') =>
+      render(
+        <MemoryRouter initialEntries={[path]}>
+          <DataTable caption="Synthetic transactions" columns={COLUMNS} data={ROWS} {...props} />
+        </MemoryRouter>
+      );
+
+    it('audits a sortable, clickable DataTable before and after sorting', async () => {
+      const { container } = renderTable({ onRowClick: () => {} });
+      await expectNoWcagViolations(container);
+      await userEvent.click(screen.getByRole('button', { name: /amount/i }));
+      expect(screen.getByRole('columnheader', { name: /amount/i })).toHaveAttribute('aria-sort', 'ascending');
+      await expectNoWcagViolations(container);
+    }, 20000);
+
+    it('audits the DataTable empty state with and without active filters', async () => {
+      const unfiltered = renderTable({ data: [] });
+      expect(screen.getByRole('region', { name: /empty state/i })).toBeInTheDocument();
+      await expectNoWcagViolations(unfiltered.container);
+      unfiltered.unmount();
+
+      const filtered = renderTable({ data: [] }, '/?status=failed');
+      expect(screen.getByRole('button', { name: /reset filters/i })).toBeInTheDocument();
+      await expectNoWcagViolations(filtered.container);
+    }, 20000);
+
+    it('audits a virtualised DataTable with a focusable scroll region', async () => {
+      const many = Array.from({ length: 60 }, (_, index) => ({
+        id: `v${index}`,
+        phone: `+23480000${String(index).padStart(5, '0')}`,
+        amount: index,
+        status: 'success',
+      }));
+      const { container } = renderTable({ data: many, maxHeight: 300 });
+      const region = screen.getByRole('region', { name: /scrollable view/i });
+      expect(region).toHaveAttribute('tabindex', '0');
+      await expectNoWcagViolations(container);
+    }, 20000);
+
+    it('audits FilterBar with empty values and with active filter chips', async () => {
+      const values = { phone: '', status: '', from: '' };
+      const props = {
+        fields: FIELDS,
+        getFilter: (key) => values[key],
+        setFilter: () => {},
+        onReset: () => {},
+      };
+      const empty = render(<FilterBar {...props} />);
+      for (const field of FIELDS) {
+        expect(screen.getByLabelText(field.label)).toBeInTheDocument();
+      }
+      await expectNoWcagViolations(empty.container);
+      empty.unmount();
+
+      values.phone = '+234';
+      values.status = 'failed';
+      const active = render(<FilterBar {...props} />);
+      expect(screen.getByRole('list', { name: /active filters/i })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /clear phone filter/i })).toBeInTheDocument();
+      await expectNoWcagViolations(active.container);
+    }, 20000);
+
+    it('audits the KYC approve and reject confirmation dialogs', async () => {
+      const { container } = renderAdmin('/kyc');
+      await waitForTable();
+      const user = userEvent.setup();
+
+      await user.click(screen.getByRole('button', { name: /approve/i }));
+      expect(screen.getByRole('dialog', { name: 'Approve KYC' })).toHaveAttribute('aria-modal', 'true');
+      await expectNoWcagViolations(container);
+      await user.click(screen.getByRole('button', { name: /cancel/i }));
+
+      await user.click(screen.getByRole('button', { name: /reject/i }));
+      const dialog = screen.getByRole('dialog', { name: 'Reject KYC' });
+      expect(within(dialog).getByLabelText(/rejection reason/i)).toBeRequired();
+      await expectNoWcagViolations(container);
+    }, 20000);
+
+    it('audits the KYC export dialog', async () => {
+      const { container } = render(
+        <KycExportModal isOpen onClose={() => {}} onExport={() => {}} exporting={false} />
+      );
+      expect(screen.getByRole('dialog', { name: /export kyc data/i })).toBeInTheDocument();
+      await expectNoWcagViolations(container);
+    }, 20000);
+
+    it('audits the passkey step-up dialog used by KYC review actions', async () => {
+      for (const action of ['kyc.approve', 'kyc.reject']) {
+        const { container, unmount } = render(
+          <PasskeyPromptModal
+            open
+            action={action}
+            support={{ supported: true, platformAuthenticator: true, checked: true }}
+            onVerify={() => {}}
+            onFallback={() => {}}
+            onCancel={() => {}}
+          />
+        );
+        expect(screen.getByRole('dialog')).toBeInTheDocument();
+        await expectNoWcagViolations(container);
+        unmount();
+      }
+    }, 20000);
+
+    it('fails the audit when a control has no label', async () => {
+      const { container } = render(
+        <form>
+          <input type="text" />
+          <select>
+            <option>One</option>
+          </select>
+        </form>
+      );
+      const results = await axeWcag21AA(container);
+      const ids = results.violations.map((violation) => violation.id);
+      expect(ids).toContain('label');
+      expect(ids).toContain('select-name');
+      expect(() => expect(results).toHaveNoViolations()).toThrow();
+    });
+
+    it('fails the audit on ARIA role mismatches', async () => {
+      const { container } = render(
+        <div>
+          <div role="row">
+            <span role="cell">Orphaned cell</span>
+          </div>
+          <span role="buton">Not a role</span>
+          <div role="list">
+            <span>Not a list item</span>
+          </div>
+        </div>
+      );
+      const results = await axeWcag21AA(container);
+      const ids = results.violations.map((violation) => violation.id);
+      expect(ids).toContain('aria-required-parent');
+      expect(ids).toContain('aria-roles');
+      expect(ids).toContain('aria-required-children');
+    });
   });
 });

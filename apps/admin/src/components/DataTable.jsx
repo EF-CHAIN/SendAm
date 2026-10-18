@@ -281,7 +281,10 @@ export default function DataTable({
       data-virtualized={isVirtualized}
       className="w-full max-w-full overflow-x-auto bg-white dark:bg-slate-900 rounded-xl border border-gray-100 dark:border-slate-800 shadow-sm focus:outline-none"
       tabIndex={isVirtualized ? 0 : undefined}
-      aria-label={caption ? `${caption} scrollable view` : undefined}
+      // A keyboard-focusable scroll container needs a role and a name so
+      // screen readers announce what receives focus (WCAG 2.1.1, 4.1.2).
+      role={isVirtualized ? 'region' : undefined}
+      aria-label={isVirtualized ? `${caption || 'Table'} scrollable view` : undefined}
     >
       <table className="min-w-max w-full text-sm text-left text-gray-600 dark:text-gray-300 border-collapse">
         {caption && <caption className="sr-only">{caption}</caption>}

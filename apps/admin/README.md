@@ -58,6 +58,14 @@ transactions, failed transactions, pending transactions, pending KYC) followed b
 the rate source. The `baseCurrency` equivalent renders as `unavailable` when the API omits
 `baseAmount`.
 
+The corridor chart's geometry lives in `src/lib/corridorChartGeometry.js`.
+Missing, null, NaN or negative `volume`, `txCount` and `fees` values are
+treated as zero, a single-day series is centred, zero-volume days sit on the
+baseline, and an empty `corridorAnalytics` array shows a "No corridor activity"
+state instead of sample data (sample data is only used when the API supplies no
+series). Line and area paths are built as SVG path data and drawn with
+`Path2D` where available.
+
 ### Users (`/users`)
 
 - Filter and page the user table, then drill into **Onboarding Status** to see the blockers that
@@ -152,6 +160,21 @@ The admin app expects the backend running on `http://localhost:3002` (see `apps/
 ```bash
 npm run build --workspace=apps/admin
 ```
+
+## Test
+
+```bash
+npm run test:admin
+```
+
+`src/accessibility.test.jsx` renders the real routes and runs axe on them. Its
+"component axe audits (WCAG 2.1 AA)" block runs only the WCAG 2.1 A and AA
+rules (`axeWcag21AA` in `src/test/axe.js`) against `DataTable` (sorted,
+empty, filtered-empty and virtualised), `FilterBar` (empty and with active
+chips) and the KYC review dialogs (approve, reject, export and passkey
+step-up). Two negative tests prove the audit fails on missing labels and ARIA
+role mismatches. Colour contrast is excluded because jsdom cannot compute
+styles.
 
 ## Tech Stack
 

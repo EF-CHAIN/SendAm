@@ -10,3 +10,14 @@ export const axe = configureAxe({
     'color-contrast': { enabled: false },
   },
 });
+
+// WCAG 2.1 level A and AA rules only. Used by the component-level audits in
+// accessibility.test.jsx so a failure maps directly to a WCAG 2.1 AA criterion.
+export const WCAG_21_AA_TAGS = ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'];
+
+export const axeWcag21AA = configureAxe({
+  runOnly: { type: 'tag', values: WCAG_21_AA_TAGS },
+  rules: {
+    'color-contrast': { enabled: false },
+  },
+});
