@@ -265,4 +265,54 @@ describe('DataTable Virtualization & Keyboard Navigation', () => {
     });
     expect(onRowClick).toHaveBeenCalledWith(data[0]);
   });
+
+  it('renders 5,000 rows efficiently with bounded DOM node count and accessible ARIA attributes', () => {
+    const hugeDataset = Array.from({ length: 5000 }, (_, i) => ({
+      id: `item-${i + 1}`,
+      name: `Transaction Log ${i + 1}`,
+    }));
+
+    renderTable(
+      <DataTable
+        columns={virtCols}
+        data={hugeDataset}
+        virtualizeThreshold={50}
+        rowHeight={50}
+        maxHeight={500}
+        overscan={3}
+      />
+    );
+
+    const container = screen.getByTestId('datatable-container');
+    expect(container).toHaveAttribute('data-virtualized', 'true');
+    expect(container).toHaveAttribute('data-virtual-total', '5000');
+
+    // Verify aria-rowcount on table includes total rows + header
+    const table = container.querySelector('table');
+    expect(table).toHaveAttribute('aria-rowcount', '5001');
+
+    // Assert DOM node count is strictly bounded (less than 40 rows in DOM)
+    const renderedBodyRows = container.querySelectorAll('tbody tr[data-row-index]');
+    expect(renderedBodyRows.length).toBeLessThan(40);
+    expect(renderedBodyRows.length).toBeGreaterThan(0);
+
+    // Initial first row
+    expect(screen.getByText('Transaction Log 1')).toBeInTheDocument();
+    expect(renderedBodyRows[0]).toHaveAttribute('aria-rowindex', '2');
+
+    // Scroll to middle of 5,000 items (row 2500 -> scrollTop = 2500 * 50 = 125000)
+    act(() => {
+      fireEvent.scroll(container, { target: { scrollTop: 125000 } });
+    });
+
+    // Row 1 should no longer be in the DOM
+    expect(screen.queryByText('Transaction Log 1')).not.toBeInTheDocument();
+
+    // Row 2501 should be rendered
+    expect(screen.getByText('Transaction Log 2501')).toBeInTheDocument();
+
+    // DOM node count remains strictly bounded
+    const scrolledBodyRows = container.querySelectorAll('tbody tr[data-row-index]');
+    expect(scrolledBodyRows.length).toBeLessThan(40);
+  });
 });
