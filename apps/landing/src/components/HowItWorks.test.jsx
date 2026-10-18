@@ -40,4 +40,41 @@ describe('HowItWorks', () => {
     const pulses = container.querySelectorAll('.motion-safe\\:animate-ping');
     expect(pulses).toHaveLength(3);
   });
+
+  it('renders dashed SVG lines with gradient definitions in desktop track and mobile connectors', () => {
+    render(<HowItWorks />);
+    const track = screen.getByTestId('step-track');
+    const trackSvg = track.querySelector('svg');
+    expect(trackSvg).toBeInTheDocument();
+    expect(trackSvg.querySelector('linearGradient#desktop-track-gradient')).toBeInTheDocument();
+
+    const connectors = screen.getAllByTestId('step-connector');
+    expect(connectors).toHaveLength(2);
+    connectors.forEach((c) => {
+      const svg = c.querySelector('svg');
+      expect(svg).toBeInTheDocument();
+      expect(svg.querySelector('linearGradient#mobile-connector-gradient')).toBeInTheDocument();
+    });
+  });
+
+  it('respects prefers-reduced-motion media query by defaulting to full progression', () => {
+    const originalMatchMedia = window.matchMedia;
+    window.matchMedia = (query) => ({
+      matches: query === '(prefers-reduced-motion: reduce)',
+      media: query,
+      onchange: null,
+      addListener: () => {},
+      removeListener: () => {},
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      dispatchEvent: () => false,
+    });
+
+    render(<HowItWorks />);
+    const track = screen.getByTestId('step-track');
+    const dynamicLine = track.querySelectorAll('line')[1];
+    expect(dynamicLine.style.strokeDashoffset).toBe('0');
+
+    window.matchMedia = originalMatchMedia;
+  });
 });
