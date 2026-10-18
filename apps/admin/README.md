@@ -47,7 +47,16 @@ entry — it is reached by clicking a row in the transactions table.
 2. When the API responds with `mustChangePassword: true`, the app navigates to `/set-password`
    instead of the dashboard.
 3. `/set-password` asks for the current password, a new password, and a confirmation. The new
-   password must be at least 12 characters; on success the operator lands on `/`.
+   password must be at least 12 characters and reach **Strong** on the live strength meter;
+   on success the operator lands on `/`. The checklist shows length, strength, and confirmation
+   matching. Long passphrases are welcome; no particular mix of character types is mandatory.
+   The client-side zxcvbn estimator checks common words, keyboard patterns, repetitions, and
+   predictable substitutions locally, with no network lookup or password logging. Strong means
+   zxcvbn score 4 (an estimate of at least 10^10 guesses), plus the 12-character minimum. For
+   responsiveness, only the first 100 characters are scored; the full password is submitted
+   unchanged to the existing password-change API. The estimator loads only with this lazy route.
+   This is guidance and a frontend submit gate, not a new server-side policy or a guarantee
+   against compromise; the API's existing validation and session-revocation flow are unchanged.
 4. Pressing `Logout` in the sidebar clears the stored token and returns to `/login`.
 
 ### Dashboard (`/`)
