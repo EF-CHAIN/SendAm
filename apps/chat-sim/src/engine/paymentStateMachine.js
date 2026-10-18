@@ -11,6 +11,8 @@ export const PaymentState = {
   PARSING_VOICE: "ParsingVoice",
   RATE_QUOTED: "RateQuoted",
   AWAITING_PIN: "AwaitingPin",
+  AUTHORIZING: "AUTHORIZING",
+  SUBMITTING: "SUBMITTING",
   SETTLING_STELLAR: "SettlingStellar",
   RECEIPT_DELIVERED: "ReceiptDelivered",
   COMPLETED: "Completed",
@@ -25,6 +27,8 @@ export const PaymentEvent = {
   SUBMIT_PIN: "SUBMIT_PIN",
   PIN_VALIDATED: "PIN_VALIDATED",
   PIN_INVALID: "PIN_INVALID",
+  AUTHORIZE: "AUTHORIZE",
+  SUBMIT: "SUBMIT",
   STELLAR_SUBMITTED: "STELLAR_SUBMITTED",
   STELLAR_SUCCESS: "STELLAR_SUCCESS",
   STELLAR_FAILED: "STELLAR_FAILED",
@@ -183,15 +187,15 @@ export class PaymentStateMachine {
       case PaymentState.RATE_QUOTED:
         if (event === PaymentEvent.SUBMIT_PIN) {
           nextState = PaymentState.AWAITING_PIN;
-        } else if (event === PaymentEvent.PIN_VALIDATED) {
-          nextState = PaymentState.SETTLING_STELLAR;
+        } else if (event === PaymentEvent.AUTHORIZE || event === PaymentEvent.PIN_VALIDATED) {
+          nextState = PaymentState.AUTHORIZING;
           updatedContext.pinAttempts = 0;
         }
         break;
 
       case PaymentState.AWAITING_PIN:
-        if (event === PaymentEvent.PIN_VALIDATED) {
-          nextState = PaymentState.SETTLING_STELLAR;
+        if (event === PaymentEvent.AUTHORIZE || event === PaymentEvent.PIN_VALIDATED) {
+          nextState = PaymentState.AUTHORIZING;
           updatedContext.pinAttempts = 0;
         } else if (event === PaymentEvent.PIN_INVALID) {
           const attempts = (updatedContext.pinAttempts || 0) + 1;
@@ -204,6 +208,35 @@ export class PaymentStateMachine {
             nextState = PaymentState.AWAITING_PIN;
             updatedContext.errorMessage = `Invalid PIN. ${3 - attempts} attempt(s) remaining.`;
           }
+        }
+        break;
+
+      case PaymentState.AUTHORIZING:
+        if (event === PaymentEvent.SUBMIT || event === PaymentEvent.STELLAR_SUBMITTED) {
+          nextState = PaymentState.SUBMITTING;
+        } else if (event === PaymentEvent.PIN_VALIDATED) {
+          nextState = PaymentState.SUBMITTING;
+        } else if (event === PaymentEvent.PIN_INVALID || event === PaymentEvent.STELLAR_FAILED) {
+          nextState = PaymentState.ERROR;
+          updatedContext.errorMessage = payload.error || "Authorization failed.";
+        } else if (event === PaymentEvent.STELLAR_SUCCESS) {
+          nextState = PaymentState.RECEIPT_DELIVERED;
+          updatedContext.stellarTxHash =
+            payload.txHash || `stellar_tx_${Date.now().toString(16)}`;
+          updatedContext.settledAt = new Date().toISOString();
+        }
+        break;
+
+      case PaymentState.SUBMITTING:
+        if (event === PaymentEvent.STELLAR_SUCCESS) {
+          nextState = PaymentState.RECEIPT_DELIVERED;
+          updatedContext.stellarTxHash =
+            payload.txHash || `stellar_tx_${Date.now().toString(16)}`;
+          updatedContext.settledAt = new Date().toISOString();
+        } else if (event === PaymentEvent.STELLAR_FAILED) {
+          nextState = PaymentState.ERROR;
+          updatedContext.errorMessage =
+            payload.error || "Stellar broadcast failed.";
         }
         break;
 
