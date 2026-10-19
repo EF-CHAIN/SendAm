@@ -79,7 +79,7 @@ describe('XdrDecoderModal Component', () => {
     // Switch to Raw JSON tab
     const rawJsonTab = screen.getByRole('button', { name: /Raw JSON/i });
     fireEvent.click(rawJsonTab);
-    expect(screen.getByRole('button', { name: /Copy JSON/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Copy Formatted JSON/i })).toBeInTheDocument();
   });
 
   it('filters operations when typing into the search query input', () => {
@@ -134,5 +134,38 @@ describe('XdrDecoderModal Component', () => {
     const closeBtn = screen.getByRole('button', { name: 'Close modal' });
     fireEvent.click(closeBtn);
     expect(handleClose).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('XdrDecoderModal raw JSON tree (#754)', () => {
+  const keyPair = StellarSdk.Keypair.random();
+  const account = new StellarSdk.Account(keyPair.publicKey(), '7');
+  const treeTx = new StellarSdk.TransactionBuilder(account, {
+    fee: '100',
+    networkPassphrase: StellarSdk.Networks.PUBLIC,
+  })
+    .addOperation(
+      StellarSdk.Operation.payment({
+        destination: StellarSdk.Keypair.random().publicKey(),
+        asset: StellarSdk.Asset.native(),
+        amount: '12',
+      })
+    )
+    .setTimeout(0)
+    .build();
+
+  it('renders the raw tab as a collapsible tree with a Copy Formatted JSON action', () => {
+    render(<XdrDecoderModal isOpen onClose={vi.fn()} initialXdr={treeTx.toXDR()} />);
+
+    fireEvent.click(screen.getByRole('button', { name: /raw json/i }));
+
+    expect(screen.getByTestId('json-tree')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Copy Formatted JSON/i })).toBeInTheDocument();
+
+    // The root node is expandable and collapsing it hides the branch summary-free view.
+    const root = screen.getByTestId('json-node-root');
+    expect(root).toHaveAttribute('aria-expanded', 'true');
+    fireEvent.click(root);
+    expect(root).toHaveAttribute('aria-expanded', 'false');
   });
 });
