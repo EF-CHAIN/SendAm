@@ -5,7 +5,12 @@ import './index.css';
 import App from './App.jsx';
 import { registerSW } from 'virtual:pwa-register';
 
-registerSW();
+if (import.meta.env.DEV && import.meta.env.VITE_USE_MSW === 'true') {
+  import('./mocks/browser').then(({ worker }) => {
+    worker.start();
+  });
+}
+
 
 createRoot(document.getElementById('root')).render(
   <StrictMode>

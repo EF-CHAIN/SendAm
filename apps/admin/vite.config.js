@@ -4,7 +4,7 @@ import path from 'node:path';
 
 // https://vite.dev/config/
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), visualizer()],
   resolve: {
     // Force a single React copy. In this workspace react-router-dom can be
     // hoisted to the root node_modules and resolve a different React than the
@@ -35,3 +35,5 @@ export default defineConfig({
     exclude: ['**/node_modules/**', '**/e2e/**', '**/dist/**'],
   },
 });
+
+import { visualizer } from 'rollup-plugin-visualizer';
