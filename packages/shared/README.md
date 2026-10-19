@@ -12,6 +12,7 @@ Part of the [SendAm](../../README.md) monorepo.
 | `src/ErrorBoundary.jsx` | `default` | React error boundary that renders a safe recovery UI |
 | `src/ErrorFallback.jsx` | `default` | Recovery UI shown by `ErrorBoundary` |
 | `src/formatDate.js` | `formatDate` | Locale-aware date/time formatting |
+| `src/formatCurrency.js` | `formatCurrency` | Fiat and Stellar asset display amounts |
 | `src/normalizeError.js` | `normalizeError` | Turns any thrown value into a safe, structured error |
 | `src/logger.js` | `logger`, `redact` | Structured console logging with secret redaction |
 | `src/api.js` | `default` | Pre-configured Axios instance |
@@ -132,6 +133,42 @@ interactive controls have visible `focus-visible` outlines and descriptive
 labels.
 
 ## Utilities
+
+### `formatCurrency(amount, currencyCode)`
+
+Formats a finite number or plain decimal string with `Intl.NumberFormat` in
+`en-US`, matching the fixed locale used by `formatDate`. ISO currencies use
+their standard minor units: USD, EUR, GBP and NGN have exactly two decimals,
+and NGN uses the ₦ symbol. Other alphanumeric Stellar asset codes (1–12
+characters, including XLM and USDC) use up to seven decimals, omit trailing
+zeroes, and appear after the amount. ISO currency codes take precedence over
+custom asset codes with the same name. Codes are trimmed; ISO currency codes
+are normalized to uppercase, while other asset codes keep their original case
+because Stellar asset codes are case-sensitive.
+
+```js
+import { formatCurrency } from '@shared/formatCurrency.js';
+
+formatCurrency(1234.5, 'USD');           // "$1,234.50"
+formatCurrency(1234.5, 'NGN');           // "₦1,234.50"
+formatCurrency('0.0000001', 'XLM');      // "0.0000001 XLM"
+formatCurrency('1.12345675', 'USDC');    // "1.1234568 USDC"
+```
+
+This is a display utility, not transaction validation or arithmetic. Extra
+fractional digits are rounded by Intl (half away from zero), and negative
+amounts are allowed. For exact large balances, pass decimal strings directly
+from the API; precision already lost in a JavaScript number cannot be recovered.
+This requires Intl support for exact decimal-string formatting and
+`Intl.supportedValuesOf` (available in modern browsers and Node 20+). Amounts
+that round to zero are displayed without a minus sign.
+Invalid amounts or codes throw `TypeError` rather than silently displaying a
+zero balance. Strings must use plain decimals (no grouping, currency symbols,
+or exponent notation); null, empty strings, booleans, NaN and infinity are rejected.
+Transaction limits and backend money rules are unchanged.
+
+The formatter tests run in the existing admin CI suite through the shared alias:
+`npm run test:admin -- src/lib/formatCurrency.test.js`.
 
 ### `formatDate(dateString)`
 
