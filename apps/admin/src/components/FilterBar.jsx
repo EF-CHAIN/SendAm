@@ -1,5 +1,33 @@
 import { useId } from 'react';
 
+// Local-time calendar day as yyyy-mm-dd — the value format <input type="date">
+// holds, and what the API's from/to filters read. Built from local date parts
+// on purpose: an operator filtering "Today" means their today, and
+// toISOString() would shift the day across the UTC boundary.
+function isoDay(date) {
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${date.getFullYear()}-${month}-${day}`;
+}
+
+function daysAgo(now, days) {
+  const result = new Date(now);
+  result.setDate(result.getDate() - days);
+  return result;
+}
+
+// Quick ranges for daily reconciliation. Each returns [start, end] dates;
+// both bounds are inclusive calendar days.
+const DATE_PRESETS = [
+  { label: 'Today', range: (now) => [now, now] },
+  { label: 'Yesterday', range: (now) => [daysAgo(now, 1), daysAgo(now, 1)] },
+  { label: 'Last 7 Days', range: (now) => [daysAgo(now, 6), now] },
+  { label: 'Month to Date', range: (now) => [new Date(now.getFullYear(), now.getMonth(), 1), now] },
+  { label: 'Year to Date', range: (now) => [new Date(now.getFullYear(), 0, 1), now] },
+];
+
+const presetTestId = (label) => `filter-preset-${label.toLowerCase().replace(/ /g, '-')}`;
+
 // Reusable filter bar for admin list pages. `fields` is an array of
 // { key, label, placeholder?, type?: 'text' | 'select', options?: string[] }.
 // Values are read from the URL via `getFilter` and written via `setFilter`,
@@ -16,8 +44,53 @@ export default function FilterBar({ fields = [], getFilter, setFilter, onReset }
     .map((field) => ({ field, value: getFilter(field.key) }))
     .filter(({ value }) => value);
 
+  // A date *range* is the first two date-typed fields (the from/to pair every
+  // list page declares in that order). A bar with fewer shows no presets.
+  const dateFields = fields.filter((field) => field.type === 'date');
+  const dateRange = dateFields.length >= 2 ? [dateFields[0], dateFields[1]] : null;
+  const applyPreset = (preset) => {
+    const [start, end] = preset.range(new Date());
+    // Two functional updates compose; useListQuery's setFilter also clears the
+    // cursor window, so the page re-queries immediately with the new bounds.
+    setFilter(dateRange[0].key, isoDay(start));
+    setFilter(dateRange[1].key, isoDay(end));
+  };
+  const presetIsActive = (preset) => {
+    const [start, end] = preset.range(new Date());
+    return (
+      getFilter(dateRange[0].key) === isoDay(start) && getFilter(dateRange[1].key) === isoDay(end)
+    );
+  };
+
   return (
     <div className="mb-4">
+      {dateRange && (
+        <div
+          className="mb-2 flex flex-wrap items-center gap-2"
+          role="group"
+          aria-label="Quick date ranges"
+        >
+          {DATE_PRESETS.map((preset) => {
+            const active = presetIsActive(preset);
+            return (
+              <button
+                key={preset.label}
+                type="button"
+                onClick={() => applyPreset(preset)}
+                aria-pressed={active}
+                className={`rounded-full border px-3 py-1 text-xs font-medium shadow-sm focus:outline-none focus:ring-2 focus:ring-primary/40 ${
+                  active
+                    ? 'border-primary bg-primary/10 text-primary'
+                    : 'border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-slate-700'
+                }`}
+                data-testid={presetTestId(preset.label)}
+              >
+                {preset.label}
+              </button>
+            );
+          })}
+        </div>
+      )}
       <form
         className="flex flex-wrap items-end gap-3"
         onSubmit={(e) => e.preventDefault()}

@@ -1,7 +1,7 @@
-import { render, screen } from '@testing-library/react';
+import { cleanup, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
-import { describe, it, expect, vi } from 'vitest';
+import { afterEach, describe, it, expect, vi } from 'vitest';
 import FilterBar from './FilterBar';
 import { useListQuery } from '@/lib/useListQuery';
 
@@ -123,5 +123,71 @@ describe('FilterBar active filter chips', () => {
     await userEvent.click(screen.getByText('Clear All'));
     expect(screen.queryByLabelText('Active filters')).not.toBeInTheDocument();
     expect(screen.getByTestId('filter-asset')).toHaveValue('');
+  });
+});
+
+describe('FilterBar date presets', () => {
+  const rangeFields = [
+    { key: 'phone', label: 'Phone' },
+    { key: 'from', label: 'From', type: 'date' },
+    { key: 'to', label: 'To', type: 'date' },
+  ];
+
+  const renderWithRange = (values = { phone: '', from: '', to: '' }) => {
+    const setFilter = vi.fn();
+    const utils = render(
+      <FilterBar
+        fields={rangeFields}
+        getFilter={(key) => values[key]}
+        setFilter={setFilter}
+        onReset={vi.fn()}
+      />
+    );
+    return { ...utils, setFilter };
+  };
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('shows the five quick ranges only when the bar has a from/to date pair', () => {
+    renderWithRange();
+    const group = screen.getByRole('group', { name: 'Quick date ranges' });
+    for (const label of ['Today', 'Yesterday', 'Last 7 Days', 'Month to Date', 'Year to Date']) {
+      expect(within(group).getByRole('button', { name: label })).toBeInTheDocument();
+    }
+
+    cleanup();
+    renderFilterBar(); // single date field: no preset row
+    expect(screen.queryByRole('group', { name: 'Quick date ranges' })).not.toBeInTheDocument();
+  });
+
+  it.each([
+    ['Today', '2026-10-19', '2026-10-19'],
+    ['Yesterday', '2026-10-18', '2026-10-18'],
+    ['Last 7 Days', '2026-10-13', '2026-10-19'],
+    ['Month to Date', '2026-10-01', '2026-10-19'],
+    ['Year to Date', '2026-01-01', '2026-10-19'],
+  ])('%s fills both ISO bounds in one click', async (label, start, end) => {
+    vi.useFakeTimers({ now: new Date(2026, 9, 19, 15, 30), toFake: ['Date'] });
+    const { setFilter } = renderWithRange();
+
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    await user.click(screen.getByRole('button', { name: label }));
+
+    expect(setFilter).toHaveBeenCalledTimes(2);
+    expect(setFilter).toHaveBeenNthCalledWith(1, 'from', start);
+    expect(setFilter).toHaveBeenNthCalledWith(2, 'to', end);
+  });
+
+  it('marks the preset matching the current from/to as pressed', () => {
+    vi.useFakeTimers({ now: new Date(2026, 9, 19, 9, 0), toFake: ['Date'] });
+    renderWithRange({ phone: '', from: '2026-10-13', to: '2026-10-19' });
+
+    expect(screen.getByRole('button', { name: 'Last 7 Days' })).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    );
+    expect(screen.getByRole('button', { name: 'Today' })).toHaveAttribute('aria-pressed', 'false');
   });
 });
