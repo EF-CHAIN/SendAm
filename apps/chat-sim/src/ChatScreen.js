@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   Animated,
   KeyboardAvoidingView,
@@ -10,6 +10,7 @@ import {
   View,
 } from 'react-native';
 import MessageList from './MessageList';
+import EmojiPicker from './EmojiPicker';
 import usePolling from './usePolling';
 import {
   PaymentStateMachine,
@@ -75,6 +76,12 @@ export default function ChatScreen() {
   const [phoneInput, setPhoneInput] = useState('');
   const [messages, setMessages] = useState([]);
   const [inputText, setInputText] = useState('');
+  const inputRef = useRef(null);
+  const [inputSelection, setInputSelection] = useState({ start: 0, end: 0 });
+  const [emojiPickerOpen, setEmojiPickerOpen] = useState(false);
+  const [composerHeight, setComposerHeight] = useState(60);
+  const [screenHeight, setScreenHeight] = useState(600);
+  const restoreInputFocus = useRef(false);
   const [sending, setSending] = useState(false);
   const [isListening, setIsListening] = useState(false);
   const [voiceSynthesizeEnabled, setVoiceSynthesizeEnabled] = useState(true);
@@ -99,6 +106,29 @@ export default function ChatScreen() {
 
   usePolling(phoneNumber, setMessages);
 
+  useLayoutEffect(() => {
+    if (!emojiPickerOpen && restoreInputFocus.current) {
+      restoreInputFocus.current = false;
+      inputRef.current?.focus();
+    }
+  }, [emojiPickerOpen, inputText]);
+
+  function closeEmojiPicker() {
+    restoreInputFocus.current = true;
+    setEmojiPickerOpen(false);
+  }
+
+  function insertEmoji(emoji) {
+    if (sending) return;
+    // TextInput selection offsets and JS string slices both use UTF-16 units,
+    // so multi-code-unit flags advance the caret by their full string length.
+    const start = Math.min(inputSelection.start, inputText.length);
+    const end = Math.min(inputSelection.end, inputText.length);
+    setInputText(inputText.slice(0, start) + emoji + inputText.slice(end));
+    setInputSelection({ start: start + emoji.length, end: start + emoji.length });
+    closeEmojiPicker();
+  }
+
   function handleStart() {
     const trimmed = phoneInput.trim();
     if (!trimmed) return;
@@ -110,6 +140,8 @@ export default function ChatScreen() {
     setPhoneInput('');
     setMessages([]);
     setInputText('');
+    setInputSelection({ start: 0, end: 0 });
+    setEmojiPickerOpen(false);
     setSending(false);
     setIsListening(false);
   }
@@ -154,6 +186,7 @@ export default function ChatScreen() {
       }
 
       setInputText(transcript);
+      setInputSelection({ start: transcript.length, end: transcript.length });
 
       const parsed = stateMachine.parsePaymentIntent(transcript);
       if (parsed) {
@@ -180,6 +213,8 @@ export default function ChatScreen() {
       { id: `u-${Date.now()}`, text, sender: 'user' },
     ]);
     setInputText('');
+    setInputSelection({ start: 0, end: 0 });
+    setEmojiPickerOpen(false);
     setSending(true);
 
     // If current state machine is awaiting PIN and user enters a 4-6 digit PIN
@@ -266,6 +301,7 @@ export default function ChatScreen() {
   return (
     <KeyboardAvoidingView
       className="flex-1 bg-white"
+      onLayout={({ nativeEvent }) => setScreenHeight(nativeEvent.layout.height)}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     >
       <View className="flex-row items-center justify-between px-3 py-2 border-b border-gray-200">
@@ -351,7 +387,22 @@ export default function ChatScreen() {
       </View>
       {sending ? <TypingIndicator /> : null}
 
-      <View className="flex-row items-center gap-2 px-3 py-2 border-t border-gray-200">
+      {emojiPickerOpen && (
+        <Pressable testID="emoji-picker-backdrop" accessibilityRole="button" accessibilityLabel="Dismiss emoji picker"
+          onPress={closeEmojiPicker} style={{ position: 'absolute', top: 0, bottom: 0, left: 0, right: 0, zIndex: 1 }} />
+      )}
+      {emojiPickerOpen && (
+        <EmojiPicker onSelect={insertEmoji} onClose={closeEmojiPicker} bottom={composerHeight}
+          maxHeight={Math.min(340, Math.max(120, screenHeight - composerHeight - 16))} />
+      )}
+      <View className="flex-row items-center gap-2 px-3 py-2 border-t border-gray-200 bg-white"
+        style={{ zIndex: 2 }} onLayout={({ nativeEvent }) => setComposerHeight(nativeEvent.layout.height)}>
+        <Pressable accessibilityRole="button" accessibilityLabel="Choose emoji"
+          accessibilityState={{ expanded: emojiPickerOpen, disabled: sending }}
+          disabled={sending} onPress={() => emojiPickerOpen ? closeEmojiPicker() : setEmojiPickerOpen(true)}
+          style={{ minWidth: 44, minHeight: 44, alignItems: 'center', justifyContent: 'center' }}>
+          <Text style={{ fontSize: 24 }}>☺</Text>
+        </Pressable>
         <Pressable
           testID="mic-button"
           className={`rounded-full p-2 items-center justify-center ${isListening ? 'bg-red-500' : 'bg-gray-200'}`}
@@ -360,10 +411,15 @@ export default function ChatScreen() {
           <Text className="text-xs font-bold">{isListening ? 'REC...' : 'MIC'}</Text>
         </Pressable>
         <TextInput
+          ref={inputRef}
+          accessibilityLabel="Message"
+          style={{ minWidth: 0 }}
           className="flex-1 border border-gray-300 rounded-full px-4 py-2 text-base"
           placeholder="Type a message or use speech"
           value={inputText}
           onChangeText={setInputText}
+          selection={inputSelection}
+          onSelectionChange={({ nativeEvent }) => setInputSelection(nativeEvent.selection)}
           onSubmitEditing={() => handleSend()}
           editable={!sending}
         />
