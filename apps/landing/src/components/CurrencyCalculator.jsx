@@ -1,5 +1,5 @@
 import { useState, useId } from 'react';
-import { ArrowRight, CheckCircle2, TrendingDown, RefreshCw, Zap } from 'lucide-react';
+import { ArrowRight, CheckCircle2, ChevronDown, TrendingDown, RefreshCw, Zap } from 'lucide-react';
 import { whatsappUrl } from '@/lib/links.js';
 import {
   EXCHANGE_RATES,
@@ -12,10 +12,12 @@ export default function CurrencyCalculator() {
   const [amount, setAmount] = useState('100');
   const [sourceCurrency, setSourceCurrency] = useState('USD');
   const [targetCurrency, setTargetCurrency] = useState('NGN');
+  const [breakdownOpen, setBreakdownOpen] = useState(false);
 
   const inputId = useId();
   const sourceSelectId = useId();
   const targetSelectId = useId();
+  const breakdownId = useId();
 
   const parsedAmount = Math.max(0, parseFloat(amount) || 0);
 
@@ -204,6 +206,77 @@ export default function CurrencyCalculator() {
                 <span className="text-sm">
                   {currentSource.symbol}{estimatedSavings.toFixed(2)} ({currentTarget.symbol}{Math.round(estimatedSavingsInTarget).toLocaleString()})
                 </span>
+              </div>
+
+              {/* Collapsible full fee transparency drawer */}
+              <div className="pt-2 border-t border-slate-200">
+                <button
+                  type="button"
+                  onClick={() => setBreakdownOpen((open) => !open)}
+                  aria-expanded={breakdownOpen}
+                  aria-controls={breakdownId}
+                  className="w-full flex items-center justify-between gap-2 py-1 text-slate-600 font-semibold hover:text-primary transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary rounded"
+                >
+                  <span>View fee breakdown</span>
+                  <ChevronDown
+                    size={14}
+                    aria-hidden="true"
+                    className={`transition-transform duration-300 ${breakdownOpen ? 'rotate-180' : ''}`}
+                  />
+                </button>
+                <div
+                  id={breakdownId}
+                  role="region"
+                  aria-label="Fee breakdown"
+                  aria-hidden={!breakdownOpen}
+                  className={`grid transition-[grid-template-rows] duration-300 ease-in-out motion-reduce:transition-none ${
+                    breakdownOpen ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]'
+                  }`}
+                >
+                  <div className="overflow-hidden">
+                    <dl className="pt-2 space-y-2">
+                      <div className="flex justify-between text-slate-600">
+                        <dt>You send</dt>
+                        <dd className="font-semibold text-slate-800">
+                          {currentSource.symbol}{parsedAmount.toFixed(2)}
+                        </dd>
+                      </div>
+                      <div className="flex justify-between text-slate-600">
+                        <dt>SendAm service fee ({sendAmFeePercent}%)</dt>
+                        <dd className="font-semibold text-slate-800">
+                          −{currentSource.symbol}{sendAmFee.toFixed(2)}
+                        </dd>
+                      </div>
+                      <div className="flex justify-between text-slate-600">
+                        <dt>Stellar network fee (covered by SendAm)</dt>
+                        <dd className="font-semibold text-slate-800">&lt;{currentSource.symbol}0.0001</dd>
+                      </div>
+                      <div className="flex justify-between pt-2 border-t border-slate-200 text-slate-700 font-semibold">
+                        <dt>Net send amount</dt>
+                        <dd className="text-slate-900">
+                          {currentSource.symbol}{netSendAmount.toFixed(2)}
+                        </dd>
+                      </div>
+                      <div className="flex justify-between text-slate-600">
+                        <dt>Guaranteed FX rate</dt>
+                        <dd className="font-semibold text-slate-800">
+                          1 {sourceCurrency} = {currentRate.toLocaleString()} {targetCurrency}
+                        </dd>
+                      </div>
+                      <div className="flex justify-between text-emerald-700 font-semibold">
+                        <dt>Recipient gets</dt>
+                        <dd>
+                          {currentTarget.symbol}{receivedAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </dd>
+                      </div>
+                    </dl>
+                    <p className="pt-2 text-[11px] leading-snug text-slate-400">
+                      The Stellar network base fee (under {currentSource.symbol}0.0001 per transaction) is paid
+                      by SendAm, so it is never deducted from your transfer. The FX rate is locked when you
+                      send — no recipient-side spread.
+                    </p>
+                  </div>
+                </div>
               </div>
             </div>
           </div>
