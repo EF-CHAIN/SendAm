@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { afterEach, describe, it, expect, vi } from 'vitest';
+import { act, render, screen, fireEvent } from '@testing-library/react';
 import CurrencyCalculator from './CurrencyCalculator.jsx';
 import { EXCHANGE_RATES } from '@/lib/currencyConstants.js';
 
@@ -76,5 +76,63 @@ describe('CurrencyCalculator Component', () => {
     });
     expect(screen.getByText(new RegExp(expectedNgn))).toBeInTheDocument();
     expect(screen.getByText(/1 GBP = 1,980 NGN/i)).toBeInTheDocument();
+  });
+});
+
+describe('CurrencyCalculator rate freshness (#716)', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('counts down from 30s and refreshes when it reaches zero', async () => {
+    vi.useFakeTimers();
+    const refreshRates = vi.fn().mockResolvedValue({});
+    render(<CurrencyCalculator refreshRates={refreshRates} />);
+
+    expect(screen.getByText('Rates refresh in 30s')).toBeInTheDocument();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3_000);
+    });
+    expect(screen.getByText('Rates refresh in 27s')).toBeInTheDocument();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(28_000);
+    });
+    expect(refreshRates).toHaveBeenCalledTimes(1);
+    // The refresh resolved at t=30s, so the tick at t=31s shows a restarted
+    // countdown one second in.
+    expect(screen.getByText('Rates refresh in 29s')).toBeInTheDocument();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
+  it('warns when the refresh fails, with a red dot instead of the pulse', async () => {
+    vi.useFakeTimers();
+    const refreshRates = vi.fn().mockRejectedValue(new Error('offline (simulated)'));
+    const { container } = render(<CurrencyCalculator refreshRates={refreshRates} />);
+
+    // Past the 30s refresh point (refresh fails), then past the 60s stale mark.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(61_000);
+    });
+
+    const warning = screen.getByRole('alert');
+    expect(warning).toHaveTextContent(/could not be refreshed/i);
+    expect(container.querySelector('[data-testid="rate-freshness"] .bg-red-500')).not.toBeNull();
+    expect(container.querySelector('[data-testid="rate-freshness"] .animate-pulse')).toBeNull();
+  });
+
+  it('warns about age alone while a refresh hangs, without claiming a failure', async () => {
+    vi.useFakeTimers();
+    const refreshRates = vi.fn(() => new Promise(() => {})); // never settles
+    render(<CurrencyCalculator refreshRates={refreshRates} />);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(61_000);
+    });
+
+    const warning = screen.getByRole('alert');
+    expect(warning).toHaveTextContent(/more than a minute old/i);
+    expect(warning).not.toHaveTextContent(/could not be refreshed/i);
   });
 });
