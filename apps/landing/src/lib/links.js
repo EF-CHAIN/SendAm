@@ -13,6 +13,7 @@ export const normalizeAdminUrl = (value) =>
 export const ADMIN_URL = normalizeAdminUrl(import.meta.env.VITE_ADMIN_URL);
 export const GITHUB_URL = 'https://github.com/Gozirimdev/SendAm';
 export const STELLAR_URL = 'https://stellar.org';
+export const STELLAR_STATUS_URL = 'https://status.stellar.org';
 
 // Build a wa.me deep link that opens WhatsApp with a prefilled command.
 // Without a configured number it falls back to wa.me/ (lets the user pick the
