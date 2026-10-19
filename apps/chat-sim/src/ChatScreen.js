@@ -59,7 +59,7 @@ function TypingIndicator() {
   };
 
   return (
-    <View className="flex-row items-center gap-2 px-3 py-2">
+    <View testID="typing-indicator" className="flex-row items-center gap-2 px-3 py-2">
       <Text className="text-sm text-gray-500">SendAm is typing</Text>
       <View className="flex-row items-center">
         <Animated.View style={[dotStyle, { opacity: dot1 }]} />
@@ -87,6 +87,14 @@ export default function ChatScreen() {
     context: stateMachine.getContext(),
     history: stateMachine.getHistory(),
   });
+
+  const isTyping =
+    sending ||
+    machineSnapshot.state === 'AUTHORIZING' ||
+    machineSnapshot.state === 'SUBMITTING' ||
+    machineSnapshot.state === PaymentState.AUTHORIZING ||
+    machineSnapshot.state === PaymentState.SUBMITTING ||
+    machineSnapshot.state === PaymentState.SETTLING_STELLAR;
 
   useEffect(() => {
     const unsubscribe = stateMachine.subscribe(
@@ -188,8 +196,11 @@ export default function ChatScreen() {
       machineSnapshot.state === PaymentState.RATE_QUOTED
     ) {
       if (/^\d{4,6}$/.test(text)) {
-        stateMachine.transition(PaymentEvent.PIN_VALIDATED);
+        stateMachine.transition(PaymentEvent.AUTHORIZE);
         // Simulate immediate stellar settlement progression
+        setTimeout(() => {
+          stateMachine.transition(PaymentEvent.SUBMIT);
+        }, 400);
         setTimeout(() => {
           stateMachine.transition(PaymentEvent.STELLAR_SUCCESS, {
             txHash: `0x${Date.now().toString(16)}`,
@@ -216,6 +227,17 @@ export default function ChatScreen() {
       const data = await response.json();
       const replies = data.replies ?? [];
       appendBotReplies(replies);
+      if (
+        machineSnapshot.state === 'AUTHORIZING' ||
+        machineSnapshot.state === 'SUBMITTING' ||
+        machineSnapshot.state === PaymentState.AUTHORIZING ||
+        machineSnapshot.state === PaymentState.SUBMITTING ||
+        machineSnapshot.state === PaymentState.SETTLING_STELLAR
+      ) {
+        stateMachine.transition(PaymentEvent.STELLAR_SUCCESS, {
+          txHash: `0x${Date.now().toString(16)}`,
+        });
+      }
     } catch (error) {
       const errorReply = `Couldn't reach SendAm: ${error.message}`;
       setMessages((prev) => [
@@ -349,7 +371,7 @@ export default function ChatScreen() {
       <View className="flex-1">
         <MessageList messages={messages} />
       </View>
-      {sending ? <TypingIndicator /> : null}
+      {isTyping ? <TypingIndicator /> : null}
 
       <View className="flex-row items-center gap-2 px-3 py-2 border-t border-gray-200">
         <Pressable
