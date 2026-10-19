@@ -71,6 +71,8 @@ export default function CorridorGlobe() {
       : false
   );
   const headingId = useId();
+  // Restarts the render loop after it has parked itself under reduced motion.
+  const kickRenderRef = useRef(() => {});
 
   // Rotation state stored in refs for smooth animation loop
   const stateRef = useRef({
@@ -117,6 +119,9 @@ export default function CorridorGlobe() {
 
     stateRef.current.targetYaw = targetYaw;
     stateRef.current.targetPitch = targetPitch;
+    // Re-selecting the current corridor re-renders nothing, so wake the
+    // parked loop directly to animate towards the new orientation.
+    kickRenderRef.current();
   };
 
   useEffect(() => {
@@ -401,13 +406,36 @@ export default function CorridorGlobe() {
         });
       }
 
+      // Under reduced motion the scene is static once it has settled: no
+      // auto-rotation, no particles. Keeping a continuous rAF loop alive
+      // would redraw an unchanged frame 60 times a second, so park the loop
+      // instead; pointer interaction kicks it back on.
+      const settled =
+        prefersReducedMotion &&
+        !state.isDragging &&
+        Math.abs(state.targetYaw - state.yaw) < 0.0005 &&
+        Math.abs(state.targetPitch - state.pitch) < 0.0005;
+      if (settled) {
+        state.yaw = state.targetYaw;
+        state.pitch = state.targetPitch;
+        animationFrameId = null;
+        return;
+      }
+
       animationFrameId = requestAnimationFrame(render);
+    };
+
+    kickRenderRef.current = () => {
+      if (animationFrameId === null) {
+        animationFrameId = requestAnimationFrame(render);
+      }
     };
 
     render();
 
     return () => {
       if (animationFrameId) cancelAnimationFrame(animationFrameId);
+      kickRenderRef.current = () => {};
     };
   }, [selectedCorridor, prefersReducedMotion]);
 
@@ -418,10 +446,13 @@ export default function CorridorGlobe() {
     stateRef.current.lastMouseX = e.clientX;
     stateRef.current.lastMouseY = e.clientY;
     setIsInteracting(true);
+    // Manual rotation stays available under reduced motion; wake the loop.
+    kickRenderRef.current();
   };
 
   const handlePointerMove = (e) => {
     if (!stateRef.current.isDragging) return;
+    kickRenderRef.current();
     const dx = e.clientX - stateRef.current.lastMouseX;
     const dy = e.clientY - stateRef.current.lastMouseY;
     stateRef.current.dragDistance += Math.abs(dx) + Math.abs(dy);

@@ -1,7 +1,7 @@
 import { act, create } from 'react-test-renderer';
 import MessageCopyButton from '../MessageCopyButton';
 import * as Clipboard from 'expo-clipboard';
-import MessageList from '../MessageList';
+import MessageList, { parseQuickReplies } from '../MessageList';
 
 jest.mock('expo-clipboard', () => ({ setStringAsync: jest.fn().mockResolvedValue(true) }));
 
@@ -32,6 +32,50 @@ describe('MessageList', () => {
 
     expect(bubbleTestIds).toEqual(['bubble-user', 'bubble-bot', 'bubble-user']);
   });
+
+  it('parses quick-reply options from bot message text', () => {
+    const botMsg = {
+      id: 'bot-1',
+      sender: 'bot',
+      text: 'Please select an option:\n1: Check Balance\n2: Send Money',
+    };
+    const replies = parseQuickReplies(botMsg);
+    expect(replies).toHaveLength(2);
+    expect(replies[0].label).toBe('1: Check Balance');
+    expect(replies[0].payload).toBe('1: Check Balance');
+    expect(replies[1].label).toBe('2: Send Money');
+  });
+
+  it('renders interactive pill buttons and invokes onQuickReply', async () => {
+    let clickedPayload = null;
+    const botMsg = {
+      id: 'bot-1',
+      sender: 'bot',
+      text: 'Options:\n1: Check Balance\n2: Send Money',
+    };
+    let renderer;
+    await act(async () => {
+      renderer = create(
+        <MessageList
+          messages={[botMsg]}
+          onQuickReply={(payload) => {
+            clickedPayload = payload;
+          }}
+          disabledReplies={{}}
+        />
+      );
+    });
+
+    const root = renderer.root;
+    const button0 = root.findByProps({ testID: 'quick-reply-0' });
+    expect(button0).toBeDefined();
+
+    await act(async () => {
+      button0.props.onPress();
+    });
+
+    expect(clickedPayload).toBe('1: Check Balance');
+  });
 });
 
 
@@ -59,5 +103,27 @@ it('allows long unbroken message text to shrink alongside the copy action', asyn
   await act(async () => { renderer = create(<MessageList messages={[{ id: 'long', text, sender: 'bot' }]} />); });
   const messageText = renderer.root.findAll((node) => node.props.children === text && node.props.style?.flexShrink === 1)[0];
   expect(messageText.props.style.minWidth).toBe(0);
+  act(() => renderer.unmount());
+});
+
+
+it.each([
+  { disabledReplies: { menu: '1: Balance' }, sending: false },
+  { disabledReplies: {}, sending: true },
+])('keeps copy independent when quick replies are disabled: %j', async (state) => {
+  const text = 'Options:\n1: Balance\n2: Deposit';
+  const onQuickReply = jest.fn();
+  let renderer;
+  await act(async () => {
+    renderer = create(<MessageList messages={[{ id: 'menu', sender: 'bot', text }]}
+      onQuickReply={onQuickReply} {...state} />);
+  });
+  expect(renderer.root.findByProps({ testID: 'quick-reply-0' }).props.disabled).toBe(true);
+  const copy = renderer.root.findByType(MessageCopyButton);
+  const button = copy.findAll((node) => node.props.accessibilityRole === 'button' && typeof node.props.onPress === 'function')[0];
+  await act(async () => { await button.props.onPress(); });
+  expect(Clipboard.setStringAsync).toHaveBeenLastCalledWith(text);
+  expect(button.props.accessibilityLabel).toBe('Message copied');
+  expect(onQuickReply).not.toHaveBeenCalled();
   act(() => renderer.unmount());
 });
