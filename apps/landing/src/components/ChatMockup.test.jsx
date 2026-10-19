@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import ChatMockup from './ChatMockup.jsx';
 
 describe('ChatMockup', () => {
@@ -37,6 +37,21 @@ describe('ChatMockup', () => {
   it('renders the composer placeholder', () => {
     render(<ChatMockup />);
     expect(screen.getByText('Message or voice note')).toBeInTheDocument();
+  });
+
+  it('plays, pauses, and scrubs the voice message', () => {
+    render(<ChatMockup />);
+    const seek = screen.getByRole('slider', { name: /seek voice message/i });
+
+    expect(screen.getByText('0:00')).toBeInTheDocument();
+    expect(screen.getByText('0:14')).toBeInTheDocument();
+    fireEvent.change(seek, { target: { value: '9' } });
+    expect(screen.getByText('0:09')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /play voice note/i }));
+    expect(screen.getByRole('button', { name: /pause voice note/i })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /pause voice note/i }));
+    expect(screen.getByRole('button', { name: /play voice note/i })).toBeInTheDocument();
   });
 
   it('gives every image an alt attribute', () => {

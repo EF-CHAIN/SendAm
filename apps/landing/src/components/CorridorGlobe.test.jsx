@@ -36,10 +36,10 @@ describe('CorridorGlobe', () => {
 
   it('renders all active remittance corridors', () => {
     render(<CorridorGlobe />);
-    const radioGroup = screen.getByRole('radiogroup', { name: /select remittance corridor/i });
-    expect(radioGroup).toBeInTheDocument();
+    const tabList = screen.getByRole('tablist', { name: /select remittance corridor/i });
+    expect(tabList).toBeInTheDocument();
 
-    const options = screen.getAllByRole('radio');
+    const options = screen.getAllByRole('tab');
     expect(options).toHaveLength(CORRIDORS.length);
   });
 
@@ -47,26 +47,44 @@ describe('CorridorGlobe', () => {
     const user = userEvent.setup();
     render(<CorridorGlobe />);
 
-    const ghanaCorridor = screen.getByRole('radio', { name: /accra/i });
-    expect(ghanaCorridor).toHaveAttribute('aria-checked', 'false');
+    const ghanaCorridor = screen.getByRole('tab', { name: /accra/i });
+    expect(ghanaCorridor).toHaveAttribute('aria-selected', 'false');
 
     await user.click(ghanaCorridor);
 
-    expect(ghanaCorridor).toHaveAttribute('aria-checked', 'true');
+    expect(ghanaCorridor).toHaveAttribute('aria-selected', 'true');
     expect(screen.getByText('USD / GHS')).toBeInTheDocument();
   });
 
-  it('supports keyboard navigation through corridor radio options', async () => {
+  it('supports arrow-key navigation through corridor tabs', async () => {
     const user = userEvent.setup();
     render(<CorridorGlobe />);
 
-    const firstRadio = screen.getAllByRole('radio')[0];
-    firstRadio.focus();
-    expect(firstRadio).toHaveFocus();
+    const tabs = screen.getAllByRole('tab');
+    tabs[0].focus();
+    await user.keyboard('{ArrowDown}');
+    expect(tabs[1]).toHaveFocus();
+    expect(tabs[1]).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByText(/New York, USA to Accra, GH/)).toHaveAttribute('aria-live', 'polite');
+  });
 
-    const secondRadio = screen.getAllByRole('radio')[1];
-    await user.click(secondRadio);
-    expect(secondRadio).toHaveAttribute('aria-checked', 'true');
+  it('shows the SVG fallback during context loss and resumes the canvas on restore', () => {
+    const { container } = render(<CorridorGlobe />);
+    const canvas = container.querySelector('canvas');
+    const lostEvent = new Event('webglcontextlost', { cancelable: true });
+
+    fireEvent(canvas, lostEvent);
+    expect(lostEvent.defaultPrevented).toBe(true);
+    expect(screen.getByRole('img', { name: /interactive map of sendam remittance corridors/i })).toBeInTheDocument();
+
+    fireEvent(canvas, new Event('webglcontextrestored'));
+    expect(screen.getByRole('img', { name: /interactive 3d globe/i })).toBeInTheDocument();
+  });
+
+  it('renders the SVG corridor map when a 2D context is unavailable', () => {
+    HTMLCanvasElement.prototype.getContext.mockReturnValue(null);
+    render(<CorridorGlobe />);
+    expect(screen.getByRole('img', { name: /interactive map of sendam remittance corridors/i })).toBeInTheDocument();
   });
 
   it('handles pointer drag interactions on the canvas', () => {
