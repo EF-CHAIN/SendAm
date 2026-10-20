@@ -402,6 +402,57 @@ function SwipeableBubble({ item, isUser, onReply }) {
   );
 }
 
+const MONTHS = [
+  'January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December',
+];
+
+/** Parses a message timestamp (ISO string or epoch ms). Returns null if unusable. */
+function messageDate(message) {
+  const raw = message?.timestamp ?? message?.createdAt;
+  if (raw === undefined || raw === null || raw === '') return null;
+  const date = new Date(raw);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+/** Local calendar-day key, e.g. "2026-9-14" (month is zero-based; only used for equality). */
+function dayKey(date) {
+  return `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;
+}
+
+/**
+ * Label for a date separator pill: "Today", "Yesterday", or a full date such as
+ * "October 14, 2026". Compares local calendar days, not 24h windows.
+ */
+export function formatDateHeader(date, now = new Date()) {
+  if (dayKey(date) === dayKey(now)) return 'Today';
+  const yesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
+  if (dayKey(date) === dayKey(yesterday)) return 'Yesterday';
+  return `${MONTHS[date.getMonth()]} ${date.getDate()}, ${date.getFullYear()}`;
+}
+
+/**
+ * Flattens messages into rows, inserting a date row before the first message of
+ * each calendar day. Messages without a valid timestamp never start a new day and
+ * get no header of their own.
+ */
+export function buildRows(messages, now = new Date()) {
+  const rows = [];
+  let lastKey = null;
+  for (const message of messages) {
+    const date = messageDate(message);
+    if (date) {
+      const key = dayKey(date);
+      if (key !== lastKey) {
+        rows.push({ type: 'date', id: `date-${key}`, label: formatDateHeader(date, now) });
+        lastKey = key;
+      }
+    }
+    rows.push({ type: 'message', id: message.id, message });
+  }
+  return rows;
+}
+
 export default function MessageList({
   messages,
   onQuickReply,
@@ -409,10 +460,27 @@ export default function MessageList({
   disabledReplies = {},
   sending = false,
   onReply,
+  now,
 }) {
+  const rows = buildRows(messages, now);
+  const stickyHeaderIndices = rows.reduce((acc, row, i) => (row.type === 'date' ? [...acc, i] : acc), []);
+
   return (
-    <ScrollView contentContainerClassName="px-3 py-2 gap-2">
-      {messages.map((item) => {
+    <ScrollView
+      contentContainerClassName="px-3 py-2 gap-2"
+      stickyHeaderIndices={stickyHeaderIndices}
+    >
+      {rows.map((row) => {
+        if (row.type === 'date') {
+          return (
+            <View key={row.id} testID="date-header" className="items-center py-1">
+              <View className="bg-white/90 rounded-full px-3 py-1 shadow-sm border border-gray-200">
+                <Text className="text-xs font-medium text-gray-600">{row.label}</Text>
+              </View>
+            </View>
+          );
+        }
+        const item = row.message;
         const isUser = item.sender === 'user';
         const listMessage = !isUser ? parseListMessage(item) : null;
         // A list message's text is its payload, not a menu to regex-scan.
