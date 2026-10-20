@@ -1,7 +1,7 @@
-import { describe, expect, it } from "vitest";
-import { render, screen, within } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
+import { render, screen, within, waitFor } from "@testing-library/react";
 import Footer from "./Footer.jsx";
-import { ADMIN_URL, GITHUB_URL, STELLAR_URL } from "@/lib/links.js";
+import { ADMIN_URL, GITHUB_URL, STELLAR_URL, STELLAR_STATUS_URL } from "@/lib/links.js";
 
 function renderFooter() {
   return render(<Footer />);
@@ -72,6 +72,44 @@ describe("Footer", () => {
     for (const link of links) {
       expect(link.className).toMatch(/hover:text-primary/);
       expect(link.className).toMatch(/focus-visible:outline/);
+    }
+  });
+
+  it("renders the live Stellar network ping badge with pulsing dot and tooltip", () => {
+    renderFooter();
+
+    const badge = screen.getByRole("link", { name: /Stellar Mainnet/i });
+    expect(badge).toHaveAttribute("href", STELLAR_STATUS_URL);
+    expect(badge).toHaveAttribute("target", "_blank");
+    expect(badge).toHaveAttribute("rel", expect.stringContaining("noopener"));
+    expect(badge).toHaveAttribute("rel", expect.stringContaining("noreferrer"));
+    expect(badge).toHaveAttribute("title", "View official Stellar network status page");
+    expect(badge).toHaveAccessibleName(/Network status: Stellar Mainnet: Operational/i);
+
+    // Verify pulsing dot structure
+    const pingDot = badge.querySelector(".animate-ping");
+    expect(pingDot).not.toBeNull();
+    expect(pingDot.className).toContain("motion-reduce:hidden");
+  });
+
+  it("updates badge status when live network status API returns non-operational indicators", async () => {
+    const originalFetch = global.fetch;
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        status: { indicator: "minor", description: "Degraded performance" },
+      }),
+    });
+
+    try {
+      renderFooter();
+      await waitFor(() => {
+        expect(
+          screen.getByRole("link", { name: /Stellar Mainnet: Degraded/i })
+        ).toBeInTheDocument();
+      });
+    } finally {
+      global.fetch = originalFetch;
     }
   });
 });

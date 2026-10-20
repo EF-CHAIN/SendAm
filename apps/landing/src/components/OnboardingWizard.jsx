@@ -1,6 +1,55 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Smartphone, Lock, Send, CheckCircle2, ArrowRight, ArrowLeft, RefreshCw, Sparkles } from 'lucide-react';
 import { whatsappUrl } from '@/lib/links.js';
+
+const STORAGE_KEY = 'sendam_onboarding_draft_v1';
+const DEFAULT_PHONE = '+234 801 234 5678';
+const DEFAULT_AMOUNT = '25.00';
+const DEFAULT_RECIPIENT = '+233 241 987 654';
+
+function loadDraft() {
+  if (typeof window === 'undefined' || !window.localStorage) return null;
+  try {
+    const raw = window.localStorage.getItem(STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object') return null;
+    return {
+      phone: typeof parsed.phone === 'string' ? parsed.phone : undefined,
+      transferAmount: typeof parsed.transferAmount === 'string' ? parsed.transferAmount : undefined,
+      recipient: typeof parsed.recipient === 'string' ? parsed.recipient : undefined,
+      currentStep: typeof parsed.currentStep === 'number' && parsed.currentStep >= 1 && parsed.currentStep <= 3 ? parsed.currentStep : 1,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function saveDraft(data) {
+  if (typeof window === 'undefined' || !window.localStorage) return;
+  try {
+    // Explicit allowlist excluding sensitive PIN
+    const payload = {
+      phone: data.phone,
+      transferAmount: data.transferAmount,
+      recipient: data.recipient,
+      currentStep: data.currentStep,
+      savedAt: Date.now(),
+    };
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
+  } catch {
+    // Gracefully ignore QuotaExceededError or security restrictions
+  }
+}
+
+function clearDraft() {
+  if (typeof window === 'undefined' || !window.localStorage) return;
+  try {
+    window.localStorage.removeItem(STORAGE_KEY);
+  } catch {
+    // Ignore error
+  }
+}
 
 const STEPS = [
   {
@@ -24,13 +73,26 @@ const STEPS = [
 ];
 
 export default function OnboardingWizard() {
-  const [currentStep, setCurrentStep] = useState(1);
-  const [phone, setPhone] = useState('+234 801 234 5678');
+  const initialDraft = loadDraft();
+  const [currentStep, setCurrentStep] = useState(initialDraft?.currentStep || 1);
+  const [phone, setPhone] = useState(initialDraft?.phone ?? DEFAULT_PHONE);
   const [pin, setPin] = useState(['', '', '', '']);
-  const [transferAmount, setTransferAmount] = useState('25.00');
-  const [recipient, setRecipient] = useState('+233 241 987 654');
+  const [transferAmount, setTransferAmount] = useState(initialDraft?.transferAmount ?? DEFAULT_AMOUNT);
+  const [recipient, setRecipient] = useState(initialDraft?.recipient ?? DEFAULT_RECIPIENT);
   const [simulating, setSimulating] = useState(false);
   const [completed, setCompleted] = useState(false);
+  const [showDraftBanner, setShowDraftBanner] = useState(Boolean(initialDraft));
+
+  useEffect(() => {
+    if (completed) {
+      clearDraft();
+      return;
+    }
+    const timer = setTimeout(() => {
+      saveDraft({ phone, transferAmount, recipient, currentStep });
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [phone, transferAmount, recipient, currentStep, completed]);
 
   const handlePinChange = (index, value) => {
     if (value.length > 1) value = value.slice(-1);
@@ -47,6 +109,7 @@ export default function OnboardingWizard() {
       setTimeout(() => {
         setSimulating(false);
         setCompleted(true);
+        clearDraft();
       }, 1200);
     }
   };
@@ -59,10 +122,25 @@ export default function OnboardingWizard() {
   };
 
   const handleReset = () => {
+    clearDraft();
     setCurrentStep(1);
     setCompleted(false);
     setSimulating(false);
     setPin(['', '', '', '']);
+    setPhone(DEFAULT_PHONE);
+    setTransferAmount(DEFAULT_AMOUNT);
+    setRecipient(DEFAULT_RECIPIENT);
+    setShowDraftBanner(false);
+  };
+
+  const handleClearDraft = () => {
+    clearDraft();
+    setCurrentStep(1);
+    setPin(['', '', '', '']);
+    setPhone(DEFAULT_PHONE);
+    setTransferAmount(DEFAULT_AMOUNT);
+    setRecipient(DEFAULT_RECIPIENT);
+    setShowDraftBanner(false);
   };
 
   return (
@@ -83,6 +161,39 @@ export default function OnboardingWizard() {
 
         {/* Wizard Container Card */}
         <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+          {showDraftBanner && (
+            <div
+              data-testid="resume-draft-banner"
+              role="status"
+              className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 px-6 py-3.5 bg-emerald-50 border-b border-emerald-200/80 text-emerald-900"
+            >
+              <div className="flex items-center gap-2.5 text-xs sm:text-sm font-medium">
+                <Sparkles className="w-4 h-4 text-emerald-600 shrink-0" aria-hidden="true" />
+                <span>
+                  <strong className="font-semibold text-emerald-950">Resume your application:</strong> We restored your saved draft from your last session.
+                </span>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  data-testid="resume-draft-button"
+                  onClick={() => setShowDraftBanner(false)}
+                  className="px-3 py-1 text-xs font-semibold bg-emerald-700 text-white rounded-lg hover:bg-emerald-800 transition"
+                >
+                  Resume
+                </button>
+                <button
+                  type="button"
+                  data-testid="clear-draft-button"
+                  onClick={handleClearDraft}
+                  className="px-3 py-1 text-xs font-semibold text-emerald-800 hover:text-emerald-950 hover:bg-emerald-100 rounded-lg transition"
+                >
+                  Clear draft
+                </button>
+              </div>
+            </div>
+          )}
+
           {/* Step Indicator Header */}
           <div className="grid grid-cols-3 border-b border-slate-100 bg-slate-50/50">
             {STEPS.map((step) => {
