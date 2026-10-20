@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Fingerprint } from 'lucide-react';
 import {
+  STEP_UP_FALLBACK_RECOVERY,
+  STEP_UP_FALLBACK_TOTP,
   STEP_UP_FALLBACK_UNSUPPORTED,
   describeWebAuthnError,
   getActionMeta,
@@ -18,18 +20,47 @@ import { getPasskeyStepUpChallenge } from '@/lib/adminApi';
 //   * unsupported devices -> an explicit, acknowledged fallback so an operator
 //     on old hardware is never locked out, but the operation is clearly
 //     recorded as having no biometric signature.
+//   * a failed prompt on a supported device (sensor fault, cancelled or
+//     timed-out assertion) -> a secondary "Authenticator code" tab, so a
+//     broken fingerprint reader never locks the screen: the operator enters
+//     a 6-digit TOTP code or a backup recovery key instead.
+
+/** 6 digits = authenticator-app TOTP; anything longer is a recovery key.
+ * Dashes and spaces in recovery keys are accepted as typed. */
+function classifyFallbackCode(raw) {
+  const value = raw.trim();
+  if (/^\d{6}$/.test(value)) return { kind: STEP_UP_FALLBACK_TOTP, value };
+  if (value.replace(/[-\s]/g, '').length >= 8) {
+    return { kind: STEP_UP_FALLBACK_RECOVERY, value };
+  }
+  return null;
+}
+
+// The two prompt failures worth a secondary factor: the assertion was
+// cancelled / timed out (NotAllowedError) or aborted (AbortError). An
+// unsupported device has its own acknowledged path below.
+const CODE_FALLBACK_ERROR_CODES = ['cancelled', 'aborted'];
+
+const tabOnClass =
+  'flex-1 rounded-md px-3 py-1.5 text-xs font-semibold transition bg-white text-slate-900 shadow-sm';
+const tabOffClass =
+  'flex-1 rounded-md px-3 py-1.5 text-xs font-semibold transition text-slate-500 hover:text-slate-700';
 export default function PasskeyPromptModal({
   open = false,
   action,
   status = 'idle',
   error = '',
+  errorCode = '',
   support,
   fallbackAcknowledged = false,
   onFallbackAcknowledgedChange,
   onVerify,
   onFallback,
+  onCodeFallback,
   onCancel,
 }) {
+  const [activeTab, setActiveTab] = useState('passkey');
+  const [fallbackCode, setFallbackCode] = useState('');
   const meta = useMemo(() => getActionMeta(action), [action]);
   const primaryRef = useRef(null);
   const supported = support?.supported !== false;
@@ -38,6 +69,20 @@ export default function PasskeyPromptModal({
   // prompt rather than flashing the "unsupported device" fallback.
   const capabilityResolved = Boolean(support?.checked);
   const showFallback = !supported;
+  const codeFallbackAvailable =
+    supported && status === 'error' && CODE_FALLBACK_ERROR_CODES.includes(errorCode);
+  const classifiedCode = classifyFallbackCode(fallbackCode);
+
+  // A fresh prompt (or a new action) starts back on the passkey tab. This is
+  // the render-time "adjust state when props change" pattern, not an effect,
+  // so closing the modal resets before anything stale can paint.
+  const [prevResetKey, setPrevResetKey] = useState(`${open}:${meta.id ?? ''}`);
+  const resetKey = `${open}:${meta.id ?? ''}`;
+  if (prevResetKey !== resetKey) {
+    setPrevResetKey(resetKey);
+    setActiveTab('passkey');
+    setFallbackCode('');
+  }
 
   useEffect(() => {
     if (!open) return;
@@ -126,9 +171,79 @@ export default function PasskeyPromptModal({
           </div>
         )}
 
-        {error && (
+        {error && activeTab === 'passkey' && (
           <div role="alert" className="mt-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
             {error}
+          </div>
+        )}
+
+        {codeFallbackAvailable && (
+          <div className="mt-4">
+            <div role="tablist" aria-label="Verification method" className="flex gap-1 rounded-lg bg-slate-100 p-1">
+              <button
+                type="button"
+                role="tab"
+                id="passkey-tab-passkey"
+                aria-selected={activeTab === 'passkey'}
+                aria-controls="passkey-tabpanel"
+                onClick={() => setActiveTab('passkey')}
+                className={activeTab === 'passkey' ? tabOnClass : tabOffClass}
+              >
+                Try passkey again
+              </button>
+              <button
+                type="button"
+                role="tab"
+                id="passkey-tab-code"
+                aria-selected={activeTab === 'code'}
+                aria-controls="passkey-tabpanel"
+                onClick={() => setActiveTab('code')}
+                className={activeTab === 'code' ? tabOnClass : tabOffClass}
+              >
+                Authenticator code
+              </button>
+            </div>
+
+            {activeTab === 'code' && (
+              <form
+                id="passkey-tabpanel"
+                role="tabpanel"
+                aria-labelledby="passkey-tab-code"
+                className="mt-3 space-y-2"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  if (classifiedCode) {
+                    onCodeFallback?.(classifiedCode.kind, classifiedCode.value);
+                  }
+                }}
+              >
+                <label htmlFor="passkey-fallback-code" className="block text-xs text-slate-700">
+                  Enter the 6-digit code from your authenticator app, or one of your backup
+                  recovery keys.
+                </label>
+                <input
+                  id="passkey-fallback-code"
+                  type="text"
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  value={fallbackCode}
+                  onChange={(event) => setFallbackCode(event.target.value)}
+                  placeholder="123456 or XXXX-XXXX-XXXX"
+                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-primary/40"
+                />
+                <button
+                  type="submit"
+                  disabled={!classifiedCode}
+                  className="w-full px-4 py-2 text-xs font-semibold text-white bg-primary hover:bg-emerald-600 rounded-lg transition disabled:opacity-50"
+                >
+                  Verify code
+                </button>
+                <p className="text-[11px] text-slate-400">
+                  The operation is recorded with the code-based verification, not a passkey
+                  signature.
+                </p>
+              </form>
+            )}
           </div>
         )}
 
@@ -183,6 +298,7 @@ export function usePasskeyStepUp({ fetchChallenge = getPasskeyStepUpChallenge } 
   const [request, setRequest] = useState(null);
   const [status, setStatus] = useState('idle');
   const [error, setError] = useState('');
+  const [errorCode, setErrorCode] = useState('');
   const [fallbackAcknowledged, setFallbackAcknowledged] = useState(false);
   const [support, setSupport] = useState({ supported: true, platformAuthenticator: false, checked: false });
 
@@ -198,6 +314,7 @@ export function usePasskeyStepUp({ fetchChallenge = getPasskeyStepUpChallenge } 
 
   const startStepUp = useCallback((action, onVerified) => {
     setError('');
+    setErrorCode('');
     setStatus('idle');
     setFallbackAcknowledged(false);
     setRequest({ action: getActionMeta(action), onVerified });
@@ -207,6 +324,7 @@ export function usePasskeyStepUp({ fetchChallenge = getPasskeyStepUpChallenge } 
     setRequest(null);
     setStatus('idle');
     setError('');
+    setErrorCode('');
     setFallbackAcknowledged(false);
   }, []);
 
@@ -221,15 +339,36 @@ export function usePasskeyStepUp({ fetchChallenge = getPasskeyStepUpChallenge } 
       const described = describeWebAuthnError(err);
       setStatus('error');
       setError(described.message);
+      setErrorCode(described.code);
       return;
     }
     const { onVerified } = request;
     setRequest(null);
     setStatus('idle');
+    setErrorCode('');
     if (onVerified) {
       await onVerified({ passkeyAssertion: assertion, passkeyFallback: null });
     }
   }, [request, fetchChallenge]);
+
+  // The secondary factor after a failed prompt: the operator typed a TOTP
+  // code or a recovery key. The API receives it as a fallback with its own
+  // reason (`totp_code` / `recovery_code`) plus the code to verify; no
+  // biometric signature is claimed.
+  const continueWithCode = useCallback(
+    async (kind, code) => {
+      if (!request) return;
+      const { onVerified } = request;
+      setRequest(null);
+      setStatus('idle');
+      setError('');
+      setErrorCode('');
+      if (onVerified) {
+        await onVerified({ passkeyAssertion: null, passkeyFallback: kind, fallbackCode: code });
+      }
+    },
+    [request]
+  );
 
   const continueWithoutPasskey = useCallback(async () => {
     if (!request) return;
@@ -259,11 +398,13 @@ export function usePasskeyStepUp({ fetchChallenge = getPasskeyStepUpChallenge } 
       action: request?.action,
       status,
       error,
+      errorCode,
       support,
       fallbackAcknowledged,
       onFallbackAcknowledgedChange: handleFallbackAcknowledgedChange,
       onVerify: verifyPasskey,
       onFallback: continueWithoutPasskey,
+      onCodeFallback: continueWithCode,
       onCancel: cancelStepUp,
     },
   };

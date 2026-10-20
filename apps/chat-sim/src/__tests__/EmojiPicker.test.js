@@ -4,7 +4,11 @@ import ChatScreen from '../ChatScreen';
 import EmojiPicker from '../EmojiPicker';
 
 jest.mock('../usePolling', () => () => {});
-jest.mock('../MessageList', () => () => null);
+jest.mock('../MessageList', () => ({
+  __esModule: true,
+  default: () => null,
+  parseQuickReplies: jest.requireActual('../MessageList').parseQuickReplies,
+}));
 jest.mock('../engine/voiceService', () => ({
   voiceService: { speak: jest.fn(), isSpeechRecognitionSupported: () => false },
 }));
@@ -122,5 +126,27 @@ it('sends the inserted emoji and disables the picker while the request is pendin
     expect(byLabel('Message').props.value).toBe('');
     await act(async () => finish({ ok: true, json: async () => ({ replies: [] }) }));
     expect(byLabel('Choose emoji').props.disabled).toBe(false);
+  } finally { global.fetch = originalFetch; }
+});
+
+it('keeps quick replies usable after emoji insertion and closes the picker on send', async () => {
+  const originalFetch = global.fetch;
+  global.fetch = jest.fn().mockResolvedValue({
+    ok: true,
+    json: async () => ({ replies: ['1: Check Balance'] }),
+  });
+  try {
+    await draft('hello');
+    await act(async () => renderer.root.findByProps({ testID: 'send-button' }).props.onPress());
+    await draft('my draft ');
+    await press('Choose emoji');
+    await press('Insert Thumbs up');
+    expect(renderer.root.findByProps({ testID: 'bottom-quick-reply-0' })).toBeTruthy();
+    await press('Choose emoji');
+    await act(async () => renderer.root.findByProps({ testID: 'bottom-quick-reply-0' }).props.onPress());
+    expect(JSON.parse(global.fetch.mock.calls[1][1].body).text).toBe('1: Check Balance');
+    expect(pickerIsOpen()).toBe(false);
+    expect(byLabel('Message').props.value).toBe('');
+    expect(byLabel('Message').props.selection).toEqual({ start: 0, end: 0 });
   } finally { global.fetch = originalFetch; }
 });

@@ -16,14 +16,14 @@
     },
     "admin": {
       "distDir": "apps/admin/dist",
-      "comment": "Measured in CI: total JS 1339 KB (gzip 378), dominated by the lazily loaded XdrDecoderModal chunk (@stellar/stellar-sdk, 905 KB), which no longer ships in the TransactionDetail route chunk. Total and per-chunk budgets raised to fit that chunk; follow up by trimming the SDK import.",
+      "comment": "Measured for #779: total JS 2141.83 KB (gzip 762.76), including the route-lazy SetPassword chunk with local zxcvbn dictionaries (805.92 KB raw). The initial shell remains 324.56 KB; password scoring adds no remote service. Total JS budgets allow about 5% headroom for this explicit dependency addition; existing per-chunk, CSS and image limits are unchanged.",
       "budgets": {
-        "totalJsKb": 1400,
+        "totalJsKb": 2250,
         "totalCssKb": 40,
         "maxImageKb": 100,
         "maxChunkKb": 950,
         "gzip": {
-          "totalJsKb": 400,
+          "totalJsKb": 800,
           "totalCssKb": 10
         }
       }

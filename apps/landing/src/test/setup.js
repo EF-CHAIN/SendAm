@@ -1,8 +1,13 @@
 import '@testing-library/jest-dom/vitest';
-import { expect } from 'vitest';
+import { expect, afterEach } from 'vitest';
+import { cleanup } from '@testing-library/react';
 import { toHaveNoViolations } from 'jest-axe';
 
 expect.extend(toHaveNoViolations);
+
+afterEach(() => {
+  cleanup();
+});
 
 // jsdom has no layout engine, so window.matchMedia is unimplemented. Several
 // components (and the reduced-motion media query in index.css) rely on it
