@@ -155,3 +155,55 @@ describe('Users high-risk action step-up', () => {
     expect(downloadCalls).toBe(0);
   });
 });
+
+describe('Users quick actions kebab menu (#767)', () => {
+  it('renders kebab action trigger with aria-haspopup and opens menu on click', async () => {
+    renderPage();
+    await waitForTable();
+
+    const trigger = screen.getByTestId('user-actions-trigger-1');
+    expect(trigger).toBeInTheDocument();
+    expect(trigger).toHaveAttribute('aria-haspopup', 'true');
+    expect(trigger).toHaveAttribute('aria-expanded', 'false');
+
+    // Click to open menu
+    await userEvent.click(trigger);
+    expect(trigger).toHaveAttribute('aria-expanded', 'true');
+
+    const menu = screen.getByTestId('user-actions-menu-1');
+    expect(menu).toBeInTheDocument();
+    expect(within(menu).getByTestId('action-view-dossier')).toHaveTextContent('View Dossier');
+    expect(within(menu).getByTestId('action-reset-pin')).toHaveTextContent('Reset PIN');
+    expect(within(menu).getByTestId('action-deactivate-account')).toHaveTextContent('Deactivate Account');
+    expect(within(menu).getByTestId('action-export-audit-log')).toHaveTextContent('Export Audit Log');
+  });
+
+  it('triggers Reset PIN modal with pre-selected user when selected from kebab menu', async () => {
+    renderPage();
+    await waitForTable();
+
+    // Open kebab menu
+    const trigger = screen.getByTestId('user-actions-trigger-1');
+    await userEvent.click(trigger);
+
+    // Click Reset PIN action
+    const resetPinAction = screen.getByTestId('action-reset-pin');
+    await userEvent.click(resetPinAction);
+
+    // Verify modal appears
+    const modal = screen.getByTestId('reset-pin-modal');
+    expect(modal).toBeInTheDocument();
+    expect(within(modal).getByText('Reset User PIN')).toBeInTheDocument();
+    expect(within(modal).getByText('+1234567890')).toBeInTheDocument();
+
+    // Submit PIN reset
+    const confirmBtn = screen.getByTestId('confirm-reset-pin-btn');
+    await userEvent.click(confirmBtn);
+
+    await waitFor(() => {
+      expect(screen.queryByTestId('reset-pin-modal')).not.toBeInTheDocument();
+      expect(screen.getByText(/PIN reset challenge initiated for \+1234567890/i)).toBeInTheDocument();
+    });
+  });
+});
+

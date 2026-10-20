@@ -9,7 +9,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import MessageList from './MessageList';
+import MessageList, { parseQuickReplies } from './MessageList';
 import usePolling from './usePolling';
 import {
   PaymentStateMachine,
@@ -18,6 +18,54 @@ import {
 } from './engine/paymentStateMachine';
 import { voiceService } from './engine/voiceService';
 import { API_BASE_URL } from './config';
+
+export function formatTranscriptText(messages, phoneNumber) {
+  const lines = [
+    '=== SendAm Chat Transcript ===',
+    `Phone Number: ${phoneNumber || 'Unknown'}`,
+    `Exported At: ${new Date().toISOString()}`,
+    `Total Messages: ${messages.length}`,
+    '==============================',
+    '',
+  ];
+  messages.forEach((msg) => {
+    const time = msg.timestamp || msg.createdAt || new Date().toISOString();
+    const sender = msg.sender === 'user' ? 'User' : 'SendAm';
+    lines.push(`[${time}] [${sender}]: ${msg.text}`);
+  });
+  return lines.join('\n');
+}
+
+export function formatTranscriptJson(messages, phoneNumber) {
+  const data = {
+    phoneNumber: phoneNumber || null,
+    exportedAt: new Date().toISOString(),
+    messageCount: messages.length,
+    messages: messages.map((m) => ({
+      id: m.id,
+      sender: m.sender,
+      text: m.text,
+      timestamp: m.timestamp || m.createdAt || new Date().toISOString(),
+    })),
+  };
+  return JSON.stringify(data, null, 2);
+}
+
+export function triggerDownload(content, filename, mimeType) {
+  if (typeof document !== 'undefined' && document.createElement) {
+    const blob = new Blob([content], { type: mimeType });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    return true;
+  }
+  return false;
+}
 
 function TypingIndicator() {
   const dot1 = useRef(new Animated.Value(0)).current;
@@ -93,6 +141,7 @@ export default function ChatScreen() {
   const [isListening, setIsListening] = useState(false);
   const [voiceSynthesizeEnabled, setVoiceSynthesizeEnabled] = useState(true);
   const [devModeOpen, setDevModeOpen] = useState(false);
+  const [disabledReplies, setDisabledReplies] = useState({});
   const timersRef = useRef(new Set());
 
   // Clean up all active timers on unmount
@@ -110,6 +159,17 @@ export default function ChatScreen() {
     context: stateMachine.getContext(),
     history: stateMachine.getHistory(),
   });
+
+  const latestBotMessage = useMemo(() => {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i].sender === 'bot') return messages[i];
+    }
+    return null;
+  }, [messages]);
+
+  const latestQuickReplies = useMemo(() => {
+    return latestBotMessage ? parseQuickReplies(latestBotMessage) : [];
+  }, [latestBotMessage]);
 
   useEffect(() => {
     const unsubscribe = stateMachine.subscribe(
@@ -137,6 +197,15 @@ export default function ChatScreen() {
     setInputText('');
     setSending(false);
     setIsListening(false);
+    setDisabledReplies({});
+  }
+
+  function handleQuickReply(payload, messageId) {
+    if (sending || (messageId && disabledReplies[messageId])) return;
+    if (messageId) {
+      setDisabledReplies((prev) => ({ ...prev, [messageId]: payload }));
+    }
+    handleSend(payload);
   }
 
   function updateMessageStatus(id, newStatus) {
@@ -163,12 +232,12 @@ export default function ChatScreen() {
   }
 
   function appendBotReplies(replies) {
-    const timestamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const now = new Date().toISOString();
     const newMsgs = replies.map((reply, index) => ({
       id: `b-${Date.now()}-${index}`,
       text: reply,
       sender: 'bot',
-      timestamp,
+      timestamp: now,
     }));
     setMessages((prev) => [...prev, ...newMsgs]);
 
@@ -226,7 +295,7 @@ export default function ChatScreen() {
     if (!text || sending) return;
 
     const userMsgId = `u-${Date.now()}`;
-    const timestamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const timestamp = new Date().toISOString();
 
     setMessages((prev) => [
       ...prev,
@@ -286,7 +355,7 @@ export default function ChatScreen() {
       appendBotReplies(replies);
     } catch (error) {
       const errorReply = `Couldn't reach SendAm: ${error.message}`;
-      const errTimestamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      const errTimestamp = new Date().toISOString();
       setMessages((prev) => [
         ...prev,
         { id: `err-${Date.now()}`, text: errorReply, sender: 'bot', timestamp: errTimestamp },
@@ -297,6 +366,20 @@ export default function ChatScreen() {
     } finally {
       setSending(false);
     }
+  }
+
+  function handleExportTxt() {
+    const content = formatTranscriptText(messages, phoneNumber);
+    const cleanPhone = (phoneNumber || 'session').replace(/[^a-zA-Z0-9]/g, '_');
+    const filename = `transcript_${cleanPhone}_${Date.now()}.txt`;
+    triggerDownload(content, filename, 'text/plain');
+  }
+
+  function handleExportJson() {
+    const content = formatTranscriptJson(messages, phoneNumber);
+    const cleanPhone = (phoneNumber || 'session').replace(/[^a-zA-Z0-9]/g, '_');
+    const filename = `transcript_${cleanPhone}_${Date.now()}.json`;
+    triggerDownload(content, filename, 'application/json');
   }
 
   function handleRollback(index) {
@@ -339,13 +422,29 @@ export default function ChatScreen() {
     >
       <View className="flex-row items-center justify-between px-3 py-2 border-b border-gray-200">
         <Text className="text-base font-semibold text-gray-900">{phoneNumber}</Text>
-        <Pressable
-          testID="reset-session-button"
-          className="border border-gray-300 rounded-lg px-3 py-1"
-          onPress={handleReset}
-        >
-          <Text className="text-sm font-semibold text-gray-700">Switch Account</Text>
-        </Pressable>
+        <View className="flex-row items-center gap-2">
+          <Pressable
+            testID="export-transcript-button"
+            className="border border-emerald-500 bg-emerald-50 rounded-lg px-2.5 py-1"
+            onPress={handleExportTxt}
+          >
+            <Text className="text-xs font-semibold text-emerald-700">Export .txt</Text>
+          </Pressable>
+          <Pressable
+            testID="export-transcript-json-button"
+            className="border border-emerald-500 bg-emerald-50 rounded-lg px-2.5 py-1"
+            onPress={handleExportJson}
+          >
+            <Text className="text-xs font-semibold text-emerald-700">Export .json</Text>
+          </Pressable>
+          <Pressable
+            testID="reset-session-button"
+            className="border border-gray-300 rounded-lg px-3 py-1"
+            onPress={handleReset}
+          >
+            <Text className="text-sm font-semibold text-gray-700">Switch Account</Text>
+          </Pressable>
+        </View>
       </View>
 
       {/* Dev Mode / State Machine Inspector Toolbar */}
@@ -416,9 +515,36 @@ export default function ChatScreen() {
       )}
 
       <View className="flex-1">
-        <MessageList messages={messages} />
+        <MessageList
+          messages={messages}
+          onQuickReply={handleQuickReply}
+          disabledReplies={disabledReplies}
+          sending={sending}
+        />
       </View>
       {sending ? <TypingIndicator /> : null}
+
+      {/* WhatsApp interactive quick-reply suggestions bar above input */}
+      {latestQuickReplies.length > 0 && !disabledReplies[latestBotMessage?.id] && (
+        <View
+          testID="quick-replies-bottom-bar"
+          className="flex-row flex-wrap gap-2 px-3 py-2 bg-emerald-50/70 border-t border-emerald-100"
+        >
+          {latestQuickReplies.map((reply, idx) => (
+            <Pressable
+              key={reply.id || idx}
+              testID={`bottom-quick-reply-${idx}`}
+              disabled={sending || Boolean(disabledReplies[latestBotMessage?.id])}
+              onPress={() => handleQuickReply(reply.payload, latestBotMessage?.id)}
+              className="bg-white border border-emerald-500 rounded-full px-3 py-1 shadow-sm active:bg-emerald-50"
+            >
+              <Text className="text-xs font-semibold text-emerald-700">
+                {reply.label}
+              </Text>
+            </Pressable>
+          ))}
+        </View>
+      )}
 
       <View className="flex-row items-center gap-2 px-3 py-2 border-t border-gray-200">
         <Pressable

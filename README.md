@@ -248,6 +248,36 @@ Use `apps/api/.env.example` as the source of truth. The local `apps/api/.env` ha
 
 > The REST wallet API (`/api/wallet/*`) is unauthenticated and is disabled in production unless `ENABLE_WALLET_REST_API=true`. Outside production it defaults to enabled for local testing. WhatsApp is the real, signature-verified surface.
 
+### Frontend build-time variables (Vercel)
+
+Vite inlines `import.meta.env.VITE_*` into the bundle **at build time**, so these are not runtime
+configuration: changing one in the Vercel dashboard has no effect until the project is redeployed.
+Only the `VITE_` prefix is exposed to the browser — a variable without it (for example
+`NON_VITE_SECRET`) is never inlined into `dist/`, which is why no secret may ever be given that
+prefix.
+
+| Variable | App | Required | Local default | Production (Vercel) | Read by |
+| --- | --- | --- | --- | --- | --- |
+| `VITE_API_BASE_URL` | `apps/admin` | Yes, for a deployed admin | `http://localhost:3002/api` | `https://<api-host>/api` | `packages/shared/src/api.js` (axios `baseURL`) |
+| `VITE_ADMIN_URL` | `apps/landing` | No | `http://localhost:3001` | `https://admin.<domain>` | `apps/landing/src/lib/links.js` (nav, hero and CTA links) |
+| `VITE_WHATSAPP_NUMBER` | `apps/landing` | No | empty (falls back to `https://wa.me/`, letting WhatsApp pick the chat) | digits only with country code, no `+` (for example `2348012345678`) | `apps/landing/src/lib/links.js` (`whatsappUrl()`) |
+| `VITE_WS_URL` | `apps/admin` | No | derived as `ws://` or `wss://<current-hostname>:3002/ws` | `wss://<api-host>/ws` | `apps/admin/src/lib/websocket.js` (`getDefaultUrl()`) |
+
+Notes for the deployment checklist:
+
+- `VITE_ADMIN_URL` treats an unset, empty, or whitespace-only value as "not configured" and falls
+  back to `http://localhost:3001` (see `normalizeAdminUrl()`), so a half-filled value silently
+  points the landing CTAs at localhost. Set the full origin, including the scheme.
+- `VITE_WHATSAPP_NUMBER` ships empty in `apps/landing/.env.example`. Left empty, the CTA opens
+  `https://wa.me/` and WhatsApp asks the user to pick a chat; it is the only way to deep-link
+  straight to the SendAm bot.
+- `VITE_WS_URL` is read by the admin websocket client but is **not** present in
+  `apps/admin/.env.example`. Leave it unset unless the API's websocket is served from a different
+  host or path than `<admin-host>:3002/ws`; the default already matches the local API port.
+- No analytics variable is consumed by the frontend today — a repo-wide search for `VITE_*` in
+  application source returns only the four variables above. Adding one (for example a Vercel
+  Analytics or Sentry DSN) requires a code change first; setting the variable alone does nothing.
+
 ## Local Development
 
 For the admin app (`apps/admin/.env`), configure:
@@ -324,6 +354,64 @@ npm run build:landing
 npm run build:admin
 ```
 
+### Complete Local Dev Walkthrough
+
+`chat-sim` talks to the same `assistant.service.js#processMessage` pipeline the WhatsApp webhook does, so a full round trip can be exercised with no Meta account. Finish [Prerequisites](#prerequisites), [Local Postgres](#local-postgres-no-cloud-account-needed) and [Install Dependencies](#install-dependencies) first, then run the four steps below in separate terminals. The simulator's own contract lives in [`docs/CHAT-SIM.md`](docs/CHAT-SIM.md).
+
+**1. Start Postgres and the API.** Copy the env template and fill in the minimum set:
+
+```bash
+cp apps/api/.env.example apps/api/.env
+```
+
+| Variable | Local value | Why |
+|---|---|---|
+| `DATABASE_URL` | `postgresql://sendam:sendam@localhost:5432/sendam` | The Docker Postgres above; drop `sslmode=require` |
+| `ENCRYPTION_KEY` | `openssl rand -hex 32` | The API refuses to start without 32 bytes of hex |
+| `JWT_SECRET` | `openssl rand -hex 32` | Must be at least 32 characters |
+| `ENABLE_CHAT_SIM` | `true` | Mounts `/api/sim/*`; the template ships `false` |
+| `MESSAGE_TRANSPORT` | `sim` | Writes outbound sends to the `SimMessage` table instead of calling Meta |
+| `ADMIN_PASSWORD` | any **12+ character** string | Step 4 login; shorter passwords are rejected when the account is hashed |
+| `ADMIN_BOOTSTRAP_EMAIL` | `admin@example.com` | The identity that shared password bootstraps |
+
+```bash
+npm run prisma:generate --workspace=apps/api
+npm run prisma:deploy --workspace=apps/api
+npm run dev:api            # http://localhost:3002
+```
+
+**2. Start the chat simulator.**
+
+```bash
+npm run dev:chat-sim       # Expo Metro on http://localhost:8081
+```
+
+Press `w` for the browser build, or scan the QR code with Expo Go. The API base URL comes from `EXPO_PUBLIC_API_BASE_URL` in `apps/chat-sim/src/config.js` and defaults to `http://localhost:3002`; set it to your LAN IP (physical device) or `http://10.0.2.2:3002` (Android emulator) and restart Metro, since Expo inlines it at bundle time.
+
+**3. Send a test prompt.** Enter a phone number such as `+2348000000001` and send `balance`. The first message creates that `User`, `balance` provisions the wallet, and the reply returns inline:
+
+```bash
+curl -X POST http://localhost:3002/api/sim/message \
+  -H 'content-type: application/json' \
+  -d '{"phoneNumber":"+2348000000001","name":"Ada","text":"balance"}'
+# 200 {"replies":["Your SendAm balances: ..."]}
+```
+
+This is exactly what the simulator does on each send; `help` lists the other commands — see [`docs/COMMANDS.md`](docs/COMMANDS.md).
+
+**4. Inspect the result in the admin dashboard.** Set `VITE_API_BASE_URL=http://localhost:3002/api` in `apps/admin/.env` (see [Local Development](#local-development)), then:
+
+```bash
+npm run dev:admin          # http://localhost:3001
+```
+
+Sign in with `ADMIN_BOOTSTRAP_EMAIL` and `ADMIN_PASSWORD`. The first successful sign-in mints the bootstrap administrator and forwards you to `/set-password`: an account created from the shared password is refused by every admin route (403, `PASSWORD_CHANGE_REQUIRED`) until it has a private password. **Users** and **Wallets** then list the identity and wallet created in step 3; **Transactions** lists completed transfers, each row opening `/transactions/:id`.
+
+Two things that trip people up:
+
+- `balance` creates a user and a wallet, **not** a transaction. Rows appear under **Transactions** only after a completed `send 5 xlm <address>` plus PIN confirmation — see [the confirmation flow](docs/COMMANDS.md#the-confirmation-flow).
+- The conversation the simulator renders (`GET /api/sim/messages/:phone`) is kept in an in-memory `Map` in `sim.controller.js`, not in the `SimMessage` table: it resets when the API restarts and is not shared between API instances. Wallets and transactions themselves are persisted in Postgres, so they survive a restart.
+
 ## Production Readiness Gaps
 
 - ~~Support non-native Stellar assets via `changeTrust` (USDC and anchor-issued assets)~~ — **Done.** XLM and USDC are both built; `resolveAsset('USDC')`, `getBalances()`, and `establishTrustline()` are in the adapter and wallets auto-open the USDC trustline at creation. See [`ROADMAP.md`](ROADMAP.md#usdc--non-native-asset-support--built).
@@ -372,20 +460,39 @@ Landing app (`apps/landing`):
 
 ```text
 /                 Landing page
+/onboarding       Onboarding readiness checkpoints and identity status
+*                 404 page for any unmatched URL
 ```
 
 Admin app (`apps/admin`):
 
 ```text
 /login            Admin login screen
+/set-password     Forced admin password rotation screen
 /                 Dashboard overview
 /users            User table
 /wallets          Wallet table
 /transactions     Transaction table
+/transactions/:id Transaction detail (receipt export, XDR decoder)
 /kyc              KYC review
 /audit-logs       Audit logs
 /system-health    System health
+*                 Any other path renders the Dashboard
 ```
+
+Routes are declared in `apps/landing/src/App.jsx` and `apps/admin/src/App.jsx`.
+
+- `/transactions/:id` takes a transaction id — open it by clicking a row on
+  `/transactions` or by picking a result in the admin global search.
+- `/login` and `/set-password` render **outside** the admin shell, so they have
+  no sidebar navigation. `/set-password` is where an operator replaces a
+  bootstrap or rotated credential; the new password must be at least 12
+  characters.
+- The admin `*` route renders the Dashboard **inside** the admin shell, so an
+  unknown admin path looks like a working page rather than a 404.
+- `/onboarding` reads `GET /api/compliance/onboarding`, which requires an
+  authenticated REST session. Without one the API answers 401/403 and the page
+  falls back to a built-in sample checklist so it stays demoable.
 
 ## Security Notes
 
