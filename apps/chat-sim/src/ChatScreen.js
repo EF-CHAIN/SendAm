@@ -70,6 +70,20 @@ function TypingIndicator() {
   );
 }
 
+export const MessageStatus = {
+  PENDING: 'pending',
+  SENT: 'sent',
+  DELIVERED: 'delivered',
+  READ: 'read',
+};
+
+const STATUS_PRIORITY = {
+  [MessageStatus.PENDING]: 0,
+  [MessageStatus.SENT]: 1,
+  [MessageStatus.DELIVERED]: 2,
+  [MessageStatus.READ]: 3,
+};
+
 export default function ChatScreen() {
   const [phoneNumber, setPhoneNumber] = useState(null);
   const [phoneInput, setPhoneInput] = useState('');
@@ -79,6 +93,15 @@ export default function ChatScreen() {
   const [isListening, setIsListening] = useState(false);
   const [voiceSynthesizeEnabled, setVoiceSynthesizeEnabled] = useState(true);
   const [devModeOpen, setDevModeOpen] = useState(false);
+  const timersRef = useRef(new Set());
+
+  // Clean up all active timers on unmount
+  useEffect(() => {
+    return () => {
+      timersRef.current.forEach((id) => clearTimeout(id));
+      timersRef.current.clear();
+    };
+  }, []);
 
   // Initialize deterministic Payment State Machine engine
   const stateMachine = useMemo(() => new PaymentStateMachine(), []);
@@ -106,6 +129,8 @@ export default function ChatScreen() {
   }
 
   function handleReset() {
+    timersRef.current.forEach((id) => clearTimeout(id));
+    timersRef.current.clear();
     setPhoneNumber(null);
     setPhoneInput('');
     setMessages([]);
@@ -114,11 +139,36 @@ export default function ChatScreen() {
     setIsListening(false);
   }
 
+  function updateMessageStatus(id, newStatus) {
+    setMessages((prev) =>
+      prev.map((m) => {
+        if (m.id !== id) return m;
+        const currentPriority = STATUS_PRIORITY[m.status] ?? -1;
+        const newPriority = STATUS_PRIORITY[newStatus] ?? -1;
+        if (newPriority > currentPriority) {
+          return { ...m, status: newStatus };
+        }
+        return m;
+      })
+    );
+  }
+
+  function scheduleStatus(id, newStatus, delay) {
+    const timerId = setTimeout(() => {
+      timersRef.current.delete(timerId);
+      updateMessageStatus(id, newStatus);
+    }, delay);
+    timersRef.current.add(timerId);
+    return timerId;
+  }
+
   function appendBotReplies(replies) {
+    const timestamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     const newMsgs = replies.map((reply, index) => ({
       id: `b-${Date.now()}-${index}`,
       text: reply,
       sender: 'bot',
+      timestamp,
     }));
     setMessages((prev) => [...prev, ...newMsgs]);
 
@@ -175,12 +225,27 @@ export default function ChatScreen() {
     const text = (customText !== undefined ? customText : inputText).trim();
     if (!text || sending) return;
 
+    const userMsgId = `u-${Date.now()}`;
+    const timestamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
     setMessages((prev) => [
       ...prev,
-      { id: `u-${Date.now()}`, text, sender: 'user' },
+      {
+        id: userMsgId,
+        text,
+        sender: 'user',
+        status: MessageStatus.PENDING,
+        timestamp,
+      },
     ]);
     setInputText('');
     setSending(true);
+
+    // Schedule micro-delays for receipt progression:
+    // Clock -> Single grey tick (~300ms)
+    // Single grey tick -> Double grey ticks (~600ms)
+    scheduleStatus(userMsgId, MessageStatus.SENT, 300);
+    scheduleStatus(userMsgId, MessageStatus.DELIVERED, 600);
 
     // If current state machine is awaiting PIN and user enters a 4-6 digit PIN
     if (
@@ -215,12 +280,16 @@ export default function ChatScreen() {
       }
       const data = await response.json();
       const replies = data.replies ?? [];
+
+      // Bot replied: mark user message as read (double blue ticks)
+      updateMessageStatus(userMsgId, MessageStatus.READ);
       appendBotReplies(replies);
     } catch (error) {
       const errorReply = `Couldn't reach SendAm: ${error.message}`;
+      const errTimestamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
       setMessages((prev) => [
         ...prev,
-        { id: `err-${Date.now()}`, text: errorReply, sender: 'bot' },
+        { id: `err-${Date.now()}`, text: errorReply, sender: 'bot', timestamp: errTimestamp },
       ]);
       if (voiceSynthesizeEnabled) {
         voiceService.speak(errorReply);
