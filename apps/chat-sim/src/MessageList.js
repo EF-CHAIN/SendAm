@@ -257,7 +257,7 @@ function pointFromEvent(event) {
 // A message bubble that can be dragged horizontally to the right to quote it.
 // Swiping reveals a reply arrow; releasing past the threshold notifies the
 // parent and springs the bubble back into place.
-function SwipeableBubble({ item, isUser, onReply }) {
+function SwipeableBubble({ item, isUser, onReply, darkMode = false }) {
   const isVoice = item.type === 'voice' || item.isVoice;
   const translateX = useRef(new Animated.Value(0)).current;
   const startX = useRef(0);
@@ -331,6 +331,7 @@ function SwipeableBubble({ item, isUser, onReply }) {
               ? 'bg-green-500 rounded-2xl px-3 py-2'
               : 'bg-gray-200 rounded-2xl px-3 py-2'
           }
+          style={darkMode ? { backgroundColor: isUser ? '#005c4b' : '#202c33' } : undefined}
         >
           {item.replyTo && (
             <View className="mb-1 border-l-2 border-emerald-300 pl-2">
@@ -377,7 +378,12 @@ function SwipeableBubble({ item, isUser, onReply }) {
             <VoiceBubble item={item} isUser={isUser} />
           ) : (
             Boolean(item.text) && (
-              <Text className={isUser ? 'text-white' : 'text-gray-900'}>{item.text}</Text>
+              <Text
+                style={darkMode ? { color: '#e9edef' } : undefined}
+                className={isUser ? 'text-white' : 'text-gray-900'}
+              >
+                {item.text}
+              </Text>
             )
           )}
         </View>
@@ -409,6 +415,7 @@ export default function MessageList({
   disabledReplies = {},
   sending = false,
   onReply,
+  darkMode = false,
 }) {
   return (
     <ScrollView contentContainerClassName="px-3 py-2 gap-2">
@@ -419,10 +426,23 @@ export default function MessageList({
         const quickReplies = !isUser && !listMessage ? parseQuickReplies(item) : [];
         const isMsgDisabled = Boolean(disabledReplies[item.id]) || sending;
 
+        const bubbleStyle = darkMode
+          ? {
+              backgroundColor: isUser ? '#005c4b' : '#202c33',
+            }
+          : undefined;
+
+        const bubbleTextClass = darkMode
+          ? 'text-[#e9edef]'
+          : isUser
+            ? 'text-white'
+            : 'text-gray-900';
+
         return (
           <View key={item.id} className="gap-1.5">
             <View
               testID={`bubble-${item.sender}`}
+              style={bubbleStyle}
               className={
                 isUser
                   ? 'self-end bg-green-500 rounded-2xl px-3 py-2 max-w-[80%]'
@@ -431,7 +451,10 @@ export default function MessageList({
             >
               {listMessage ? (
                 <View className="gap-1.5">
-                  <Text className="text-gray-900">
+                  <Text
+                    style={darkMode ? { color: '#e9edef' } : undefined}
+                    className="text-gray-900"
+                  >
                     {listMessage.body || 'Choose an option'}
                   </Text>
                   <View className="border-t border-gray-300" />
@@ -450,10 +473,15 @@ export default function MessageList({
                   </Pressable>
                 </View>
               ) : (
-                <Text className={isUser ? 'text-white' : 'text-gray-900'}>{item.text}</Text>
+                <Text
+                  style={darkMode ? { color: '#e9edef' } : undefined}
+                  className={bubbleTextClass}
+                >
+                  {item.text}
+                </Text>
               )}
             </View>
-            <SwipeableBubble item={item} isUser={isUser} onReply={onReply} />
+            <SwipeableBubble item={item} isUser={isUser} onReply={onReply} darkMode={darkMode} />
 
             {/* WhatsApp interactive quick-reply pill buttons */}
             {quickReplies.length > 0 && (
@@ -470,6 +498,11 @@ export default function MessageList({
                       accessibilityRole="button"
                       disabled={isMsgDisabled}
                       onPress={() => onQuickReply && onQuickReply(reply.payload, item.id)}
+                      style={
+                        darkMode && !isMsgDisabled
+                          ? { backgroundColor: '#202c33', borderColor: '#00a884' }
+                          : undefined
+                      }
                       className={`px-3 py-1.5 rounded-full border shadow-sm ${
                         isMsgDisabled
                           ? isSelected
@@ -479,6 +512,7 @@ export default function MessageList({
                       }`}
                     >
                       <Text
+                        style={darkMode && !isMsgDisabled ? { color: '#00a884' } : undefined}
                         className={`text-xs font-semibold ${
                           isMsgDisabled
                             ? isSelected

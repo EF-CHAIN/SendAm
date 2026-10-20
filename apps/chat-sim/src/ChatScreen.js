@@ -24,6 +24,7 @@ import {
 import { voiceService } from './engine/voiceService';
 import { API_BASE_URL } from './config';
 import { buildSep7PaymentUri, isValidSep7Uri, normalizeSep7Uri } from './paymentRequest';
+import { WHATSAPP_THEMES } from './theme';
 
 export const NETWORK_PROFILES = [
   { id: 'no-throttling', label: 'No Throttling (0ms)', delayMs: 0, offline: false, badgeLabel: 'Online', badgeColor: 'bg-emerald-100 text-emerald-800' },
@@ -31,6 +32,8 @@ export const NETWORK_PROFILES = [
   { id: 'slow-3g', label: 'Slow 3G (2000ms)', delayMs: 2000, offline: false, badgeLabel: 'Slow 3G', badgeColor: 'bg-amber-100 text-amber-800' },
   { id: 'offline', label: 'Offline (Error)', delayMs: 0, offline: true, badgeLabel: 'Offline', badgeColor: 'bg-red-100 text-red-800' },
 ];
+
+export { WHATSAPP_THEMES };
 
 export function formatTranscriptText(messages, phoneNumber) {
 
@@ -137,7 +140,32 @@ const PIPELINE_NODES = [
   PaymentState.ERROR,
 ];
 
-function TypingIndicator() {
+
+export function ChatWallpaper({ darkMode }) {
+  const doodleSvg = `data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="240" height="240" viewBox="0 0 240 240"><g fill="${darkMode ? '%23ffffff' : '%23000000'}" fill-opacity="${darkMode ? '0.04' : '0.03'}"><path d="M25 20c3 0 5 2 5 5s-2 5-5 5-5-2-5-5 2-5 5-5zm80 40c4 0 7 3 7 7s-3 7-7 7-7-3-7-7 3-7 7-7zm80-25c3 0 6 3 6 6s-3 6-6 6-6-3-6-6 3-6 6-6zM45 130c5 0 9 4 9 9s-4 9-9 9-9-4-9-9 4-9 9-9zm140 30c4 0 7 3 7 7s-3 7-7 7-7-3-7-7 3-7 7-7zm-70 40c3 0 6 3 6 6s-3 6-6 6-6-3-6-6 3-6 6-6zM30 210c4 0 8 4 8 8s-4 8-8 8-8-4-8-8 4-8 8-8zm160 10c3 0 5 2 5 5s-2 5-5 5-5-2-5-5 2-5 5-5z"/></g></svg>`;
+
+  return (
+    <View
+      testID="chat-wallpaper"
+      pointerEvents="none"
+      style={{
+        position: 'absolute',
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        ...(Platform.OS === 'web'
+          ? {
+              backgroundImage: `url("${doodleSvg}")`,
+              backgroundRepeat: 'repeat',
+            }
+          : {}),
+      }}
+    />
+  );
+}
+
+function TypingIndicator({ darkMode }) {
   const dot1 = useRef(new Animated.Value(0)).current;
   const dot2 = useRef(new Animated.Value(0)).current;
   const dot3 = useRef(new Animated.Value(0)).current;
@@ -172,13 +200,18 @@ function TypingIndicator() {
     width: 6,
     height: 6,
     borderRadius: 3,
-    backgroundColor: '#6b7280',
+    backgroundColor: darkMode ? '#8696a0' : '#6b7280',
     marginHorizontal: 2,
   };
 
   return (
     <View className="flex-row items-center gap-2 px-3 py-2">
-      <Text className="text-sm text-gray-500">SendAm is typing</Text>
+      <Text
+        style={darkMode ? { color: '#8696a0' } : undefined}
+        className="text-sm text-gray-500"
+      >
+        SendAm is typing
+      </Text>
       <View className="flex-row items-center">
         <Animated.View style={[dotStyle, { opacity: dot1 }]} />
         <Animated.View style={[dotStyle, { opacity: dot2 }]} />
@@ -229,6 +262,9 @@ export default function ChatScreen() {
   const photoInputRef = useRef(null);
   const docInputRef = useRef(null);
   const [replyTo, setReplyTo] = useState(null);
+  const [darkMode, setDarkMode] = useState(false);
+
+  const theme = darkMode ? WHATSAPP_THEMES.dark : WHATSAPP_THEMES.light;
 
   // Initialize deterministic Payment State Machine engine
   const stateMachine = useMemo(() => new PaymentStateMachine(), []);
@@ -684,20 +720,53 @@ export default function ChatScreen() {
 
   if (!phoneNumber) {
     return (
-      <View className="flex-1 items-center justify-center bg-white px-6 gap-3">
-        <Text className="text-lg font-semibold text-gray-900">
+      <View
+        className="flex-1 items-center justify-center px-6 gap-3"
+        style={{ backgroundColor: theme.background }}
+      >
+        <View style={{ position: 'absolute', top: 16, right: 16 }}>
+          <Pressable
+            testID="toggle-theme-button"
+            className="border rounded-lg px-2.5 py-1"
+            style={{
+              borderColor: darkMode ? '#374248' : '#d1d5db',
+              backgroundColor: darkMode ? '#2a3942' : '#f9fafb',
+            }}
+            onPress={() => setDarkMode((prev) => !prev)}
+            accessibilityRole="button"
+            accessibilityLabel={darkMode ? 'Switch to light mode' : 'Switch to dark mode'}
+          >
+            <Text
+              className="text-xs font-semibold"
+              style={{ color: darkMode ? '#e9edef' : '#374151' }}
+            >
+              {darkMode ? '☀️ Light' : '🌙 Dark'}
+            </Text>
+          </Pressable>
+        </View>
+        <Text
+          className="text-lg font-semibold"
+          style={{ color: theme.headerText }}
+        >
           Enter your phone number
         </Text>
         <TextInput
-          className="w-full border border-gray-300 rounded-lg px-3 py-2 text-base"
+          className="w-full border rounded-lg px-3 py-2 text-base"
+          style={{
+            borderColor: darkMode ? '#2a3942' : '#d1d5db',
+            backgroundColor: theme.inputBg,
+            color: theme.inputText,
+          }}
           placeholder="+2348000000001"
+          placeholderTextColor={theme.inputPlaceholder}
           keyboardType="phone-pad"
           value={phoneInput}
           onChangeText={setPhoneInput}
           onSubmitEditing={handleStart}
         />
         <Pressable
-          className="w-full bg-green-500 rounded-lg py-2 items-center"
+          className="w-full rounded-lg py-2 items-center"
+          style={{ backgroundColor: theme.sendButtonBg }}
           onPress={handleStart}
           disabled={!phoneInput.trim()}
         >
@@ -933,11 +1002,22 @@ export default function ChatScreen() {
 
   // Chat Interface Main Content
   const chatMainContent = (
-    <View className="flex-1 flex-col h-full bg-white">
+    <View className="flex-1 flex-col h-full" style={{ backgroundColor: theme.background }}>
       {/* Top Header */}
-      <View className="flex-row items-center justify-between px-3 py-2 border-b border-gray-200">
+      <View
+        className="flex-row items-center justify-between px-3 py-2 border-b"
+        style={{
+          backgroundColor: theme.headerBg,
+          borderBottomColor: theme.headerBorder,
+        }}
+      >
         <View className="flex-row items-center gap-2">
-          <Text className="text-base font-semibold text-gray-900">{phoneNumber}</Text>
+          <Text
+            className="text-base font-semibold"
+            style={{ color: theme.headerText }}
+          >
+            {phoneNumber}
+          </Text>
           <View
             testID="connection-status-badge"
             className={`px-2 py-0.5 rounded-full ${networkProfile.badgeColor}`}
@@ -947,35 +1027,95 @@ export default function ChatScreen() {
         </View>
         <View className="flex-row items-center gap-2">
           <Pressable
+            testID="toggle-theme-button"
+            className="border rounded-lg px-2.5 py-1"
+            style={{
+              borderColor: darkMode ? '#374248' : '#d1d5db',
+              backgroundColor: darkMode ? '#2a3942' : '#f9fafb',
+            }}
+            onPress={() => setDarkMode((prev) => !prev)}
+            accessibilityRole="button"
+            accessibilityLabel={darkMode ? 'Switch to light mode' : 'Switch to dark mode'}
+          >
+            <Text
+              className="text-xs font-semibold"
+              style={{ color: darkMode ? '#e9edef' : '#374151' }}
+            >
+              {darkMode ? '☀️ Light' : '🌙 Dark'}
+            </Text>
+          </Pressable>
+          <Pressable
             testID="export-transcript-button"
-            className="border border-emerald-500 bg-emerald-50 rounded-lg px-2.5 py-1"
+            className="border rounded-lg px-2.5 py-1"
+            style={{
+              borderColor: darkMode ? '#00a884' : '#10b981',
+              backgroundColor: darkMode ? '#202c33' : '#ecfdf5',
+            }}
             onPress={handleExportTxt}
           >
-            <Text className="text-xs font-semibold text-emerald-700">Export .txt</Text>
+            <Text
+              className="text-xs font-semibold"
+              style={{ color: darkMode ? '#00a884' : '#047857' }}
+            >
+              Export .txt
+            </Text>
           </Pressable>
           <Pressable
             testID="export-transcript-json-button"
-            className="border border-emerald-500 bg-emerald-50 rounded-lg px-2.5 py-1"
+            className="border rounded-lg px-2.5 py-1"
+            style={{
+              borderColor: darkMode ? '#00a884' : '#10b981',
+              backgroundColor: darkMode ? '#202c33' : '#ecfdf5',
+            }}
             onPress={handleExportJson}
           >
-            <Text className="text-xs font-semibold text-emerald-700">Export .json</Text>
+            <Text
+              className="text-xs font-semibold"
+              style={{ color: darkMode ? '#00a884' : '#047857' }}
+            >
+              Export .json
+            </Text>
           </Pressable>
           <Pressable
             testID="reset-session-button"
-            className="border border-gray-300 rounded-lg px-3 py-1"
+            className="border rounded-lg px-3 py-1"
+            style={{
+              borderColor: darkMode ? '#374248' : '#d1d5db',
+              backgroundColor: darkMode ? '#2a3942' : '#ffffff',
+            }}
             onPress={handleReset}
           >
-            <Text className="text-sm font-semibold text-gray-700">Reset</Text>
+            <Text
+              className="text-sm font-semibold"
+              style={{ color: darkMode ? '#e9edef' : '#374151' }}
+            >
+              Reset
+            </Text>
           </Pressable>
         </View>
       </View>
 
       {/* Dev Mode Toolbar */}
-      <View className="bg-gray-100 border-b border-gray-200 px-3 py-2 flex-row justify-between items-center flex-wrap gap-2">
+      <View
+        className="border-b px-3 py-2 flex-row justify-between items-center flex-wrap gap-2"
+        style={{
+          backgroundColor: darkMode ? '#182229' : '#f3f4f6',
+          borderBottomColor: darkMode ? '#222d34' : '#e5e7eb',
+        }}
+      >
         <View className="flex-row items-center gap-2">
-          <Text className="text-xs font-bold text-gray-700">ENGINE STATE:</Text>
           <Text
-            className="text-xs font-semibold px-2 py-0.5 rounded bg-indigo-100 text-indigo-800"
+            className="text-xs font-bold"
+            style={{ color: darkMode ? '#8696a0' : '#374151' }}
+          >
+            ENGINE STATE:
+          </Text>
+          <Text
+            className="text-xs font-semibold px-2 py-0.5 rounded"
+            style={{
+              backgroundColor: darkMode ? '#202c33' : '#e0e7ff',
+              color: darkMode ? '#818cf8' : '#3730a3',
+            }}
             testID="engine-state-badge"
           >
             {machineSnapshot.state}
@@ -997,10 +1137,32 @@ export default function ChatScreen() {
           <Pressable
             testID="toggle-voice-synth"
             onPress={() => setVoiceSynthesizeEnabled((prev) => !prev)}
-            className={`px-2 py-1 rounded text-xs ${voiceSynthesizeEnabled ? 'bg-emerald-100' : 'bg-gray-200'}`}
+            className="px-2 py-1 rounded"
+            style={{
+              backgroundColor: voiceSynthesizeEnabled
+                ? darkMode
+                  ? '#202c33'
+                  : '#d1fae5'
+                : darkMode
+                  ? '#2a3942'
+                  : '#e5e7eb',
+            }}
           >
-            <Text className="text-xs font-medium text-gray-800">
-              {voiceSynthesizeEnabled ? 'Voice TTS: ON' : 'Voice TTS: OFF'}
+            <Text
+              className="text-xs font-medium"
+              style={{
+                color: voiceSynthesizeEnabled
+                  ? darkMode
+                    ? '#00a884'
+                    : '#065f46'
+                  : darkMode
+                    ? '#8696a0'
+                    : '#1f2937',
+              }}
+            >
+              {voiceSynthesizeEnabled
+                ? 'Voice TTS: ON'
+                : 'Voice TTS: OFF'}
             </Text>
           </Pressable>
           <Pressable
@@ -1106,7 +1268,14 @@ export default function ChatScreen() {
       )}
 
       {/* Messages Thread */}
-      <View className="flex-1">
+      <View
+        className="flex-1"
+        style={{
+          backgroundColor: theme.chatBackground,
+          position: 'relative',
+        }}
+      >
+        <ChatWallpaper darkMode={darkMode} />
         <MessageList
           messages={messages}
           onQuickReply={handleQuickReply}
@@ -1114,15 +1283,20 @@ export default function ChatScreen() {
           disabledReplies={disabledReplies}
           sending={sending}
           onReply={setReplyTo}
+          darkMode={darkMode}
         />
       </View>
-      {sending ? <TypingIndicator /> : null}
+      {sending ? <TypingIndicator darkMode={darkMode} /> : null}
 
       {/* WhatsApp interactive quick-reply suggestions bar above input */}
       {latestQuickReplies.length > 0 && !disabledReplies[latestBotMessage?.id] && (
         <View
           testID="quick-replies-bottom-bar"
-          className="flex-row flex-wrap gap-2 px-3 py-2 bg-emerald-50/70 border-t border-emerald-100"
+          className="flex-row flex-wrap gap-2 px-3 py-2 border-t"
+          style={{
+            backgroundColor: darkMode ? '#182229' : 'rgba(236, 253, 245, 0.7)',
+            borderTopColor: darkMode ? '#222d34' : '#d1fae5',
+          }}
         >
           {latestQuickReplies.map((reply, idx) => (
             <Pressable
@@ -1130,9 +1304,17 @@ export default function ChatScreen() {
               testID={`bottom-quick-reply-${idx}`}
               disabled={sending || Boolean(disabledReplies[latestBotMessage?.id])}
               onPress={() => handleQuickReply(reply.payload, latestBotMessage?.id)}
-              className="bg-white border border-emerald-500 rounded-full px-3 py-1 shadow-sm active:bg-emerald-50"
+              className="border rounded-full px-3 py-1 shadow-sm"
+              style={
+                darkMode
+                  ? { backgroundColor: '#202c33', borderColor: '#00a884' }
+                  : { backgroundColor: '#ffffff', borderColor: '#10b981' }
+              }
             >
-              <Text className="text-xs font-semibold text-emerald-700">
+              <Text
+                className="text-xs font-semibold"
+                style={{ color: darkMode ? '#00a884' : '#047857' }}
+              >
                 {reply.label}
               </Text>
             </Pressable>
@@ -1140,7 +1322,13 @@ export default function ChatScreen() {
         </View>
       )}
 
-      <View className="flex-row items-center justify-end px-3 py-2 border-t border-gray-200 bg-emerald-50">
+      <View
+        className="flex-row items-center justify-end px-3 py-2 border-t"
+        style={{
+          backgroundColor: darkMode ? '#182229' : '#ecfdf5',
+          borderTopColor: darkMode ? '#222d34' : '#e5e7eb',
+        }}
+      >
         <Pressable
           testID="show-qr-code-button"
           className="rounded-lg border border-emerald-600 bg-white px-3 py-2"
@@ -1306,8 +1494,8 @@ export default function ChatScreen() {
         <EmojiPicker onSelect={insertEmoji} onClose={closeEmojiPicker} bottom={composerHeight}
           maxHeight={Math.min(340, Math.max(120, screenHeight - composerHeight - 16))} />
       )}
-      <View className="flex-row items-center gap-2 px-3 py-2 border-t border-gray-200 bg-white"
-        style={{ zIndex: 2 }} onLayout={({ nativeEvent }) => setComposerHeight(nativeEvent.layout.height)}>
+      <View className="flex-row items-center gap-2 px-3 py-2 border-t"
+        style={{ zIndex: 2, backgroundColor: theme.inputBarBg, borderTopColor: theme.inputBarBorder }} onLayout={({ nativeEvent }) => setComposerHeight(nativeEvent.layout.height)}>
         <Pressable accessibilityRole="button" accessibilityLabel="Choose emoji"
           accessibilityState={{ expanded: emojiPickerOpen, disabled: sending || isRecording }}
           disabled={sending || isRecording} onPress={() => emojiPickerOpen ? closeEmojiPicker() : setEmojiPickerOpen(true)}
@@ -1344,6 +1532,7 @@ export default function ChatScreen() {
         <Pressable
           testID="paperclip-button"
           className={`rounded-full p-2 items-center justify-center ${attachmentMenuOpen ? 'bg-emerald-200' : 'bg-gray-100'}`}
+          style={darkMode ? { backgroundColor: attachmentMenuOpen ? '#005c4b' : '#2a3942' } : undefined}
           onPress={() => setAttachmentMenuOpen((prev) => !prev)}
         >
           <Text className="text-sm">📎</Text>
@@ -1363,14 +1552,27 @@ export default function ChatScreen() {
           onPressOut={stopVoiceRecordingAndSend}
           onPress={() => { if (!recordedPress.current) handleVoiceInput(); }}
         >
-          <Text className="text-xs font-bold">{isListening ? 'REC...' : 'MIC'}</Text>
+          <Text
+            className="text-xs font-bold"
+            style={{
+              color: isListening ? '#ffffff' : darkMode ? '#d1d7db' : '#374151',
+            }}
+          >
+            {isListening ? 'REC...' : 'MIC'}
+          </Text>
         </Pressable>
         <TextInput
           ref={inputRef}
           accessibilityLabel="Message"
-          style={{ minWidth: 0 }}
-          className="flex-1 border border-gray-300 rounded-full px-4 py-2 text-base"
+          className="flex-1 border rounded-full px-4 py-2 text-base"
+          style={{
+            minWidth: 0,
+            backgroundColor: theme.inputBg,
+            borderColor: darkMode ? '#2a3942' : '#d1d5db',
+            color: theme.inputText,
+          }}
           placeholder={previewAttachment ? 'Caption or press Send...' : 'Type a message or use speech'}
+          placeholderTextColor={theme.inputPlaceholder}
           value={previewAttachment ? captionText : inputText}
           onChangeText={previewAttachment ? setCaptionText : setInputText}
           selection={inputSelection}
@@ -1380,7 +1582,8 @@ export default function ChatScreen() {
         />
         <Pressable
           testID="send-button"
-          className="bg-green-500 rounded-full px-4 py-2 items-center justify-center"
+          className="rounded-full px-4 py-2 items-center justify-center"
+          style={{ backgroundColor: theme.sendButtonBg }}
           onPress={() => handleSend()}
           disabled={sending || (!inputText.trim() && !previewAttachment && !captionText.trim())}
         >
@@ -1496,7 +1699,8 @@ export default function ChatScreen() {
 
   return (
     <KeyboardAvoidingView
-      className="flex-1 bg-white"
+      className="flex-1"
+      style={{ backgroundColor: theme.background }}
       onLayout={({ nativeEvent }) => setScreenHeight(nativeEvent.layout.height)}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     >
