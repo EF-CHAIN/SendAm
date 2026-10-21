@@ -165,7 +165,7 @@ describe('admin dashboard accessibility', () => {
       const table = screen.getByRole('table');
       const headers = within(table).getAllByRole('columnheader');
       expect(headers.map((h) => h.textContent)).toEqual([
-        'User Phone', 'Type', 'Amount', 'Rail', 'Destination', 'Receipt', 'Status', 'Date',
+        'ID / Hash', 'User Phone', 'Type', 'Amount', 'Rail', 'Destination', 'Receipt', 'Status', 'Date',
       ]);
       for (const th of headers) {
         expect(th).toHaveAttribute('scope', 'col');
