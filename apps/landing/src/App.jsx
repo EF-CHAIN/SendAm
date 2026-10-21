@@ -2,6 +2,7 @@ import { lazy, Suspense } from 'react';
 import { Routes, Route } from 'react-router-dom';
 import ErrorBoundary from '@shared/ErrorBoundary.jsx';
 import NetworkStatusBanner from '@shared/NetworkStatusBanner.jsx';
+import I18nProvider from '@/lib/I18nProvider.jsx';
 import Navbar from './components/Navbar.jsx';
 import Footer from './components/Footer.jsx';
 import PWABanner from './components/PWABanner.jsx';
@@ -14,6 +15,7 @@ const OnboardingStatus = lazy(() => import('./pages/OnboardingStatus.jsx'));
 export default function App() {
   return (
     <ErrorBoundary variant="landing">
+      <I18nProvider>
       <div className="flex flex-col min-h-screen bg-gray-50 text-dark font-sans">
         <NetworkStatusBanner />
         <Navbar />
@@ -30,6 +32,7 @@ export default function App() {
         <PWABanner />
         <CookieConsentBanner />
       </div>
+      </I18nProvider>
     </ErrorBoundary>
   );
 }
