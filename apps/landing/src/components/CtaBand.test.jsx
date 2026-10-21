@@ -38,4 +38,62 @@ describe('CtaBand', () => {
     render(<CtaBand />);
     expect(screen.getAllByRole('link')).toHaveLength(1);
   });
+
+  describe('localized corridor greeting deep-link', () => {
+    it('encodes localized greeting when corridor id is provided', () => {
+      render(<CtaBand corridor="uk-ng" />);
+      const cta = screen.getByRole('link', { name: 'Start on WhatsApp' });
+      expect(cta).toHaveAttribute(
+        'href',
+        whatsappUrl('Hello SendAm, I want to send money to Nigeria')
+      );
+      expect(cta.getAttribute('href')).toContain(
+        'text=Hello%20SendAm%2C%20I%20want%20to%20send%20money%20to%20Nigeria'
+      );
+    });
+
+    it('encodes localized greeting for Ghana corridor', () => {
+      render(<CtaBand corridor="us-gh" />);
+      const cta = screen.getByRole('link', { name: 'Start on WhatsApp' });
+      expect(cta).toHaveAttribute(
+        'href',
+        whatsappUrl('Hello SendAm, I want to send money to Ghana')
+      );
+    });
+
+    it('encodes localized greeting when corridor object is passed', () => {
+      const activeCorridor = {
+        to: { country: 'Kenya', name: 'Nairobi, KE' },
+      };
+      render(<CtaBand corridor={activeCorridor} />);
+      const cta = screen.getByRole('link', { name: 'Start on WhatsApp' });
+      expect(cta).toHaveAttribute(
+        'href',
+        whatsappUrl('Hello SendAm, I want to send money to Kenya')
+      );
+    });
+
+    it('encodes localized greeting when country name string is passed', () => {
+      render(<CtaBand corridor="Rwanda" />);
+      const cta = screen.getByRole('link', { name: 'Start on WhatsApp' });
+      expect(cta).toHaveAttribute(
+        'href',
+        whatsappUrl('Hello SendAm, I want to send money to Rwanda')
+      );
+    });
+
+    it('falls back to "create wallet" when corridor is null, empty string, or whitespace', () => {
+      const { rerender } = render(<CtaBand corridor={null} />);
+      let cta = screen.getByRole('link', { name: 'Start on WhatsApp' });
+      expect(cta).toHaveAttribute('href', whatsappUrl('create wallet'));
+
+      rerender(<CtaBand corridor="" />);
+      cta = screen.getByRole('link', { name: 'Start on WhatsApp' });
+      expect(cta).toHaveAttribute('href', whatsappUrl('create wallet'));
+
+      rerender(<CtaBand corridor="   " />);
+      cta = screen.getByRole('link', { name: 'Start on WhatsApp' });
+      expect(cta).toHaveAttribute('href', whatsappUrl('create wallet'));
+    });
+  });
 });
