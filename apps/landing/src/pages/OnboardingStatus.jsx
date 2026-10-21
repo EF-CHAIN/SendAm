@@ -1,5 +1,5 @@
-import { useState, useEffect } from 'react';
-import { CheckCircle2, Circle, AlertCircle, ArrowRight, ShieldCheck, Wallet, Lock, UserCheck, RefreshCw, MessageSquare, Play, Pause } from 'lucide-react';
+import { useState, useEffect, useRef } from 'react';
+import { CheckCircle2, Circle, AlertCircle, ArrowRight, ShieldCheck, Wallet, Lock, UserCheck, RefreshCw, MessageSquare, Play, Pause, Copy, Check } from 'lucide-react';
 import api from '@shared/api';
 import Loader from '@shared/Loader';
 import { whatsappUrl } from '@/lib/links.js';
@@ -18,6 +18,41 @@ export default function OnboardingStatus() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [refreshKey, setRefreshKey] = useState(0);
+  const [copied, setCopied] = useState(false);
+  const copyTimeoutRef = useRef(null);
+
+  useEffect(() => {
+    return () => {
+      if (copyTimeoutRef.current) {
+        clearTimeout(copyTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  const handleCopyAddress = async (address) => {
+    if (!address) return;
+    try {
+      if (typeof navigator !== 'undefined' && navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(address);
+      } else if (typeof document !== 'undefined') {
+        const textArea = document.createElement('textarea');
+        textArea.value = address;
+        document.body.appendChild(textArea);
+        textArea.select();
+        document.execCommand('copy');
+        document.body.removeChild(textArea);
+      }
+      setCopied(true);
+      if (copyTimeoutRef.current) {
+        clearTimeout(copyTimeoutRef.current);
+      }
+      copyTimeoutRef.current = setTimeout(() => {
+        setCopied(false);
+      }, 2000);
+    } catch {
+      // Fallback or ignore
+    }
+  };
   const [isPaused, setIsPaused] = useState(false);
   const [secondsRemaining, setSecondsRemaining] = useState(BASE_POLLING_INTERVAL);
   const [pollingInterval, setPollingInterval] = useState(BASE_POLLING_INTERVAL);
@@ -80,7 +115,13 @@ export default function OnboardingStatus() {
             nextStep: { action: 'await_review', message: "Your identity verification is under review. We'll notify you when it's approved." },
             blockers: [],
             kyc: { status: 'pending', tier: 0, sanctionsStatus: 'cleared' },
-            wallet: { funded: true, fundingState: 'succeeded', trustlineState: 'succeeded', network: 'testnet' },
+            wallet: {
+              publicKey: 'GBRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3ZMFDAGOROTMPGQW5BCW5AZ',
+              funded: true,
+              fundingState: 'succeeded',
+              trustlineState: 'succeeded',
+              network: 'testnet',
+            },
             accountActive: true,
             computedAt: new Date().toISOString(),
           });
@@ -356,7 +397,58 @@ export default function OnboardingStatus() {
                 <Wallet className="w-5 h-5 text-primary" />
                 <h3 className="font-bold text-slate-900">Wallet Readiness</h3>
               </div>
-              <div className="space-y-2 text-sm text-slate-600">
+              <div className="space-y-3 text-sm text-slate-600">
+                {status.wallet?.publicKey && (
+                  <div className="pb-3 border-b border-slate-100">
+                    <div className="flex items-center justify-between mb-1.5">
+                      <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
+                        Stellar Public Key
+                      </span>
+                      {/* Accessible Live Region for Screen Readers */}
+                      <span
+                        role="status"
+                        aria-live="polite"
+                        aria-atomic="true"
+                        className="sr-only"
+                        data-testid="copy-live-region"
+                      >
+                        {copied ? 'Copied to clipboard!' : ''}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between gap-2 p-2 rounded-lg bg-slate-50 border border-slate-200/80">
+                      <code
+                        className="text-xs font-mono text-slate-800 break-all select-all font-medium"
+                        data-testid="stellar-address-value"
+                      >
+                        {status.wallet.publicKey}
+                      </code>
+                      <div className="relative shrink-0 flex items-center">
+                        <button
+                          type="button"
+                          onClick={() => handleCopyAddress(status.wallet.publicKey)}
+                          data-testid="copy-address-button"
+                          aria-label={copied ? 'Copied to clipboard!' : 'Copy Stellar address to clipboard'}
+                          className="p-1.5 rounded-md hover:bg-slate-200/80 active:bg-slate-300 text-slate-500 hover:text-slate-800 transition"
+                        >
+                          {copied ? (
+                            <Check className="w-4 h-4 text-emerald-600" aria-hidden="true" />
+                          ) : (
+                            <Copy className="w-4 h-4" aria-hidden="true" />
+                          )}
+                        </button>
+                        {copied && (
+                          <div
+                            role="tooltip"
+                            data-testid="copy-tooltip"
+                            className="absolute -top-8 right-0 px-2 py-1 bg-slate-900 text-white text-[11px] font-medium rounded shadow-md whitespace-nowrap pointer-events-none z-10"
+                          >
+                            Copied to clipboard!
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )}
                 <div className="flex justify-between py-1 border-b border-slate-100">
                   <span>Funding Status</span>
                   <span className="font-semibold text-slate-900">{status.wallet?.fundingState || 'Pending'}</span>
