@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
+import { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo } from 'react';
 import { SearchX, FilterX, ArrowDown, ArrowUp, ChevronsUpDown } from 'lucide-react';
 import { useSearchParams } from 'react-router-dom';
 
@@ -7,6 +7,14 @@ const FOCUSABLE_HEADER = 'focus-visible:outline focus-visible:outline-2 focus-vi
 // Pagination cursors and page size are not filters — they must not trigger the
 // "Reset Filters" recovery action in the empty state.
 const NON_FILTER_PARAMS = new Set(['after', 'before', 'limit']);
+
+// Single-line content + vertical padding + the row's 1px border. An explicit
+// rowHeight remains the Default density's minimum; the other modes track it.
+const DENSITIES = {
+  compact: { label: 'Compact', className: 'py-1 text-xs', height: 25 },
+  default: { label: 'Default', className: 'py-3 text-sm', height: 45 },
+  comfortable: { label: 'Comfortable', className: 'py-5 text-base', height: 65 },
+};
 
 function compareValues(a, b) {
   if (a === b) return 0;
@@ -42,12 +50,20 @@ export default function DataTable({
   emptyState,
   filtersActive,
   onResetFilters,
-  rowHeight = 53,
+  rowHeight = 45,
   maxHeight = 600,
   overscan = 5,
   virtualizeThreshold = 50,
 }) {
   const [sort, setSort] = useState(defaultSort);
+  const [density, setDensity] = useState('default');
+  const [measuredHeights, setMeasuredHeights] = useState({});
+  const densityConfig = DENSITIES[density];
+  const effectiveRowHeight = Math.max(
+    densityConfig.height,
+    rowHeight + densityConfig.height - DENSITIES.default.height,
+    measuredHeights[density] || 0
+  );
   const [searchParams, setSearchParams] = useSearchParams();
   const hasActiveFilters =
     filtersActive ??
@@ -72,8 +88,14 @@ export default function DataTable({
   };
 
   const containerRef = useRef(null);
+  const headerRef = useRef(null);
   const rowRefs = useRef(new Map());
-  const [scrollTop, setScrollTop] = useState(0);
+  const pendingFocusRef = useRef(null);
+  // Preserve the reading position, or the bottom edge when reviewing the last
+  // rows. Bottom affinity survives the first ResizeObserver correction in a
+  // density that has not been measured yet.
+  const [scrollAnchor, setScrollAnchor] = useState({ offset: 0, atEnd: false });
+  const [headerHeight, setHeaderHeight] = useState(49);
   const [containerHeight, setContainerHeight] = useState(
     typeof maxHeight === 'number' ? maxHeight : 600
   );
@@ -81,29 +103,47 @@ export default function DataTable({
 
   const totalRows = sortedData ? sortedData.length : 0;
   const isVirtualized = totalRows >= virtualizeThreshold;
+  const hasRows = totalRows > 0;
+  const maxScrollTop = Math.max(0, headerHeight + totalRows * effectiveRowHeight - containerHeight);
+  const scrollTop = scrollAnchor.atEnd
+    ? maxScrollTop
+    : Math.min(scrollAnchor.offset * effectiveRowHeight, maxScrollTop);
 
   useEffect(() => {
     const el = containerRef.current;
-    if (!el) return;
+    const header = headerRef.current;
+    if (!el || !header || typeof ResizeObserver === 'undefined') return;
 
-    const updateHeight = () => {
-      if (el.clientHeight > 0) {
-        setContainerHeight(el.clientHeight);
+    const observer = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        if (entry.target === el && entry.contentRect.height > 0) {
+          setContainerHeight(entry.contentRect.height);
+        } else if (entry.target === header) {
+          const height = entry.borderBoxSize?.[0]?.blockSize ?? entry.contentRect.height;
+          if (height > 0) setHeaderHeight(height);
+        }
       }
-    };
+    });
+    observer.observe(el);
+    observer.observe(header);
+    return () => observer.disconnect();
+  }, [hasRows]);
 
-    updateHeight();
-
-    if (typeof ResizeObserver !== 'undefined') {
-      const observer = new ResizeObserver(updateHeight);
-      observer.observe(el);
-      return () => observer.disconnect();
+  // Write once after React has updated the row heights and spacers, before paint.
+  // Writing in the click handler would clamp against the old scrollable height.
+  useLayoutEffect(() => {
+    if (isVirtualized && containerRef.current) {
+      containerRef.current.scrollTop = scrollTop;
     }
-  }, []);
+  }, [isVirtualized, scrollTop]);
 
   const handleScroll = useCallback((e) => {
-    setScrollTop(e.currentTarget.scrollTop);
-  }, []);
+    const top = e.currentTarget.scrollTop;
+    setScrollAnchor({
+      offset: top / effectiveRowHeight,
+      atEnd: maxScrollTop > 0 && top >= maxScrollTop - 1,
+    });
+  }, [effectiveRowHeight, maxScrollTop]);
 
   const { startIndex, topPadding, bottomPadding, visibleRows } = useMemo(() => {
     if (!isVirtualized || totalRows === 0) {
@@ -116,15 +156,15 @@ export default function DataTable({
       };
     }
 
-    const calculatedStart = Math.max(0, Math.floor(scrollTop / rowHeight) - overscan);
-    const visibleCount = Math.ceil(containerHeight / rowHeight);
+    const calculatedStart = Math.min(totalRows - 1, Math.max(0, Math.floor(scrollTop / effectiveRowHeight) - overscan));
+    const visibleCount = Math.ceil(containerHeight / effectiveRowHeight);
     const calculatedEnd = Math.min(totalRows - 1, calculatedStart + visibleCount + overscan * 2);
 
     const start = Math.max(0, calculatedStart);
     const end = Math.min(totalRows - 1, calculatedEnd);
 
-    const topPad = start * rowHeight;
-    const bottomPad = Math.max(0, (totalRows - 1 - end) * rowHeight);
+    const topPad = start * effectiveRowHeight;
+    const bottomPad = Math.max(0, (totalRows - 1 - end) * effectiveRowHeight);
     const sliced = sortedData.slice(start, end + 1);
 
     return {
@@ -134,17 +174,33 @@ export default function DataTable({
       bottomPadding: bottomPad,
       visibleRows: sliced,
     };
-  }, [isVirtualized, totalRows, scrollTop, rowHeight, overscan, containerHeight, sortedData]);
+  }, [isVirtualized, totalRows, scrollTop, effectiveRowHeight, overscan, containerHeight, sortedData]);
+
+  useEffect(() => {
+    if (!isVirtualized || typeof ResizeObserver === 'undefined') return;
+    // Custom cells (badges, buttons, etc.) can be taller than plain text. Observe
+    // actual row sizes in a batch instead of forcing layout reads on every row.
+    const observer = new ResizeObserver((entries) => {
+      const height = Math.ceil(Math.max(0, ...entries.map((entry) =>
+        entry.borderBoxSize?.[0]?.blockSize ?? entry.contentRect.height
+      )));
+      setMeasuredHeights((current) => height > (current[density] || 0)
+        ? { ...current, [density]: height }
+        : current);
+    });
+    rowRefs.current.forEach((row) => observer.observe(row));
+    return () => observer.disconnect();
+  }, [density, isVirtualized, visibleRows]);
 
   const scrollRowIntoView = useCallback(
     (targetIndex) => {
       const el = containerRef.current;
       if (!el || targetIndex == null || targetIndex < 0 || targetIndex >= totalRows) return;
 
-      const targetTop = targetIndex * rowHeight;
-      const targetBottom = targetTop + rowHeight;
-      const currentScrollTop = el.scrollTop || scrollTop;
-      const viewHeight = el.clientHeight || containerHeight;
+      const targetTop = targetIndex * effectiveRowHeight;
+      const targetBottom = headerHeight + targetTop + effectiveRowHeight;
+      const currentScrollTop = scrollTop;
+      const viewHeight = containerHeight;
 
       let newScrollTop = null;
       if (targetTop < currentScrollTop) {
@@ -154,34 +210,40 @@ export default function DataTable({
       }
 
       if (newScrollTop != null) {
-        el.scrollTop = newScrollTop;
-        setScrollTop(newScrollTop);
+        setScrollAnchor({
+          offset: newScrollTop / effectiveRowHeight,
+          atEnd: maxScrollTop > 0 && newScrollTop >= maxScrollTop - 1,
+        });
       }
     },
-    [totalRows, rowHeight, scrollTop, containerHeight]
+    [totalRows, effectiveRowHeight, scrollTop, containerHeight, headerHeight, maxScrollTop]
   );
 
   const focusRow = useCallback(
     (index) => {
       const targetIndex = Math.max(0, Math.min(totalRows - 1, index));
+      pendingFocusRef.current = targetIndex;
       setFocusedIndex(targetIndex);
       scrollRowIntoView(targetIndex);
       const domEl = rowRefs.current.get(targetIndex);
       if (domEl) {
-        domEl.focus();
+        domEl.focus({ preventScroll: isVirtualized });
+        pendingFocusRef.current = null;
       }
     },
-    [totalRows, scrollRowIntoView]
+    [totalRows, scrollRowIntoView, isVirtualized]
   );
 
   useEffect(() => {
-    if (focusedIndex != null) {
-      const domEl = rowRefs.current.get(focusedIndex);
-      if (domEl && document.activeElement !== domEl) {
-        domEl.focus();
+    const targetIndex = pendingFocusRef.current;
+    if (targetIndex != null) {
+      const domEl = rowRefs.current.get(targetIndex);
+      if (domEl) {
+        domEl.focus({ preventScroll: isVirtualized });
+        pendingFocusRef.current = null;
       }
     }
-  }, [focusedIndex, visibleRows]);
+  }, [focusedIndex, visibleRows, isVirtualized]);
 
   const handleKeyDown = (e, rowIndex) => {
     switch (e.key) {
@@ -269,100 +331,128 @@ export default function DataTable({
     ? {
         maxHeight: typeof maxHeight === 'number' ? `${maxHeight}px` : maxHeight,
         overflowY: 'auto',
+        overflowAnchor: 'none',
       }
     : undefined;
 
   return (
-    <div
-      ref={containerRef}
-      onScroll={isVirtualized ? handleScroll : undefined}
-      style={containerStyles}
-      data-testid="datatable-container"
-      data-virtualized={isVirtualized}
-      className="w-full max-w-full overflow-x-auto bg-white dark:bg-slate-900 rounded-xl border border-gray-100 dark:border-slate-800 shadow-sm focus:outline-none"
-      tabIndex={isVirtualized ? 0 : undefined}
-      aria-label={caption ? `${caption} scrollable view` : undefined}
-    >
-      <table className="min-w-max w-full text-sm text-left text-gray-600 dark:text-gray-300 border-collapse">
-        {caption && <caption className="sr-only">{caption}</caption>}
-        <thead className="text-xs text-gray-500 dark:text-gray-400 uppercase bg-gray-50 dark:bg-slate-800/60 border-b border-gray-100 dark:border-slate-800 sticky top-0 z-10">
-          <tr>
-            {columns.map((col, idx) => (
-              <th
-                key={idx}
-                scope="col"
-                aria-sort={ariaSortFor(col)}
-                className="px-4 sm:px-6 py-4 whitespace-nowrap bg-gray-50 dark:bg-slate-800"
-              >
-                {col.sortable ? (
-                  <button
-                    type="button"
-                    onClick={() => handleSort(col)}
-                    className={`inline-flex items-center gap-1.5 uppercase font-semibold ${FOCUSABLE_HEADER}`}
-                  >
-                    {col.header}
-                    {sort?.key === sortKeyOf(col) ? (
-                      sort.direction === 'ascending' ? (
-                        <ArrowUp size={14} aria-hidden="true" />
+    <div className="w-full min-w-0">
+      <div className="flex justify-end mb-3">
+        <div
+          role="group"
+          aria-label={caption ? `${caption} density` : 'Table density'}
+          className="inline-flex rounded-lg border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-1 gap-1"
+        >
+          {Object.entries(DENSITIES).map(([value, option]) => (
+            <button
+              key={value}
+              type="button"
+              aria-pressed={density === value}
+              onClick={() => setDensity(value)}
+              className={`px-2 sm:px-3 py-2 text-xs sm:text-sm font-medium rounded-md transition-colors ${FOCUSABLE_HEADER} ${
+                density === value
+                  ? 'bg-teal-100 text-teal-900 dark:bg-teal-950 dark:text-teal-200'
+                  : 'text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-slate-800'
+              }`}
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div
+        ref={containerRef}
+        onScroll={isVirtualized ? handleScroll : undefined}
+        style={containerStyles}
+        data-testid="datatable-container"
+        data-virtualized={isVirtualized}
+        data-density={density}
+        className="w-full max-w-full overflow-x-auto bg-white dark:bg-slate-900 rounded-xl border border-gray-100 dark:border-slate-800 shadow-sm focus:outline-none"
+        tabIndex={isVirtualized ? 0 : undefined}
+        aria-label={caption ? `${caption} scrollable view` : undefined}
+      >
+        <table className="min-w-max w-full text-sm text-left text-gray-600 dark:text-gray-300 border-collapse">
+          {caption && <caption className="sr-only">{caption}</caption>}
+          <thead ref={headerRef} className="text-xs text-gray-500 dark:text-gray-400 uppercase bg-gray-50 dark:bg-slate-800/60 border-b border-gray-100 dark:border-slate-800 sticky top-0 z-10">
+            <tr>
+              {columns.map((col, idx) => (
+                <th
+                  key={idx}
+                  scope="col"
+                  aria-sort={ariaSortFor(col)}
+                  className="px-4 sm:px-6 py-4 whitespace-nowrap bg-gray-50 dark:bg-slate-800"
+                >
+                  {col.sortable ? (
+                    <button
+                      type="button"
+                      onClick={() => handleSort(col)}
+                      className={`inline-flex items-center gap-1.5 uppercase font-semibold ${FOCUSABLE_HEADER}`}
+                    >
+                      {col.header}
+                      {sort?.key === sortKeyOf(col) ? (
+                        sort.direction === 'ascending' ? (
+                          <ArrowUp size={14} aria-hidden="true" />
+                        ) : (
+                          <ArrowDown size={14} aria-hidden="true" />
+                        )
                       ) : (
-                        <ArrowDown size={14} aria-hidden="true" />
-                      )
-                    ) : (
-                      <ChevronsUpDown size={14} aria-hidden="true" />
-                    )}
-                  </button>
-                ) : (
-                  col.header
-                )}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {/* Top virtual spacer */}
-          {isVirtualized && topPadding > 0 && (
-            <tr style={{ height: `${topPadding}px` }} aria-hidden="true">
-              <td colSpan={columns.length} style={{ padding: 0, border: 'none' }} />
+                        <ChevronsUpDown size={14} aria-hidden="true" />
+                      )}
+                    </button>
+                  ) : (
+                    col.header
+                  )}
+                </th>
+              ))}
             </tr>
-          )}
-
-          {/* Visible Rows */}
-          {visibleRows.map((row, relativeIdx) => {
-            const absoluteIdx = isVirtualized ? startIndex + relativeIdx : relativeIdx;
-            const rowKey = row[keyField] || absoluteIdx;
-            const isClickable = Boolean(onRowClick);
-
-            return (
-              <tr
-                key={rowKey}
-                ref={(el) => {
-                  if (el) rowRefs.current.set(absoluteIdx, el);
-                  else rowRefs.current.delete(absoluteIdx);
-                }}
-                data-row-index={absoluteIdx}
-                className={`border-b border-gray-50 dark:border-slate-800/60 hover:bg-gray-50/50 dark:hover:bg-slate-800/50 transition-colors focus:outline-none focus:ring-2 focus:ring-primary/40 focus:bg-gray-100 dark:focus:bg-slate-800 ${rowClassName}`}
-                onClick={isClickable ? () => onRowClick(row) : undefined}
-                onKeyDown={(e) => handleKeyDown(e, absoluteIdx)}
-                tabIndex={isClickable || isVirtualized ? 0 : undefined}
-                aria-label={isClickable ? `View details for row ${absoluteIdx + 1}` : undefined}
-              >
-                {columns.map((col, colIdx) => (
-                  <td key={colIdx} className="px-4 sm:px-6 py-4 whitespace-nowrap">
-                    {col.render ? col.render(row) : row[col.accessor]}
-                  </td>
-                ))}
+          </thead>
+          <tbody>
+            {/* Top virtual spacer */}
+            {isVirtualized && topPadding > 0 && (
+              <tr style={{ height: `${topPadding}px` }} aria-hidden="true">
+                <td colSpan={columns.length} style={{ padding: 0, border: 'none' }} />
               </tr>
-            );
-          })}
+            )}
 
-          {/* Bottom virtual spacer */}
-          {isVirtualized && bottomPadding > 0 && (
-            <tr style={{ height: `${bottomPadding}px` }} aria-hidden="true">
-              <td colSpan={columns.length} style={{ padding: 0, border: 'none' }} />
-            </tr>
-          )}
-        </tbody>
-      </table>
+            {/* Visible Rows */}
+            {visibleRows.map((row, relativeIdx) => {
+              const absoluteIdx = isVirtualized ? startIndex + relativeIdx : relativeIdx;
+              const rowKey = row[keyField] || absoluteIdx;
+              const isClickable = Boolean(onRowClick);
+
+              return (
+                <tr
+                  key={rowKey}
+                  ref={(el) => {
+                    if (el) rowRefs.current.set(absoluteIdx, el);
+                    else rowRefs.current.delete(absoluteIdx);
+                  }}
+                  data-row-index={absoluteIdx}
+                  style={{ height: `${effectiveRowHeight}px` }}
+                  className={`border-b border-gray-50 dark:border-slate-800/60 hover:bg-gray-50/50 dark:hover:bg-slate-800/50 transition-colors focus:outline-none focus:ring-2 focus:ring-primary/40 focus:bg-gray-100 dark:focus:bg-slate-800 ${rowClassName}`}
+                  onClick={isClickable ? () => onRowClick(row) : undefined}
+                  onKeyDown={(e) => handleKeyDown(e, absoluteIdx)}
+                  tabIndex={isClickable || isVirtualized ? 0 : undefined}
+                  aria-label={isClickable ? `View details for row ${absoluteIdx + 1}` : undefined}
+                >
+                  {columns.map((col, colIdx) => (
+                    <td key={colIdx} className={`px-4 sm:px-6 whitespace-nowrap ${densityConfig.className}`}>
+                      {col.render ? col.render(row) : row[col.accessor]}
+                    </td>
+                  ))}
+                </tr>
+              );
+            })}
+
+            {/* Bottom virtual spacer */}
+            {isVirtualized && bottomPadding > 0 && (
+              <tr style={{ height: `${bottomPadding}px` }} aria-hidden="true">
+                <td colSpan={columns.length} style={{ padding: 0, border: 'none' }} />
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
