@@ -266,3 +266,273 @@ describe('DataTable Virtualization & Keyboard Navigation', () => {
     expect(onRowClick).toHaveBeenCalledWith(data[0]);
   });
 });
+
+describe('DataTable density', () => {
+  const data = Array.from({ length: 200 }, (_, index) => ({ id: index + 1, name: `User ${index + 1}` }));
+  const dataRows = () => Array.from(screen.getByRole('table').querySelectorAll('tr[data-row-index]'));
+  const spacers = () => Array.from(screen.getByRole('table').querySelectorAll('tbody tr[aria-hidden="true"]'));
+
+  it('provides accessible density controls and updates padding, font size and row height', async () => {
+    renderTable(<DataTable columns={columns} data={data.slice(0, 2)} />);
+
+    expect(screen.getByRole('group', { name: 'Table density' })).toBeInTheDocument();
+    const cases = [
+      ['Default', 'py-3', 'text-sm', '45px'],
+      ['Compact', 'py-1', 'text-xs', '25px'],
+      ['Comfortable', 'py-5', 'text-base', '65px'],
+      ['Default', 'py-3', 'text-sm', '45px'],
+    ];
+    for (const [label, padding, font, height] of cases) {
+      const button = screen.getByRole('button', { name: label });
+      await userEvent.click(button);
+      expect(button).toHaveAttribute('aria-pressed', 'true');
+      expect(screen.getAllByRole('button').filter((item) => item.getAttribute('aria-pressed') === 'true')).toHaveLength(1);
+      for (const row of dataRows()) {
+        expect(row).toHaveStyle({ height });
+        for (const cell of row.querySelectorAll('td')) {
+          expect(cell).toHaveClass(padding, font);
+        }
+      }
+      expect(button).toHaveFocus();
+    }
+  });
+
+  it('keeps the same scroll anchor and synchronized virtual spacers in every density', async () => {
+    renderTable(<DataTable columns={columns} data={data} maxHeight={300} overscan={2} />);
+    const container = screen.getByTestId('datatable-container');
+    fireEvent.scroll(container, { target: { scrollTop: 900 } });
+
+    for (const [label, height] of [['Compact', 25], ['Comfortable', 65], ['Default', 45]]) {
+      await userEvent.click(screen.getByRole('button', { name: label }));
+      const rows = dataRows();
+      expect(container.scrollTop).toBe(20 * height);
+      expect(Number(rows[0].dataset.rowIndex)).toBe(18);
+      expect(screen.getByText('User 21')).toBeInTheDocument();
+      expect(spacers()[0]).toHaveStyle({ height: `${18 * height}px` });
+      const lastIndex = Number(rows.at(-1).dataset.rowIndex);
+      expect(spacers()[1]).toHaveStyle({ height: `${(199 - lastIndex) * height}px` });
+      expect(rows.length).toBeLessThan(20);
+      expect(spacers().reduce((sum, spacer) => sum + parseFloat(spacer.style.height), 0) + rows.length * height).toBe(200 * height);
+    }
+  });
+
+  it('clamps the virtual window when shrinking density at the end of the table', async () => {
+    renderTable(<DataTable columns={columns} data={data} maxHeight={300} overscan={0} />);
+    const container = screen.getByTestId('datatable-container');
+    await userEvent.click(screen.getByRole('button', { name: 'Comfortable' }));
+    fireEvent.scroll(container, { target: { scrollTop: 200 * 65 + 49 - 300 } });
+    await userEvent.click(screen.getByRole('button', { name: 'Compact' }));
+
+    expect(container.scrollTop).toBe(200 * 25 + 49 - 300);
+    expect(screen.getByText('User 200')).toBeInTheDocument();
+    expect(dataRows().length).toBeGreaterThan(1);
+    expect(spacers()).toHaveLength(1);
+  });
+
+  it.each([
+    ['plain rows', 45, 65, 26],
+    ['rich rows', 49, 67, 33],
+  ])('keeps the bottom edge pinned when first Compact measurements settle for %s', async (_, defaultHeight, comfortableHeight, compactHeight) => {
+    const observers = [];
+    const OriginalResizeObserver = global.ResizeObserver;
+    global.ResizeObserver = class {
+      constructor(callback) {
+        this.callback = callback;
+        this.targets = [];
+        observers.push(this);
+      }
+      observe(target) { this.targets.push(target); }
+      disconnect() { this.disconnected = true; }
+    };
+    try {
+      renderTable(<DataTable columns={columns} data={data} maxHeight={400} overscan={2} />);
+      const container = screen.getByTestId('datatable-container');
+      const measureRows = (height) => {
+        const observer = observers.findLast((item) =>
+          !item.disconnected && item.targets.some((target) => target.hasAttribute('data-row-index'))
+        );
+        act(() => observer.callback(observer.targets.map((target) => ({
+          target, borderBoxSize: [{ blockSize: height }], contentRect: { height },
+        }))));
+      };
+      measureRows(defaultHeight);
+      await userEvent.click(screen.getByRole('button', { name: 'Comfortable' }));
+      measureRows(comfortableHeight);
+      fireEvent.keyDown(screen.getByText('User 1').closest('tr'), { key: 'End' });
+      fireEvent.scroll(container);
+      expect(container.scrollTop).toBe(200 * comfortableHeight + 49 - 400);
+
+      await userEvent.click(screen.getByRole('button', { name: 'Compact' }));
+      // Native scrolling fires before ResizeObserver corrects the first estimate.
+      fireEvent.scroll(container);
+      measureRows(compactHeight);
+      expect(container.scrollTop).toBe(200 * compactHeight + 49 - 400);
+      expect(screen.getByText('User 200')).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Compact' })).toHaveFocus();
+      for (const [label, height] of [['Comfortable', comfortableHeight], ['Default', defaultHeight], ['Compact', compactHeight]]) {
+        await userEvent.click(screen.getByRole('button', { name: label }));
+        fireEvent.scroll(container);
+        expect(container.scrollTop).toBe(200 * height + 49 - 400);
+        expect(screen.getByText('User 200')).toBeInTheDocument();
+      }
+
+      // Later manual scrolling must release the bottom anchor.
+      fireEvent.scroll(container, { target: { scrollTop: 20 * compactHeight } });
+      await userEvent.click(screen.getByRole('button', { name: 'Default' }));
+      expect(container.scrollTop).toBe(20 * defaultHeight);
+      expect(screen.getByText('User 21')).toBeInTheDocument();
+    } finally {
+      global.ResizeObserver = OriginalResizeObserver;
+    }
+  });
+
+  it('uses the active row height and sticky header for keyboard scrolling without stealing control focus', async () => {
+    const onRowClick = vi.fn();
+    renderTable(<DataTable columns={columns} data={data} maxHeight={300} overscan={0} onRowClick={onRowClick} />);
+    const container = screen.getByTestId('datatable-container');
+    const firstRow = screen.getByText('User 1').closest('tr');
+    fireEvent.keyDown(firstRow, { key: 'ArrowDown' });
+    expect(screen.getByText('User 2').closest('tr')).toHaveFocus();
+
+    const compact = screen.getByRole('button', { name: 'Compact' });
+    await userEvent.click(compact);
+    expect(compact).toHaveFocus();
+    fireEvent.keyDown(screen.getByText('User 2').closest('tr'), { key: 'End' });
+    const lastRow = screen.getByText('User 200').closest('tr');
+    expect(lastRow).toHaveFocus();
+    expect(container.scrollTop).toBe(200 * 25 + 49 - 300);
+    fireEvent.keyDown(lastRow, { key: 'Enter' });
+    expect(onRowClick).toHaveBeenCalledWith(data[199]);
+    fireEvent.keyDown(lastRow, { key: 'Home' });
+    expect(screen.getByText('User 1').closest('tr')).toHaveFocus();
+    expect(container.scrollTop).toBe(0);
+  });
+
+  it('allows the browser to reveal keyboard targets in a nonvirtualized table', () => {
+    renderTable(<DataTable columns={columns} data={data.slice(0, 20)} onRowClick={vi.fn()} />);
+    const lastRow = screen.getByText('User 20').closest('tr');
+    const focus = vi.spyOn(lastRow, 'focus');
+    fireEvent.keyDown(screen.getByText('User 1').closest('tr'), { key: 'End' });
+    expect(lastRow).toHaveFocus();
+    expect(focus).toHaveBeenCalledWith({ preventScroll: false });
+  });
+
+  it('preserves sorting, custom cell selection and URL filters without rerendering the data owner', async () => {
+    const renderOwner = vi.fn();
+    const selectableColumns = [
+      { header: 'Name', accessor: 'name', sortable: true },
+      { header: 'Selected', render: (row) => <input type="checkbox" aria-label={`Select ${row.name}`} /> },
+    ];
+    function Owner() {
+      renderOwner();
+      return <DataTable columns={selectableColumns} data={data.slice(0, 3)} />;
+    }
+    renderTable(<Owner />, ['/users?phone=555&limit=50']);
+    await userEvent.click(screen.getByRole('button', { name: 'Name' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Name' }));
+    await userEvent.click(screen.getByRole('checkbox', { name: 'Select User 2' }));
+    const rendersBeforeDensity = renderOwner.mock.calls.length;
+
+    for (const label of ['Compact', 'Comfortable', 'Default']) {
+      await userEvent.click(screen.getByRole('button', { name: label }));
+      expect(screen.getByRole('columnheader', { name: 'Name' })).toHaveAttribute('aria-sort', 'descending');
+      expect(dataRows().map((row) => row.cells[0].textContent)).toEqual(['User 3', 'User 2', 'User 1']);
+      expect(screen.getByRole('checkbox', { name: 'Select User 2' })).toBeChecked();
+      expect(screen.getByTestId('location-search')).toHaveTextContent('?phone=555&limit=50');
+      expect(renderOwner).toHaveBeenCalledTimes(rendersBeforeDensity);
+    }
+  });
+
+  it('observes taller custom rows in a batch and preserves the anchor as their height settles', async () => {
+    const observers = [];
+    const OriginalResizeObserver = global.ResizeObserver;
+    global.ResizeObserver = class {
+      constructor(callback) {
+        this.callback = callback;
+        this.targets = [];
+        observers.push(this);
+      }
+      observe(target) { this.targets.push(target); }
+      disconnect() { this.disconnected = true; }
+    };
+    try {
+      renderTable(<DataTable columns={columns} data={data} maxHeight={300} overscan={2} />);
+      const container = screen.getByTestId('datatable-container');
+      fireEvent.scroll(container, { target: { scrollTop: 900 } });
+      const observeRows = () => observers.findLast((observer) =>
+        !observer.disconnected && observer.targets.some((target) => target.hasAttribute('data-row-index'))
+      );
+      const measureRows = (heights) => {
+        const observer = observeRows();
+        act(() => observer.callback(heights.map((height, index) => ({
+          target: observer.targets[index],
+          borderBoxSize: [{ blockSize: height }],
+          contentRect: { height: height - 1 },
+        }))));
+      };
+
+      measureRows([45, 61.25, 50]);
+      expect(container.scrollTop).toBe(20 * 62);
+      expect(dataRows()[0]).toHaveStyle({ height: '62px' });
+      expect(spacers()[0]).toHaveStyle({ height: `${18 * 62}px` });
+      measureRows([62, 62, 62]);
+      expect(container.scrollTop).toBe(20 * 62);
+      expect(dataRows()[0]).toHaveStyle({ height: '62px' });
+
+      await userEvent.click(screen.getByRole('button', { name: 'Compact' }));
+      expect(dataRows()[0]).toHaveStyle({ height: '25px' });
+      measureRows([33, 25]);
+      expect(container.scrollTop).toBe(20 * 33);
+      expect(dataRows()[0]).toHaveStyle({ height: '33px' });
+      expect(observeRows().targets.every((row) => row.hasAttribute('data-row-index'))).toBe(true);
+      await userEvent.click(screen.getByRole('button', { name: 'Default' }));
+      expect(dataRows()[0]).toHaveStyle({ height: '62px' });
+      expect(container.scrollTop).toBe(20 * 62);
+    } finally {
+      global.ResizeObserver = OriginalResizeObserver;
+    }
+  });
+
+  it('starts measuring the viewport and header when initially empty data arrives', () => {
+    const observe = vi.fn();
+    const disconnect = vi.fn();
+    const callbacks = [];
+    const OriginalResizeObserver = global.ResizeObserver;
+    global.ResizeObserver = class {
+      constructor(callback) { callbacks.push(callback); }
+      observe = observe;
+      disconnect = disconnect;
+    };
+    try {
+      const { rerender, unmount } = renderTable(<DataTable columns={columns} data={[]} />);
+      expect(observe).not.toHaveBeenCalled();
+      rerender(<MemoryRouter><DataTable columns={columns} data={data} maxHeight={300} /></MemoryRouter>);
+      const container = screen.getByTestId('datatable-container');
+      const header = screen.getByRole('table').querySelector('thead');
+      expect(observe).toHaveBeenCalledWith(container);
+      expect(observe).toHaveBeenCalledWith(header);
+      act(() => callbacks[0]([
+        { target: container, contentRect: { height: 250 } },
+        { target: header, contentRect: { height: 55 }, borderBoxSize: [{ blockSize: 56 }] },
+      ]));
+      fireEvent.keyDown(screen.getByText('User 1').closest('tr'), { key: 'End' });
+      expect(container.scrollTop).toBe(200 * 45 + 56 - 250);
+      expect(screen.getByText('User 200').closest('tr')).toHaveFocus();
+      unmount();
+      expect(disconnect).toHaveBeenCalled();
+    } finally {
+      global.ResizeObserver = OriginalResizeObserver;
+    }
+  });
+
+  it('adjusts an explicit Default rowHeight for the selected density', async () => {
+    renderTable(<DataTable columns={columns} data={data} rowHeight={50} maxHeight={300} />);
+    const container = screen.getByTestId('datatable-container');
+    fireEvent.scroll(container, { target: { scrollTop: 1000 } });
+    for (const [label, height] of [['Compact', 30], ['Comfortable', 70], ['Default', 50]]) {
+      await userEvent.click(screen.getByRole('button', { name: label }));
+      expect(container.scrollTop).toBe(20 * height);
+      expect(dataRows()[0]).toHaveStyle({ height: `${height}px` });
+    }
+  });
+});
