@@ -297,6 +297,9 @@ describe('landing WCAG 2.2 AAA audit', () => {
         await user.tab();
         expect(within(nav).getByRole('link', { name })).toHaveFocus();
       }
+      // The language switcher sits between the Onboarding link and the CTA.
+      await user.tab();
+      expect(within(nav).getByRole('combobox', { name: /language/i })).toHaveFocus();
       await user.tab();
       expect(within(nav).getByRole('link', { name: /open whatsapp|start/i })).toHaveFocus();
     });
