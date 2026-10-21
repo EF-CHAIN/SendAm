@@ -1,8 +1,17 @@
 import { useState, useEffect, useRef } from 'react';
-import { CheckCircle2, Circle, AlertCircle, ArrowRight, ShieldCheck, Wallet, Lock, UserCheck, RefreshCw, MessageSquare, Copy, Check } from 'lucide-react';
+import { CheckCircle2, Circle, AlertCircle, ArrowRight, ShieldCheck, Wallet, Lock, UserCheck, RefreshCw, MessageSquare, Play, Pause, Copy, Check } from 'lucide-react';
 import api from '@shared/api';
 import Loader from '@shared/Loader';
 import { whatsappUrl } from '@/lib/links.js';
+
+const BASE_POLLING_INTERVAL = 10;
+const BACKOFF_THRESHOLD_SECONDS = 300; // 5 minutes
+
+function computePollingInterval(elapsed) {
+  if (elapsed < BACKOFF_THRESHOLD_SECONDS) return BASE_POLLING_INTERVAL;
+  const steps = Math.floor((elapsed - BACKOFF_THRESHOLD_SECONDS) / 120);
+  return Math.min(60, BASE_POLLING_INTERVAL * Math.pow(2, steps + 1));
+}
 
 export default function OnboardingStatus() {
   const [status, setStatus] = useState(null);
@@ -44,6 +53,33 @@ export default function OnboardingStatus() {
       // Fallback or ignore
     }
   };
+  const [isPaused, setIsPaused] = useState(false);
+  const [secondsRemaining, setSecondsRemaining] = useState(BASE_POLLING_INTERVAL);
+  const [pollingInterval, setPollingInterval] = useState(BASE_POLLING_INTERVAL);
+
+  const isComplete = status?.stage === 'complete';
+
+  useEffect(() => {
+    if (isPaused || isComplete) {
+      return;
+    }
+
+    const startTimestamp = Date.now();
+    const intervalTimer = setInterval(() => {
+      setSecondsRemaining((prev) => {
+        if (prev <= 1) {
+          setRefreshKey((k) => k + 1);
+          const elapsed = Math.floor((Date.now() - startTimestamp) / 1000);
+          const nextInterval = computePollingInterval(elapsed);
+          setPollingInterval(nextInterval);
+          return nextInterval;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+
+    return () => clearInterval(intervalTimer);
+  }, [isPaused, isComplete]);
 
   useEffect(() => {
     let active = true;
@@ -138,15 +174,74 @@ export default function OnboardingStatus() {
           <h1 className="text-3xl font-extrabold text-slate-900 tracking-tight">Onboarding Checkpoints</h1>
           <p className="mt-1 text-slate-600">Track your account readiness, identity verification, and wallet setup status.</p>
         </div>
-        <button
-          type="button"
-          onClick={() => setRefreshKey((k) => k + 1)}
-          disabled={loading}
-          className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-slate-700 bg-white border border-slate-200 rounded-lg shadow-sm hover:bg-slate-50 transition"
-        >
-          <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-          Refresh
-        </button>
+        <div className="flex items-center gap-3">
+          {/* Circular Countdown Progress Indicator */}
+          {status && status.stage !== 'complete' && (
+            <div
+              data-testid="polling-countdown"
+              className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-sm"
+              title={isPaused ? 'Auto-refresh paused' : `Next refresh in ${secondsRemaining}s`}
+            >
+              <div className="relative flex h-5 w-5 items-center justify-center">
+                <svg className="h-5 w-5 -rotate-90" viewBox="0 0 24 24" aria-hidden="true">
+                  <circle
+                    cx="12"
+                    cy="12"
+                    r="9"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2.5"
+                    className="text-slate-200"
+                  />
+                  <circle
+                    cx="12"
+                    cy="12"
+                    r="9"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2.5"
+                    strokeDasharray={56.548}
+                    strokeDashoffset={isPaused ? 56.548 : (56.548 * (1 - secondsRemaining / pollingInterval))}
+                    strokeLinecap="round"
+                    className="text-primary transition-all duration-300"
+                  />
+                </svg>
+                <span className="absolute text-[9px] font-bold text-slate-700">
+                  {isPaused ? '—' : secondsRemaining}
+                </span>
+              </div>
+              <span className="hidden sm:inline">
+                {isPaused ? 'Auto-refresh paused' : `Auto-refresh in ${secondsRemaining}s`}
+              </span>
+              <button
+                type="button"
+                data-testid="toggle-polling-button"
+                onClick={() => setIsPaused((p) => !p)}
+                aria-label={isPaused ? 'Resume auto-refresh' : 'Pause auto-refresh'}
+                className="ml-1 rounded p-1 text-slate-500 hover:bg-slate-100 hover:text-slate-800 transition"
+              >
+                {isPaused ? (
+                  <Play className="h-3.5 w-3.5 text-emerald-600" aria-hidden="true" />
+                ) : (
+                  <Pause className="h-3.5 w-3.5 text-slate-500" aria-hidden="true" />
+                )}
+              </button>
+            </div>
+          )}
+
+          <button
+            type="button"
+            onClick={() => {
+              setRefreshKey((k) => k + 1);
+              setSecondsRemaining(pollingInterval);
+            }}
+            disabled={loading}
+            className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-slate-700 bg-white border border-slate-200 rounded-lg shadow-sm hover:bg-slate-50 transition"
+          >
+            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+            Refresh
+          </button>
+        </div>
       </div>
 
       {loading && !status ? (

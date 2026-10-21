@@ -1,3 +1,5 @@
+import { useState } from 'react';
+
 /**
  * ErrorFallback — recovery UI shown when an ErrorBoundary catches a render error.
  *
@@ -8,16 +10,30 @@
  *  - Navigation actions vary by variant: admin vs landing
  *
  * Security:
- *  - Never renders error.message, error.stack, component names, or file paths
- *  - Never renders raw API responses, correlation IDs, or internal IDs
- *  - All user-visible copy is static, safe, and informative without leaking details
+ *  - Only renders the boundary's sanitized support report, as plain text
+ *  - Does not serialize raw API responses or normalized internal diagnostics
+ *  - Diagnostics are opt-in; default recovery copy remains generic
  *
  * @param {Object} props
  * @param {'admin'|'landing'} [props.variant='landing'] - Controls navigation targets
  * @param {() => void} props.onReset - Callback to reset the error boundary (retry)
+ * @param {string} [props.diagnostics] - Already sanitized diagnostic text from ErrorBoundary
  */
-export default function ErrorFallback({ variant = 'landing', onReset }) {
+export default function ErrorFallback({ variant = 'landing', onReset, diagnostics = '' }) {
+  const [expanded, setExpanded] = useState(false);
+  const [copyStatus, setCopyStatus] = useState('');
   const isAdmin = variant === 'admin';
+
+  async function copyDetails() {
+    setCopyStatus('copying');
+    try {
+      if (!navigator.clipboard?.writeText) throw new Error('Clipboard unavailable');
+      await navigator.clipboard.writeText(diagnostics);
+      setCopyStatus('copied');
+    } catch {
+      setCopyStatus('failed');
+    }
+  }
 
   const homeHref = isAdmin ? '/' : '/';
   const homeLabel = isAdmin ? 'Go to dashboard' : 'Go home';
@@ -139,6 +155,38 @@ export default function ErrorFallback({ variant = 'landing', onReset }) {
             </a>
           )}
         </div>
+        {diagnostics && (
+          <details
+            className="mt-6 min-w-0 border-t border-gray-200 pt-4 text-left"
+            onToggle={(event) => setExpanded(event.currentTarget.open)}
+          >
+            <summary className="cursor-pointer rounded text-sm font-semibold text-gray-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary">
+              Technical Details
+            </summary>
+            {expanded && (
+              <div className="mt-3">
+                <p className="mb-3 text-xs text-gray-600">
+                  Include these details when contacting support. Review them before sharing.
+                </p>
+                <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-gray-50 p-3 text-xs text-gray-700" tabIndex={0} aria-label="Error details">
+                  {diagnostics}
+                </pre>
+                <button
+                  type="button"
+                  onClick={copyDetails}
+                  disabled={copyStatus === 'copying'}
+                  className="mt-3 rounded-lg border border-gray-200 bg-white px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary disabled:opacity-50"
+                >
+                  {copyStatus === 'copying' ? 'Copying…' : 'Copy Error Details'}
+                </button>
+                <p role="status" className="mt-2 text-xs text-gray-600">
+                  {copyStatus === 'copied' && 'Error details copied.'}
+                  {copyStatus === 'failed' && 'Could not copy. Select and copy the details above.'}
+                </p>
+              </div>
+            )}
+          </details>
+        )}
       </div>
     </div>
   );

@@ -1,185 +1,133 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent, act, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, act } from '@testing-library/react';
 import OnboardingStatus from './OnboardingStatus.jsx';
 import api from '@shared/api';
 
-vi.mock('@shared/api', () => ({
-  default: {
-    get: vi.fn(),
-  },
-}));
+vi.mock('@shared/api');
 
-const mockStatusWithAddress = {
-  stage: 'in_progress',
-  percentComplete: 67,
-  checkpoints: [
-    { id: 'account_created', label: 'Account created', description: 'Registered', complete: true },
-    { id: 'wallet_ready', label: 'Wallet ready', description: 'Wallet ready', complete: true },
-  ],
-  nextStep: { action: 'await_review', message: 'Verification under review' },
-  blockers: [],
-  kyc: { status: 'pending', tier: 1, sanctionsStatus: 'cleared' },
-  wallet: {
-    publicKey: 'GBRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3ZMFDAGOROTMPGQW5BCW5AZ',
-    funded: true,
-    fundingState: 'succeeded',
-    trustlineState: 'succeeded',
-    network: 'testnet',
+const mockPendingResponse = {
+  data: {
+    success: true,
+    data: {
+      stage: 'in_progress',
+      percentComplete: 67,
+      checkpoints: [
+        { id: 'account_created', label: 'Account created', description: 'Your WhatsApp account is registered.', complete: true },
+        { id: 'wallet_ready', label: 'Wallet ready', description: 'Your Stellar wallet has been funded.', complete: true },
+      ],
+      nextStep: { action: 'await_review', message: 'Verification under review' },
+      blockers: [],
+      kyc: { status: 'pending', tier: 0, sanctionsStatus: 'cleared' },
+      wallet: { funded: true, fundingState: 'succeeded', trustlineState: 'succeeded', network: 'testnet' },
+      accountActive: true,
+      computedAt: new Date().toISOString(),
+    },
   },
-  accountActive: true,
 };
 
-describe('OnboardingStatus - Stellar Address Copy', () => {
+describe('OnboardingStatus Page', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    api.get.mockResolvedValue(mockPendingResponse);
   });
 
   afterEach(() => {
     vi.useRealTimers();
   });
 
-  it('renders the 56-character Stellar public key in wallet state card', async () => {
-    api.get.mockResolvedValueOnce({
-      data: { success: true, data: mockStatusWithAddress },
-    });
-
+  it('renders checkpoints and progress overview', async () => {
     render(<OnboardingStatus />);
-
-    await waitFor(() => {
-      expect(screen.getByTestId('stellar-address-value')).toBeInTheDocument();
-    });
-
-    const addressEl = screen.getByTestId('stellar-address-value');
-    expect(addressEl.textContent).toBe('GBRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3ZMFDAGOROTMPGQW5BCW5AZ');
-    expect(addressEl.textContent).toHaveLength(56);
+    expect(await screen.findByText('Onboarding Checkpoints')).toBeInTheDocument();
+    expect(screen.getByText('Account created')).toBeInTheDocument();
+    expect(screen.getByText('Wallet ready')).toBeInTheDocument();
   });
 
-  it('copies full 56-character address to clipboard on button click', async () => {
-    api.get.mockResolvedValueOnce({
-      data: { success: true, data: mockStatusWithAddress },
-    });
-
-    const writeTextMock = vi.fn().mockResolvedValue(undefined);
-    Object.assign(navigator, {
-      clipboard: {
-        writeText: writeTextMock,
-      },
-    });
-
-    render(<OnboardingStatus />);
-
-    await waitFor(() => {
-      expect(screen.getByTestId('copy-address-button')).toBeInTheDocument();
-    });
-
-    const copyBtn = screen.getByTestId('copy-address-button');
-    expect(copyBtn).toHaveAttribute('aria-label', 'Copy Stellar address to clipboard');
-
-    await act(async () => {
-      fireEvent.click(copyBtn);
-    });
-
-    expect(writeTextMock).toHaveBeenCalledTimes(1);
-    expect(writeTextMock).toHaveBeenCalledWith('GBRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3ZMFDAGOROTMPGQW5BCW5AZ');
-  });
-
-  it('swaps icon to checkmark, shows tooltip, and announces via ARIA live region for 2 seconds', async () => {
+  it('displays the circular progress countdown ring and decrements every second', async () => {
     vi.useFakeTimers();
-
-    api.get.mockResolvedValueOnce({
-      data: { success: true, data: mockStatusWithAddress },
-    });
-
-    const writeTextMock = vi.fn().mockResolvedValue(undefined);
-    Object.assign(navigator, {
-      clipboard: {
-        writeText: writeTextMock,
-      },
-    });
-
     render(<OnboardingStatus />);
 
+    // Resolve initial fetch
     await act(async () => {
-      await vi.runAllTimersAsync();
+      await Promise.resolve();
     });
 
-    const copyBtn = screen.getByTestId('copy-address-button');
-    const liveRegion = screen.getByTestId('copy-live-region');
+    const countdown = screen.getByTestId('polling-countdown');
+    expect(countdown).toBeInTheDocument();
+    expect(countdown).toHaveTextContent(/Auto-refresh in 10s/i);
 
-    expect(screen.queryByTestId('copy-tooltip')).not.toBeInTheDocument();
-    expect(liveRegion.textContent).toBe('');
-
-    await act(async () => {
-      fireEvent.click(copyBtn);
-    });
-
-    // Immediately after click
-    expect(screen.getByTestId('copy-tooltip')).toBeInTheDocument();
-    expect(screen.getByTestId('copy-tooltip').textContent).toBe('Copied to clipboard!');
-    expect(copyBtn).toHaveAttribute('aria-label', 'Copied to clipboard!');
-    expect(liveRegion.textContent).toBe('Copied to clipboard!');
-
-    // Advance 1.9 seconds: should still be in copied state
+    // Advance 3 seconds
     act(() => {
-      vi.advanceTimersByTime(1900);
-    });
-    expect(screen.getByTestId('copy-tooltip')).toBeInTheDocument();
-    expect(liveRegion.textContent).toBe('Copied to clipboard!');
-
-    // Advance past 2 seconds (total 2000ms): should reset back
-    act(() => {
-      vi.advanceTimersByTime(200);
+      vi.advanceTimersByTime(3000);
     });
 
-    expect(screen.queryByTestId('copy-tooltip')).not.toBeInTheDocument();
-    expect(copyBtn).toHaveAttribute('aria-label', 'Copy Stellar address to clipboard');
-    expect(liveRegion.textContent).toBe('');
+    expect(countdown).toHaveTextContent(/Auto-refresh in 7s/i);
   });
 
-  it('falls back to document.execCommand when navigator.clipboard is unavailable', async () => {
-    api.get.mockResolvedValueOnce({
-      data: { success: true, data: mockStatusWithAddress },
-    });
-
-    // Remove clipboard API
-    const originalClipboard = navigator.clipboard;
-    Object.assign(navigator, { clipboard: undefined });
-
-    const execCommandMock = vi.fn().mockReturnValue(true);
-    document.execCommand = execCommandMock;
-
+  it('automatically triggers refetch when countdown reaches 0', async () => {
+    vi.useFakeTimers();
     render(<OnboardingStatus />);
-
-    await waitFor(() => {
-      expect(screen.getByTestId('copy-address-button')).toBeInTheDocument();
-    });
-
-    const copyBtn = screen.getByTestId('copy-address-button');
 
     await act(async () => {
-      fireEvent.click(copyBtn);
+      await Promise.resolve();
     });
 
-    expect(execCommandMock).toHaveBeenCalledWith('copy');
-    expect(screen.getByTestId('copy-tooltip')).toBeInTheDocument();
+    expect(api.get).toHaveBeenCalledTimes(1);
 
-    delete document.execCommand;
-    Object.assign(navigator, { clipboard: originalClipboard });
+    // Advance 10 seconds to trigger automated poll
+    await act(async () => {
+      vi.advanceTimersByTime(10000);
+    });
+
+    expect(api.get).toHaveBeenCalledTimes(2);
   });
 
-  it('renders fallback demo state address when API returns 401 unauthorized', async () => {
-    const error401 = new Error('Unauthorized');
-    error401.response = { status: 401 };
-    api.get.mockRejectedValueOnce(error401);
-
+  it('allows pausing and resuming auto-refresh via toggle button', async () => {
+    vi.useFakeTimers();
     render(<OnboardingStatus />);
 
-    await waitFor(() => {
-      expect(screen.getByTestId('stellar-address-value')).toBeInTheDocument();
+    await act(async () => {
+      await Promise.resolve();
     });
 
-    expect(screen.getByTestId('stellar-address-value').textContent).toBe(
-      'GBRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3ZMFDAGOROTMPGQW5BCW5AZ'
-    );
+    const toggleBtn = screen.getByTestId('toggle-polling-button');
+    expect(toggleBtn).toHaveAttribute('aria-label', 'Pause auto-refresh');
+
+    // Click pause
+    fireEvent.click(toggleBtn);
+    expect(toggleBtn).toHaveAttribute('aria-label', 'Resume auto-refresh');
+    expect(screen.getByTestId('polling-countdown')).toHaveTextContent(/Auto-refresh paused/i);
+
+    // Advance time while paused - should not call api.get
+    await act(async () => {
+      vi.advanceTimersByTime(15000);
+    });
+    expect(api.get).toHaveBeenCalledTimes(1);
+
+    // Click resume
+    fireEvent.click(toggleBtn);
+    expect(toggleBtn).toHaveAttribute('aria-label', 'Pause auto-refresh');
+
+    // Advance 10 seconds to trigger next poll
+    await act(async () => {
+      vi.advanceTimersByTime(10000);
+    });
+    expect(api.get).toHaveBeenCalledTimes(2);
+  });
+
+  it('cleans up interval on unmount without leaking timers', async () => {
+    vi.useFakeTimers();
+    const { unmount } = render(<OnboardingStatus />);
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    unmount();
+
+    await act(async () => {
+      vi.advanceTimersByTime(20000);
+    });
+
+    expect(api.get).toHaveBeenCalledTimes(1);
   });
 });
