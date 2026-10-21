@@ -1,10 +1,10 @@
-# Issue Closure Checklist
+#Issue Closure Checklist
 
 Use this template when closing a GitHub issue or merging a PR that resolves one.
 Every acceptance criterion must be backed by evidence that is independently
 verifiable — a claim without cited evidence does not satisfy the criterion.
 
-## How to use this checklist
+##How to use this checklist
 
 1. Copy the template below into the PR description or as a comment on the issue.
 2. For each acceptance criterion in the issue, add a row to the Evidence table.

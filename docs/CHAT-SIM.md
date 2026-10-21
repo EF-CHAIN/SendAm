@@ -83,6 +83,102 @@ Minimal single-screen chat app (scaffolded by the maintainer):
 Config: API base URL in one config file — point it at
 `http://localhost:3002` (or your deployed testnet API).
 
+## Run it locally
+
+Run the API and the simulator on your machine. Node.js 18+ and npm are
+required (the steps below were checked on Node 24). Docker is only needed for
+the optional local Postgres.
+
+1. **Install dependencies** once, from the repo root (this is an npm
+   workspace, so it installs the API and `apps/chat-sim` together):
+
+   ```bash
+   npm install
+   ```
+
+2. **Start a database.** The API needs a PostgreSQL `DATABASE_URL`. Either use
+   the bundled local Postgres:
+
+   ```bash
+   docker compose up -d
+   ```
+
+   or point `DATABASE_URL` at any Postgres you already have.
+
+3. **Configure the API.** Copy the example file and edit it:
+
+   ```bash
+   cp apps/api/.env.example apps/api/.env
+   ```
+
+   Set these values in `apps/api/.env`:
+
+   | Variable | Value | Why |
+   | --- | --- | --- |
+   | `DATABASE_URL` | `postgresql://sendam:sendam@localhost:5432/sendam` (for the Docker Postgres; drop `sslmode=require`) | Database connection |
+   | `ENCRYPTION_KEY` | output of `openssl rand -hex 32` | Required; the API refuses to start without a 32-byte hex key |
+   | `JWT_SECRET` | output of `openssl rand -hex 32` | Required; at least 32 characters |
+   | `MESSAGE_TRANSPORT` | `sim` | Writes outbound bot messages to `SimMessage` instead of calling Meta |
+   | `ENABLE_CHAT_SIM` | `true` | Turns on `/api/sim/*`. The example file ships `false`; if unset it defaults to on outside production |
+   | `PORT` | `3002` (already the default) | Must match the simulator's API URL |
+
+   The WhatsApp variables in the example file can stay as placeholders while
+   `MESSAGE_TRANSPORT=sim`.
+
+4. **Create the schema and start the API** (still from the repo root):
+
+   ```bash
+   npm run prisma:generate --workspace=apps/api
+   npm run prisma:deploy --workspace=apps/api
+   npm run dev:api
+   ```
+
+   The API listens on `http://localhost:3002`. `GET /health` should respond
+   once it is up.
+
+5. **Start the simulator** in a second terminal, from the repo root:
+
+   ```bash
+   npm run dev:chat-sim
+   ```
+
+   This runs `expo start` in `apps/chat-sim` and serves Metro on
+   `http://localhost:8081`. Press `w` for the web build, or scan the QR code
+   with Expo Go. The other scripts in `apps/chat-sim/package.json` are
+   `npm run android`, `npm run ios` and `npm run web` (use
+   `--workspace=apps/chat-sim`).
+
+6. **Try it.** Enter a phone number such as `+2348000000001`, then send
+   `balance`. To check the API directly:
+
+   ```bash
+   curl -X POST http://localhost:3002/api/sim/message \
+     -H 'content-type: application/json' \
+     -d '{"phoneNumber":"+2348000000001","name":"Ada","text":"balance"}'
+   ```
+
+### Simulator configuration
+
+`apps/chat-sim/src/config.js` reads one variable:
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `EXPO_PUBLIC_API_BASE_URL` | `http://localhost:3002` | Base URL of the API the simulator talks to |
+
+The default only works when the simulator runs on the same machine as the API
+(iOS simulator, web). Set it when the app runs elsewhere:
+
+```bash
+# Android emulator (host machine is 10.0.2.2)
+EXPO_PUBLIC_API_BASE_URL=http://10.0.2.2:3002 npm run dev:chat-sim
+
+# Physical device on the same Wi-Fi (use your computer's LAN IP)
+EXPO_PUBLIC_API_BASE_URL=http://192.168.1.20:3002 npm run dev:chat-sim
+```
+
+Expo inlines `EXPO_PUBLIC_*` variables at bundle time, so restart the
+Metro server after changing it.
+
 ## Two-device walkthrough (the MVP demo)
 
 1. Device A, number `+234...01`: `balance` → wallet auto-created and funded.

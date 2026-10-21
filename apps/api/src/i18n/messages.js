@@ -1,3 +1,25 @@
+/**
+ * Localized Message Catalog for SendAm
+ *
+ * Structure & Conventions:
+ * - The `catalog` object organizes translation strings hierarchically by locale code (e.g., `en`, `fr`, `es`).
+ * - Message keys are snake_case identifiers representing specific UI/notification messages or prompt templates.
+ * - Dynamic interpolation placeholders follow `{paramName}` syntax and are replaced at runtime by `t(key, params, locale)`.
+ *
+ * Contributing / Adding a New Key or Locale:
+ * 1. Adding a new key:
+ *    - Add the new key to `catalog.en` first (the canonical reference dictionary).
+ *    - Provide localized translations under each supported locale (`catalog.fr`, `catalog.es`, etc.).
+ * 2. Adding a new locale:
+ *    - Add the new ISO-639-1 code (e.g., `pt`, `sw`) to `SUPPORTED_LOCALES`.
+ *    - Add a corresponding locale dictionary object under `catalog` containing all catalog keys.
+ *
+ * Fallback & Missing Key Behavior:
+ * - If an unsupported or invalid locale is requested, `t()` defaults to `'en'`.
+ * - If a specific message key is missing in the target locale dictionary, `t()` falls back to `catalog.en[key]`.
+ * - If the key is not defined in `catalog.en` either, `t()` falls back to returning the raw `key` string.
+ */
+
 const catalog = {
   en: {
     welcome_help: 'SendAm can help with send money, receive money, balance, contacts, transaction history, and receipts.',

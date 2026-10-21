@@ -5,6 +5,71 @@ SendAm uses Smile ID Basic KYC's asynchronous REST API. `POST
 applicant to Smile ID, and returns `202`. Smile ID delivers its result to
 `POST /api/compliance/kyc/callback/smileid`.
 
+## Sandbox setup
+
+For local development and testing, contributors can configure the Smile ID sandbox environment without using real KYC documents or production secrets.
+
+### 1. Obtain sandbox credentials
+
+1. Sign up for a free developer account or log in to the [Smile ID Portal](https://portal.usesmileid.com/).
+2. In the portal navigation, ensure the environment is toggled to **Sandbox** (test mode).
+3. Navigate to **Developer Settings** > **API Keys** (or **Integration** > **API Keys**).
+4. Note your **Partner ID** (numeric identifier) and generate/copy a **Sandbox API Key**.
+
+### 2. Configure environment variables
+
+In `apps/api/.env` (copied from `apps/api/.env.example`), configure the following variables:
+
+```bash
+# Set KYC provider to smileid
+KYC_PROVIDER=smileid
+
+# Your Smile ID sandbox Partner ID from the portal
+SMILE_ID_PARTNER_ID=your_sandbox_partner_id
+
+# Your Smile ID sandbox API key from the portal
+SMILE_ID_API_KEY=your_sandbox_api_key
+
+# Public HTTPS callback endpoint (must be accessible from the internet)
+SMILE_ID_CALLBACK_URL=https://your-public-tunnel.ngrok-free.app/api/compliance/kyc/callback/smileid
+
+# Optional: defaults to https://testapi.smileidentity.com/v2/verify_async when NODE_ENV is not production
+SMILE_ID_BASE_URL=https://testapi.smileidentity.com/v2/verify_async
+
+# Optional tuning (defaults: 10000ms timeout, 300s timestamp tolerance)
+SMILE_ID_TIMEOUT_MS=10000
+SMILE_ID_CALLBACK_TOLERANCE_SEC=300
+```
+
+> **Note**: Variable names must match `apps/api/.env.example` exactly. Never commit `.env` or real sandbox keys to source control.
+
+### 3. Expose the callback endpoint locally
+
+Smile ID delivers verification results asynchronously via HTTP POST to `SMILE_ID_CALLBACK_URL`. Because the callback must be an HTTPS URL reachable by Smile ID's servers:
+
+1. Use an HTTPS tunneling service such as `ngrok` or Cloudflare Tunnel to expose your local API port (default `PORT=3002`):
+   ```bash
+   ngrok http 3002
+   ```
+2. Set `SMILE_ID_CALLBACK_URL` to your public tunnel HTTPS URL ending with the callback path:
+   `https://<your-subdomain>.ngrok-free.app/api/compliance/kyc/callback/smileid`
+
+### 4. Verify sandbox integration
+
+1. Start the API in development mode:
+   ```bash
+   npm run dev:api
+   ```
+2. Trigger a KYC start via `POST /api/compliance/kyc/start` using test applicant data (refer to Smile ID's sandbox test personas).
+3. Verify that:
+   - The submission returns `202 Accepted` with a `jobId`.
+   - The API logs `kyc_submission_accepted`.
+   - When the webhook callback arrives at `/api/compliance/kyc/callback/smileid`, the signature validates and the API logs `kyc_callback_processed`.
+4. Alternatively, run the credentialed contract suite:
+   ```bash
+   node --test apps/api/test/contract/smileid.sandbox.contract.test.js
+   ```
+
 ## Configuration and rollout
 
 Set `KYC_PROVIDER=smileid`, `SMILE_ID_PARTNER_ID`, `SMILE_ID_API_KEY`, and

@@ -32,6 +32,7 @@ router.get('/stats', requireAdmin('admin.read'), adminController.getStats);
 router.get('/users', requireAdmin('admin.read'), adminController.getUsers);
 router.get('/wallets', requireAdmin('admin.read'), adminController.getWallets);
 router.get('/transactions', requireAdmin('admin.read'), adminController.getTransactions);
+router.get('/transactions/export', requireAdmin('admin.read'), adminController.exportTransactions);
 router.get('/transactions/:id', requireAdmin('admin.read'), adminController.getTransaction);
 router.post('/transactions/:id/refund', requireAdmin('operations.write'), adminController.refundTransaction);
 router.get('/payments/stuck', requireAdmin('operations.write'), adminController.getStuckPayments);

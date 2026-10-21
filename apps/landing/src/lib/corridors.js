@@ -1,0 +1,62 @@
+// Geo coordinates for major SendAm corridor hubs
+export const CORRIDOR_HUBS = {
+  london: { id: 'london', name: 'London, UK', country: 'United Kingdom', flag: '🇬🇧', lat: 51.5074, lng: -0.1278, currency: 'GBP' },
+  newyork: { id: 'newyork', name: 'New York, USA', country: 'United States', flag: '🇺🇸', lat: 40.7128, lng: -74.006, currency: 'USD' },
+  frankfurt: { id: 'frankfurt', name: 'Frankfurt, EU', country: 'European Union', flag: '🇪🇺', lat: 50.1109, lng: 8.6821, currency: 'EUR' },
+  lagos: { id: 'lagos', name: 'Lagos, NG', country: 'Nigeria', flag: '🇳🇬', lat: 6.5244, lng: 3.3792, currency: 'NGN' },
+  accra: { id: 'accra', name: 'Accra, GH', country: 'Ghana', flag: '🇬🇭', lat: 5.6037, lng: -0.187, currency: 'GHS' },
+  nairobi: { id: 'nairobi', name: 'Nairobi, KE', country: 'Kenya', flag: '🇰🇪', lat: -1.2921, lng: 36.8219, currency: 'KES' },
+};
+
+export const CORRIDORS = [
+  {
+    id: 'uk-ng',
+    from: CORRIDOR_HUBS.london,
+    to: CORRIDOR_HUBS.lagos,
+    pair: 'GBP / NGN',
+    avgSpeed: '3.1s',
+    fee: '0.1%',
+    rail: 'Stellar USDC / NGNC',
+    status: 'Optimal',
+  },
+  {
+    id: 'us-gh',
+    from: CORRIDOR_HUBS.newyork,
+    to: CORRIDOR_HUBS.accra,
+    pair: 'USD / GHS',
+    avgSpeed: '2.8s',
+    fee: '0.1%',
+    rail: 'Stellar USDC / GHSC',
+    status: 'Optimal',
+  },
+  {
+    id: 'eu-ke',
+    from: CORRIDOR_HUBS.frankfurt,
+    to: CORRIDOR_HUBS.nairobi,
+    pair: 'EUR / KES',
+    avgSpeed: '3.4s',
+    fee: '0.15%',
+    rail: 'Stellar EURC / KESC',
+    status: 'Optimal',
+  },
+  {
+    id: 'us-ng',
+    from: CORRIDOR_HUBS.newyork,
+    to: CORRIDOR_HUBS.lagos,
+    pair: 'USD / NGN',
+    avgSpeed: '2.9s',
+    fee: '0.1%',
+    rail: 'Stellar USDC / NGNC',
+    status: 'Optimal',
+  },
+  {
+    id: 'uk-ke',
+    from: CORRIDOR_HUBS.london,
+    to: CORRIDOR_HUBS.nairobi,
+    pair: 'GBP / KES',
+    avgSpeed: '3.3s',
+    fee: '0.15%',
+    rail: 'Stellar USDC / KESC',
+    status: 'Optimal',
+  },
+];

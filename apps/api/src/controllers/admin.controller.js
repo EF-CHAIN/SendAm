@@ -444,6 +444,45 @@ const getAuditLogs = async (req, res, next) => {
   } catch (error) { return next(error); }
 };
 
+const exportTransactions = async (req, res, next) => {
+  try {
+    const where = transactionWhere(req.query);
+    const transactions = await prisma.transaction.findMany({
+      where,
+      include: { user: { select: { phoneNumber: true } } },
+      orderBy: { createdAt: 'desc' },
+      take: MAX_EXPORT_ROWS,
+    });
+    await writeAuditLog({
+      actorType: 'administrator',
+      actorId: req.admin.id,
+      action: 'admin.transactions.export',
+      entityType: 'Transaction',
+      metadata: { filters: req.query, rows: transactions.length, capped: transactions.length >= MAX_EXPORT_ROWS },
+      req,
+    });
+    const csv = toCsv(
+      transactions.map((t) => ({ ...t, phoneNumber: t.user?.phoneNumber })),
+      [
+        { header: 'id', accessor: 'id' },
+        { header: 'type', accessor: 'type' },
+        { header: 'amount', accessor: 'amount' },
+        { header: 'asset', accessor: 'asset' },
+        { header: 'rail', accessor: 'rail' },
+        { header: 'status', accessor: 'status' },
+        { header: 'destination', accessor: 'destination' },
+        { header: 'recipientPhoneNumber', accessor: 'recipientPhoneNumber' },
+        { header: 'txHash', accessor: 'txHash' },
+        { header: 'phoneNumber', accessor: 'phoneNumber' },
+        { header: 'createdAt', accessor: (r) => r.createdAt?.toISOString?.() || r.createdAt },
+      ]
+    );
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename="transactions-export.csv"');
+    return res.status(200).send(csv);
+  } catch (error) { return next(error); }
+};
+
 // Sensitive exports: authorized (route-level requireAdmin), bounded so a single
 // request can never dump the whole table, and always recorded to the audit log.
 const exportKyc = async (req, res, next) => {
@@ -1069,6 +1108,7 @@ module.exports = {
   getTransactions,
   getKycProfiles,
   getAuditLogs,
+  exportTransactions,
   exportKyc,
   exportAuditLogs,
   getSystemHealth,
