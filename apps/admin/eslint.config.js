@@ -29,4 +29,10 @@ export default defineConfig([
     files: ['vite.config.js'],
     languageOptions: { globals: globals.node },
   },
+  {
+    // Tests and test setup run under Vitest/jsdom (browser globals) but also
+    // touch Node globals directly (e.g. `global.ResizeObserver`).
+    files: ['**/*.test.{js,jsx}', 'src/setupTests.js', 'src/test/**/*.{js,jsx}'],
+    languageOptions: { globals: { ...globals.browser, ...globals.node } },
+  },
 ])

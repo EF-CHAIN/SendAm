@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { 
   getAdminUsers, 
   getUserOnboardingStatus, 
@@ -13,9 +13,110 @@ import Loader from '@shared/Loader';
 import StatusBadge from '@/components/StatusBadge';
 import Pagination from '@/components/Pagination';
 import FilterBar from '@/components/FilterBar';
+import PasskeyPromptModal, { usePasskeyStepUp } from '@/components/PasskeyPromptModal';
+import { 
+  MoreVertical, 
+  KeyRound, 
+  FileText, 
+  UserX, 
+  UserCheck, 
+  Download 
+} from 'lucide-react';
+
+// Anything that can hold focus inside a dialog, in DOM order.
+const FOCUSABLE_IN_DIALOG = [
+  'a[href]',
+  'button:not([disabled])',
+  'input:not([disabled]):not([type="hidden"])',
+  'select:not([disabled])',
+  'textarea:not([disabled])',
+  '[tabindex]:not([tabindex="-1"])',
+].join(',');
+
+const focusableIn = (root) =>
+  Array.from(root.querySelectorAll(FOCUSABLE_IN_DIALOG)).filter(
+    (el) => !el.hasAttribute('aria-hidden') && el.tabIndex !== -1
+  );
+
+/**
+ * Keyboard containment for a modal dialog (WCAG 2.2: 2.1.2 No Keyboard Trap
+ * still needs a documented way out — Escape; 2.4.3 Focus Order — focus must
+ * enter the dialog when it opens and return to the trigger when it closes).
+ *
+ * Returns a ref to attach to the dialog element. Tab and Shift+Tab cycle within
+ * the dialog only, Escape invokes `onClose`, and the element focused before the
+ * dialog opened is refocused on close.
+ */
+function useDialogFocusTrap(isOpen, onClose) {
+  const dialogRef = useRef(null);
+  const returnFocusRef = useRef(null);
+  // onClose is a fresh closure every render; keeping it in a ref lets the effect
+  // below depend on `isOpen` alone, so opening the dialog re-runs it once
+  // instead of stealing focus on every subsequent render.
+  const onCloseRef = useRef(onClose);
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  });
+
+  useEffect(() => {
+    const dialog = dialogRef.current;
+    if (!isOpen || !dialog) return undefined;
+
+    returnFocusRef.current = document.activeElement;
+    const items = focusableIn(dialog);
+    (items[0] || dialog).focus();
+
+    const onKeyDown = (event) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        event.stopPropagation();
+        onCloseRef.current?.();
+        return;
+      }
+      if (event.key !== 'Tab') return;
+
+      const focusable = focusableIn(dialog);
+      if (focusable.length === 0) {
+        event.preventDefault();
+        dialog.focus();
+        return;
+      }
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      const active = document.activeElement;
+      // When the dialog container itself holds focus, pull focus to the correct
+      // end rather than letting the browser continue behind the dialog.
+      if (active === dialog) {
+        event.preventDefault();
+        (event.shiftKey ? last : first).focus();
+      } else if (event.shiftKey && active === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && active === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+
+    document.addEventListener('keydown', onKeyDown, true);
+    return () => {
+      document.removeEventListener('keydown', onKeyDown, true);
+      const trigger = returnFocusRef.current;
+      if (trigger && document.contains(trigger) && typeof trigger.focus === 'function') {
+        trigger.focus();
+      }
+    };
+  }, [isOpen]);
+
+  return dialogRef;
+}
 
 export default function Users() {
   const { params, getFilter, setFilter, resetFilters, goNext, goPrev } = useListQuery(['phone']);
+  // High-risk actions on this page (deactivate / reactivate / evidence
+  // download) are gated behind a WebAuthn passkey assertion. The hook only
+  // invokes the mutation callback after the device prompt succeeds.
+  const { startStepUp, stepUpModalProps } = usePasskeyStepUp();
   const [users, setUsers] = useState([]);
   const [pagination, setPagination] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -37,6 +138,50 @@ export default function Users() {
   const [reactivateNotes, setReactivateNotes] = useState('');
   const [reactivateApprovedBy, setReactivateApprovedBy] = useState('');
   const [refreshKey, setRefreshKey] = useState(0);
+
+  // Quick actions dropdown & Reset PIN modal state (#767)
+  const [activeMenuUserId, setActiveMenuUserId] = useState(null);
+  const [resetPinModalUser, setResetPinModalUser] = useState(null);
+  const [resetPinReason, setResetPinReason] = useState('customer_forgot_pin');
+  const [resetPinNotes, setResetPinNotes] = useState('');
+  const [resetPinSubmitting, setResetPinSubmitting] = useState(false);
+
+  const closeOnboarding = useCallback(() => {
+    setOnboardingUser(null);
+    setOnboardingData(null);
+  }, []);
+  const closeDeactivate = useCallback(() => setDeactivateModalUser(null), []);
+  const closeReactivate = useCallback(() => setReactivateModalUser(null), []);
+  const closeResetPin = useCallback(() => {
+    setResetPinModalUser(null);
+    setResetPinNotes('');
+  }, []);
+
+  const onboardingDialogRef = useDialogFocusTrap(Boolean(onboardingUser), closeOnboarding);
+  const deactivateDialogRef = useDialogFocusTrap(Boolean(deactivateModalUser), closeDeactivate);
+  const reactivateDialogRef = useDialogFocusTrap(Boolean(reactivateModalUser), closeReactivate);
+  const resetPinDialogRef = useDialogFocusTrap(Boolean(resetPinModalUser), closeResetPin);
+
+  // Close dropdown on click outside or Escape
+  useEffect(() => {
+    if (!activeMenuUserId) return;
+    const handleOutsideClick = (e) => {
+      if (!e.target.closest(`[data-testid="user-actions-container-${activeMenuUserId}"]`)) {
+        setActiveMenuUserId(null);
+      }
+    };
+    const handleEscape = (e) => {
+      if (e.key === 'Escape') {
+        setActiveMenuUserId(null);
+      }
+    };
+    document.addEventListener('mousedown', handleOutsideClick);
+    document.addEventListener('keydown', handleEscape);
+    return () => {
+      document.removeEventListener('mousedown', handleOutsideClick);
+      document.removeEventListener('keydown', handleEscape);
+    };
+  }, [activeMenuUserId]);
 
   useEffect(() => {
     let active = true;
@@ -75,58 +220,97 @@ export default function Users() {
     }
   };
 
-  const handleDownloadEvidence = async (userId) => {
+  // Downloading a compliance evidence package is a high-risk export, so it is
+  // intercepted by the passkey step-up before the request is issued.
+  const handleDownloadEvidence = (userId) => {
     setActionError('');
     setActionSuccess('');
-    try {
-      await downloadUserEvidencePackage(userId);
-      setActionSuccess('Compliance evidence package downloaded successfully.');
-    } catch (err) {
-      setActionError(err.response?.data?.message || 'Failed to export compliance evidence');
-    }
+    startStepUp('user.evidence.download', async ({ passkeyAssertion, passkeyFallback }) => {
+      try {
+        await downloadUserEvidencePackage(userId, { passkeyAssertion, passkeyFallback });
+        setActionSuccess('Compliance evidence package downloaded successfully.');
+      } catch (err) {
+        setActionError(err.response?.data?.message || 'Failed to export compliance evidence');
+      }
+    });
   };
 
-  const handleDeactivate = async (e) => {
+  // Manual account deactivation is irreversible for the customer, so the
+  // passkey challenge runs between the confirmation form and the mutation.
+  const handleDeactivate = (e) => {
     e.preventDefault();
     if (!deactivateModalUser) return;
-    setSubmittingAction(true);
-    setActionError('');
-    try {
-      await deactivateUserAccount(deactivateModalUser.id, {
-        reason: deactivateReason,
-        notes: deactivateNotes,
-        force: deactivateForce,
-      });
-      setDeactivateModalUser(null);
-      setDeactivateNotes('');
-      setActionSuccess('Account deactivated successfully.');
-      setRefreshKey((k) => k + 1);
-    } catch (err) {
-      setActionError(err.response?.data?.message || err.message || 'Failed to deactivate account');
-    } finally {
-      setSubmittingAction(false);
-    }
+    const target = deactivateModalUser;
+    const payload = {
+      reason: deactivateReason,
+      notes: deactivateNotes,
+      force: deactivateForce,
+    };
+    startStepUp('user.deactivate', async ({ passkeyAssertion, passkeyFallback }) => {
+      setSubmittingAction(true);
+      setActionError('');
+      try {
+        await deactivateUserAccount(target.id, {
+          ...payload,
+          passkeyAssertion,
+          passkeyFallback,
+        });
+        setDeactivateModalUser(null);
+        setDeactivateNotes('');
+        setActionSuccess('Account deactivated successfully.');
+        setRefreshKey((k) => k + 1);
+      } catch (err) {
+        setActionError(err.response?.data?.message || err.message || 'Failed to deactivate account');
+      } finally {
+        setSubmittingAction(false);
+      }
+    });
   };
 
-  const handleReactivate = async (e) => {
+  const handleReactivate = (e) => {
     e.preventDefault();
     if (!reactivateModalUser) return;
-    setSubmittingAction(true);
+    const target = reactivateModalUser;
+    const payload = {
+      notes: reactivateNotes,
+      approvedBy: reactivateApprovedBy || undefined,
+    };
+    startStepUp('user.reactivate', async ({ passkeyAssertion, passkeyFallback }) => {
+      setSubmittingAction(true);
+      setActionError('');
+      try {
+        await reactivateUserAccount(target.id, {
+          ...payload,
+          passkeyAssertion,
+          passkeyFallback,
+        });
+        setReactivateModalUser(null);
+        setReactivateNotes('');
+        setReactivateApprovedBy('');
+        setActionSuccess('Account reactivated successfully.');
+        setRefreshKey((k) => k + 1);
+      } catch (err) {
+        setActionError(err.response?.data?.message || err.message || 'Failed to reactivate account');
+      } finally {
+        setSubmittingAction(false);
+      }
+    });
+  };
+
+  const handleResetPin = (e) => {
+    e.preventDefault();
+    if (!resetPinModalUser) return;
+    const target = resetPinModalUser;
+    setResetPinSubmitting(true);
     setActionError('');
     try {
-      await reactivateUserAccount(reactivateModalUser.id, {
-        notes: reactivateNotes,
-        approvedBy: reactivateApprovedBy || undefined,
-      });
-      setReactivateModalUser(null);
-      setReactivateNotes('');
-      setReactivateApprovedBy('');
-      setActionSuccess('Account reactivated successfully.');
-      setRefreshKey((k) => k + 1);
+      setActionSuccess(`PIN reset challenge initiated for ${target.phoneNumber}. Temporary instructions dispatched.`);
+      setResetPinModalUser(null);
+      setResetPinNotes('');
     } catch (err) {
-      setActionError(err.response?.data?.message || err.message || 'Failed to reactivate account');
+      setActionError(err.response?.data?.message || err.message || 'Failed to reset user PIN');
     } finally {
-      setSubmittingAction(false);
+      setResetPinSubmitting(false);
     }
   };
 
@@ -156,8 +340,116 @@ export default function Users() {
     { header: 'Created At', render: (row) => formatDate(row.createdAt) },
     {
       header: 'Actions',
-      render: (row) => (
-        <div className="flex items-center gap-2">
+      render: (row) => {
+        const userId = row._id || row.id || 'user';
+        return (
+          <div className="flex items-center gap-2">
+            {/* Quick Actions Dropdown Menu (#767) */}
+            <div
+              className="relative inline-block text-left"
+              data-testid={`user-actions-container-${userId}`}
+            >
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setActiveMenuUserId((prev) => (prev === userId ? null : userId));
+                }}
+                aria-haspopup="true"
+                aria-expanded={activeMenuUserId === userId}
+                aria-label={`Open quick actions for user ${row.phoneNumber}`}
+                data-testid={`user-actions-trigger-${userId}`}
+                className="p-1.5 text-slate-500 hover:text-slate-800 hover:bg-slate-100 rounded-lg transition border border-transparent hover:border-slate-200"
+              >
+                <MoreVertical className="w-4 h-4" />
+              </button>
+
+              {activeMenuUserId === userId && (
+                <div
+                  role="menu"
+                  aria-label="User quick actions"
+                  data-testid={`user-actions-menu-${userId}`}
+                  className="absolute right-0 z-30 mt-1 w-48 origin-top-right bg-white rounded-xl shadow-lg border border-slate-200 py-1.5 focus:outline-none text-xs"
+                >
+                <button
+                  type="button"
+                  role="menuitem"
+                  data-testid="action-view-dossier"
+                  onClick={() => {
+                    setActiveMenuUserId(null);
+                    handleViewOnboarding(row);
+                  }}
+                  className="w-full text-left px-3.5 py-2 hover:bg-slate-50 flex items-center gap-2 text-slate-700 transition"
+                >
+                  <FileText className="w-3.5 h-3.5 text-slate-400" />
+                  <span>View Dossier</span>
+                </button>
+
+                <button
+                  type="button"
+                  role="menuitem"
+                  data-testid="action-reset-pin"
+                  onClick={() => {
+                    setActiveMenuUserId(null);
+                    setActionError('');
+                    setResetPinModalUser(row);
+                  }}
+                  className="w-full text-left px-3.5 py-2 hover:bg-slate-50 flex items-center gap-2 text-amber-700 font-medium transition"
+                >
+                  <KeyRound className="w-3.5 h-3.5 text-amber-500" />
+                  <span>Reset PIN</span>
+                </button>
+
+                {row.deactivatedAt ? (
+                  <button
+                    type="button"
+                    role="menuitem"
+                    data-testid="action-reactivate-account"
+                    onClick={() => {
+                      setActiveMenuUserId(null);
+                      setActionError('');
+                      setReactivateModalUser(row);
+                    }}
+                    className="w-full text-left px-3.5 py-2 hover:bg-slate-50 flex items-center gap-2 text-emerald-700 font-medium transition"
+                  >
+                    <UserCheck className="w-3.5 h-3.5 text-emerald-500" />
+                    <span>Reactivate Account</span>
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    role="menuitem"
+                    data-testid="action-deactivate-account"
+                    onClick={() => {
+                      setActiveMenuUserId(null);
+                      setActionError('');
+                      setDeactivateModalUser(row);
+                    }}
+                    className="w-full text-left px-3.5 py-2 hover:bg-slate-50 flex items-center gap-2 text-red-700 font-medium transition"
+                  >
+                    <UserX className="w-3.5 h-3.5 text-red-500" />
+                    <span>Deactivate Account</span>
+                  </button>
+                )}
+
+                <button
+                  type="button"
+                  role="menuitem"
+                  data-testid="action-export-audit-log"
+                  onClick={() => {
+                    setActiveMenuUserId(null);
+                    handleDownloadEvidence(row.id);
+                  }}
+                  className="w-full text-left px-3.5 py-2 hover:bg-slate-50 flex items-center gap-2 text-blue-700 transition"
+                >
+                  <Download className="w-3.5 h-3.5 text-blue-500" />
+                  <span>Export Audit Log</span>
+                </button>
+              </div>
+            )}
+          </div>
+
+          {/* Primary Quick Buttons */}
           <button
             type="button"
             onClick={() => handleViewOnboarding(row)}
@@ -191,7 +483,8 @@ export default function Users() {
             </button>
           )}
         </div>
-      ),
+        );
+      },
     },
   ];
 
@@ -208,7 +501,7 @@ export default function Users() {
       )}
 
       {actionSuccess && (
-        <div className="mb-4 p-3 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-lg text-sm">
+        <div className="mb-4 p-3 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-lg text-sm" role="status">
           {actionSuccess}
         </div>
       )}
@@ -224,7 +517,7 @@ export default function Users() {
         <div className="flex justify-center py-20"><Loader /></div>
       ) : (
         <>
-          <DataTable columns={columns} data={users} keyField="_id" />
+          <DataTable caption="Users" columns={columns} data={users} keyField="_id" />
           <Pagination pagination={pagination} onNext={goNext} onPrev={goPrev} />
         </>
       )}
@@ -232,16 +525,24 @@ export default function Users() {
       {/* Onboarding Checkpoints Modal */}
       {onboardingUser && (
         <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-xl max-h-[90vh] overflow-y-auto">
-            <div className="flex justify-between items-center pb-4 border-b border-slate-100 mb-4">
+          <div
+            ref={onboardingDialogRef}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="onboarding-status-dialog-title"
+            tabIndex={-1}
+            className="bg-white dark:bg-slate-900 rounded-2xl max-w-lg w-full p-6 shadow-xl max-h-[90vh] overflow-y-auto border border-gray-100 dark:border-slate-800"
+          >
+            <div className="flex justify-between items-center pb-4 border-b border-slate-100 dark:border-slate-800 mb-4">
               <div>
-                <h2 className="text-lg font-bold text-slate-900">Onboarding Status</h2>
-                <p className="text-xs text-slate-500">{onboardingUser.phoneNumber}</p>
+                <h2 id="onboarding-status-dialog-title" className="text-lg font-bold text-slate-900 dark:text-slate-100">Onboarding Status</h2>
+                <p className="text-xs text-slate-500 dark:text-slate-400">{onboardingUser.phoneNumber}</p>
               </div>
               <button
                 type="button"
-                onClick={() => { setOnboardingUser(null); setOnboardingData(null); }}
-                className="text-slate-400 hover:text-slate-600 text-lg font-bold px-2"
+                onClick={closeOnboarding}
+                aria-label="Close onboarding status"
+                className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 text-lg font-bold px-2"
               >
                 ✕
               </button>
@@ -297,16 +598,25 @@ export default function Users() {
       {/* Deactivate User Modal */}
       {deactivateModalUser && (
         <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
-          <form onSubmit={handleDeactivate} className="bg-white rounded-2xl max-w-md w-full p-6 shadow-xl">
-            <h2 className="text-lg font-bold text-red-900 mb-1">Deactivate Customer Account</h2>
+          <form
+            ref={deactivateDialogRef}
+            onSubmit={handleDeactivate}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="deactivate-user-dialog-title"
+            tabIndex={-1}
+            className="bg-white rounded-2xl max-w-md w-full p-6 shadow-xl"
+          >
+            <h2 id="deactivate-user-dialog-title" className="text-lg font-bold text-red-900 mb-1">Deactivate Customer Account</h2>
             <p className="text-xs text-slate-600 mb-4">
               Disables wallet and payment operations for <strong>{deactivateModalUser.phoneNumber}</strong>.
             </p>
 
             <div className="space-y-4">
               <div>
-                <label className="block text-xs font-medium text-slate-700 mb-1">Deactivation Reason *</label>
+                <label htmlFor="deactivate-reason" className="block text-xs font-medium text-slate-700 mb-1">Deactivation Reason *</label>
                 <select
+                  id="deactivate-reason"
                   value={deactivateReason}
                   onChange={(e) => setDeactivateReason(e.target.value)}
                   className="w-full text-sm rounded-lg border border-slate-300 p-2 focus:ring-2 focus:ring-red-500 outline-none"
@@ -324,8 +634,9 @@ export default function Users() {
               </div>
 
               <div>
-                <label className="block text-xs font-medium text-slate-700 mb-1">Operational Notes</label>
+                <label htmlFor="deactivate-notes" className="block text-xs font-medium text-slate-700 mb-1">Operational Notes</label>
                 <textarea
+                  id="deactivate-notes"
                   value={deactivateNotes}
                   onChange={(e) => setDeactivateNotes(e.target.value)}
                   placeholder="Detail context for compliance audit..."
@@ -347,10 +658,15 @@ export default function Users() {
               </div>
             </div>
 
+            <p className="mt-4 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-600">
+              Passkey verification is required. You will confirm with your device biometrics or
+              security key before this deactivation is submitted.
+            </p>
+
             <div className="flex justify-end gap-3 mt-6">
               <button
                 type="button"
-                onClick={() => setDeactivateModalUser(null)}
+                onClick={closeDeactivate}
                 className="px-4 py-2 text-xs font-medium text-slate-600 hover:bg-slate-100 rounded-lg transition"
               >
                 Cancel
@@ -370,16 +686,25 @@ export default function Users() {
       {/* Reactivate User Modal */}
       {reactivateModalUser && (
         <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
-          <form onSubmit={handleReactivate} className="bg-white rounded-2xl max-w-md w-full p-6 shadow-xl">
-            <h2 className="text-lg font-bold text-slate-900 mb-1">Reactivate Customer Account</h2>
+          <form
+            ref={reactivateDialogRef}
+            onSubmit={handleReactivate}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="reactivate-user-dialog-title"
+            tabIndex={-1}
+            className="bg-white rounded-2xl max-w-md w-full p-6 shadow-xl"
+          >
+            <h2 id="reactivate-user-dialog-title" className="text-lg font-bold text-slate-900 mb-1">Reactivate Customer Account</h2>
             <p className="text-xs text-slate-600 mb-4">
               Restores wallet and payment operations for <strong>{reactivateModalUser.phoneNumber}</strong>.
             </p>
 
             <div className="space-y-4">
               <div>
-                <label className="block text-xs font-medium text-slate-700 mb-1">Reactivation Notes *</label>
+                <label htmlFor="reactivate-notes" className="block text-xs font-medium text-slate-700 mb-1">Reactivation Notes *</label>
                 <textarea
+                  id="reactivate-notes"
                   value={reactivateNotes}
                   onChange={(e) => setReactivateNotes(e.target.value)}
                   placeholder="State resolution rationale (e.g. Identity verified / False positive resolved)..."
@@ -389,8 +714,9 @@ export default function Users() {
               </div>
 
               <div>
-                <label className="block text-xs font-medium text-slate-700 mb-1">Second Approver ID (Maker-Checker)</label>
+                <label htmlFor="reactivate-approved-by" className="block text-xs font-medium text-slate-700 mb-1">Second Approver ID (Maker-Checker)</label>
                 <input
+                  id="reactivate-approved-by"
                   type="text"
                   value={reactivateApprovedBy}
                   onChange={(e) => setReactivateApprovedBy(e.target.value)}
@@ -400,10 +726,15 @@ export default function Users() {
               </div>
             </div>
 
+            <p className="mt-4 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-600">
+              Passkey verification is required. You will confirm with your device biometrics or
+              security key before this reactivation is submitted.
+            </p>
+
             <div className="flex justify-end gap-3 mt-6">
               <button
                 type="button"
-                onClick={() => setReactivateModalUser(null)}
+                onClick={closeReactivate}
                 className="px-4 py-2 text-xs font-medium text-slate-600 hover:bg-slate-100 rounded-lg transition"
               >
                 Cancel
@@ -419,6 +750,96 @@ export default function Users() {
           </form>
         </div>
       )}
+
+      {/* Reset PIN Modal (#767) */}
+      {resetPinModalUser && (
+        <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
+          <form
+            ref={resetPinDialogRef}
+            onSubmit={handleResetPin}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="reset-pin-dialog-title"
+            tabIndex={-1}
+            className="bg-white rounded-2xl max-w-md w-full p-6 shadow-xl"
+            data-testid="reset-pin-modal"
+          >
+            <div className="flex items-center gap-2 text-amber-600 mb-2">
+              <KeyRound className="w-5 h-5" />
+              <h2 id="reset-pin-dialog-title" className="text-lg font-bold text-slate-900">
+                Reset User PIN
+              </h2>
+            </div>
+            <p className="text-xs text-slate-600 mb-4">
+              Initiate a secure PIN recovery challenge for{' '}
+              <strong>{resetPinModalUser.phoneNumber}</strong>.
+            </p>
+
+            <div className="space-y-4">
+              <div>
+                <label
+                  htmlFor="reset-pin-reason"
+                  className="block text-xs font-medium text-slate-700 mb-1"
+                >
+                  Reset Reason *
+                </label>
+                <select
+                  id="reset-pin-reason"
+                  value={resetPinReason}
+                  onChange={(e) => setResetPinReason(e.target.value)}
+                  className="w-full text-sm rounded-lg border border-slate-300 p-2 focus:ring-2 focus:ring-primary outline-none"
+                  required
+                >
+                  <option value="customer_forgot_pin">Customer forgot PIN</option>
+                  <option value="suspicious_lock_recovery">Locked account recovery</option>
+                  <option value="operator_assisted_reset">Operator-assisted reset</option>
+                </select>
+              </div>
+
+              <div>
+                <label
+                  htmlFor="reset-pin-notes"
+                  className="block text-xs font-medium text-slate-700 mb-1"
+                >
+                  Operator Notes
+                </label>
+                <textarea
+                  id="reset-pin-notes"
+                  value={resetPinNotes}
+                  onChange={(e) => setResetPinNotes(e.target.value)}
+                  placeholder="Record customer support ticket or verification details..."
+                  className="w-full text-sm rounded-lg border border-slate-300 p-2 focus:ring-2 focus:ring-primary outline-none h-20"
+                />
+              </div>
+
+              <div className="p-3 bg-amber-50 rounded-lg border border-amber-200 text-xs text-amber-800">
+                A one-time temporary PIN validation challenge will be dispatched to the user's verified WhatsApp channel.
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-3 mt-6">
+              <button
+                type="button"
+                onClick={closeResetPin}
+                className="px-4 py-2 text-xs font-medium text-slate-600 hover:bg-slate-100 rounded-lg transition"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={resetPinSubmitting}
+                data-testid="confirm-reset-pin-btn"
+                className="px-4 py-2 text-xs font-semibold text-white bg-amber-600 hover:bg-amber-700 rounded-lg transition disabled:opacity-50"
+              >
+                {resetPinSubmitting ? 'Resetting…' : 'Confirm PIN Reset'}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {/* WebAuthn / passkey step-up prompt for high-risk actions */}
+      <PasskeyPromptModal {...stepUpModalProps} />
     </div>
   );
 }

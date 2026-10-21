@@ -66,3 +66,56 @@ test('cancelled and expired confirmations cannot authorize', async () => {
   expired.expiresAt = new Date('2029-12-31T23:59:59Z');
   assert.equal(await service.authorize(expired), false);
 });
+
+// ── Ambiguous replies (#458) ──────────────────────────────────────────────
+//
+// The reply a user types back is matched against the stored confirmation
+// through this service, so its documented fallback for anything ambiguous
+// is normalisation-or-nothing: case and padding differences resolve to the
+// same confirmation, and text that matches no reference resolves to none -
+// never to "the most recent one" or any other guess.
+
+test('a mixed-case reference reply still finds its confirmation', async () => {
+  const db = makeDb();
+  const service = createConfirmationService(db, { now: () => fixedNow });
+  const record = await service.create({ userId: 'u1', amount: '5', asset: 'XLM', destination: 'GA', routeType: 'domestic' });
+  const found = await service.find('u1', record.reference.toLowerCase());
+  assert.equal(found?.id, record.id);
+});
+
+test('unrelated reply text matches no confirmation rather than guessing', async () => {
+  const db = makeDb();
+  const service = createConfirmationService(db, { now: () => fixedNow });
+  await service.create({ userId: 'u1', amount: '5', asset: 'XLM', destination: 'GA', routeType: 'domestic' });
+  assert.equal(await service.find('u1', 'what is this'), undefined);
+  assert.equal(await service.find('u1', ''), undefined);
+  // Another user's reply can never resolve to u1's pending confirmation.
+  assert.equal(await service.find('u2', (await service.find('u1', 'nope'), 'ABCDEF')), undefined);
+});
+
+test('whitespace and case noise in the payment details hash identically', async () => {
+  // The summary hash is what authorize() re-checks, so an approval taken on
+  // "  GDEST  " / "xlm" must bind the same payment as "GDEST" / "XLM" - not
+  // read as a different (and thus unauthorisable) confirmation.
+  const clean = makeSummaryHash({ amount: '5', asset: 'XLM', destination: 'GDEST', routeType: 'domestic' });
+  const noisy = makeSummaryHash({ amount: 5, asset: 'xlm', destination: '  GDEST  ', routeType: 'domestic' });
+  assert.equal(noisy, clean);
+});
+
+test('a noisy create stores the normalised form and still authorizes', async () => {
+  const db = makeDb();
+  const service = createConfirmationService(db, { now: () => fixedNow });
+  const record = await service.create({ userId: 'u1', amount: 5, asset: 'xlm', destination: '  GDEST  ', routeType: 'domestic' });
+  assert.equal(record.asset, 'XLM');
+  assert.equal(record.destination, 'GDEST');
+  assert.equal(await service.authorize(record), true);
+});
+
+test('a tampered summary can never authorize, however plausible the reply', async () => {
+  const db = makeDb();
+  const service = createConfirmationService(db, { now: () => fixedNow });
+  const record = await service.create({ userId: 'u1', amount: '5', asset: 'XLM', destination: 'GA', routeType: 'domestic' });
+  const tampered = { ...record, summaryHash: makeSummaryHash({ amount: '900', asset: 'XLM', destination: 'GA', routeType: 'domestic' }) };
+  assert.equal(await service.authorize(tampered), false);
+  assert.equal(record.state, 'pending');
+});

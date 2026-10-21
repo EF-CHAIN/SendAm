@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { getAdminWallets } from '@/lib/adminApi';
 import { useListQuery } from '@/lib/useListQuery';
 import { formatDate } from '@shared/formatDate';
@@ -6,28 +6,36 @@ import DataTable from '@/components/DataTable';
 import Loader from '@shared/Loader';
 import Pagination from '@/components/Pagination';
 import FilterBar from '@/components/FilterBar';
+import { normalizeError } from '@shared/normalizeError.js';
 
 export default function Wallets() {
   const { params, getFilter, setFilter, resetFilters, goNext, goPrev } = useListQuery(['phone', 'chain', 'fundingState']);
   const [wallets, setWallets] = useState([]);
   const [pagination, setPagination] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  // Incremented by the retry button to re-run the fetch effect.
+  const [retryCount, setRetryCount] = useState(0);
 
   useEffect(() => {
     const fetchWallets = async () => {
       setLoading(true);
+      setError(null);
       try {
         const res = await getAdminWallets(params);
         setWallets(res.data);
         setPagination(res.pagination);
       } catch (err) {
-        console.error(err);
+        // normalizeError keeps raw error.message / stack out of the UI
+        setError(normalizeError(err).userMessage);
       } finally {
         setLoading(false);
       }
     };
     fetchWallets();
-  }, [params]);
+  }, [params, retryCount]);
+
+  const handleRetry = useCallback(() => setRetryCount((c) => c + 1), []);
 
   const columns = [
     { header: 'User Phone', render: (row) => row.userId?.phoneNumber || 'Unknown' },
@@ -59,9 +67,20 @@ export default function Wallets() {
 
       {loading ? (
         <div className="flex justify-center py-20"><Loader /></div>
+      ) : error ? (
+        <div className="text-red-500 p-4 bg-red-50 rounded-lg flex items-center justify-between gap-4" role="alert">
+          <span>{error}</span>
+          <button
+            type="button"
+            onClick={handleRetry}
+            className="text-sm font-medium underline shrink-0"
+          >
+            Try Again
+          </button>
+        </div>
       ) : (
         <>
-          <DataTable columns={columns} data={wallets} keyField="_id" />
+          <DataTable caption="Wallets" columns={columns} data={wallets} keyField="_id" />
           <Pagination pagination={pagination} onNext={goNext} onPrev={goPrev} />
         </>
       )}

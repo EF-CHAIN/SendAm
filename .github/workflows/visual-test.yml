@@ -1,0 +1,73 @@
+name: Visual Regression Tests
+
+on:
+  pull_request:
+    paths:
+      - 'apps/landing/**'
+      - 'apps/admin/**'
+      - 'playwright.config.js'
+      - '.github/workflows/visual-test.yml'
+  workflow_dispatch:
+    inputs:
+      update_snapshots:
+        description: 'Regenerate baseline screenshots and upload them as an artifact'
+        type: boolean
+        default: false
+
+concurrency:
+  group: visual-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  visual-regression:
+    name: Pixel-Diff Visual Regression (Landing & Admin)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Install Dependencies
+        run: npm ci
+
+      - name: Install Playwright Browsers
+        run: npx playwright install --with-deps chromium
+
+      - name: Run Visual Regression Suite
+        if: ${{ !inputs.update_snapshots }}
+        run: npm run test:visual
+        env:
+          CI: true
+
+      # Baselines must be rendered on the CI runner (fonts differ per OS).
+      # Dispatch with update_snapshots=true, download the artifact, commit the PNGs.
+      - name: Regenerate baseline screenshots
+        if: ${{ inputs.update_snapshots }}
+        run: npm run test:visual -- --update-snapshots
+        env:
+          CI: true
+
+      - name: Upload regenerated baselines
+        if: ${{ inputs.update_snapshots }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: visual-baselines
+          path: apps/*/e2e/*-snapshots/
+          retention-days: 7
+
+      - name: Upload Visual Failure Artifacts & Diffs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-visual-diffs
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 7

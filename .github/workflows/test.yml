@@ -137,3 +137,33 @@ jobs:
       # Component/smoke tests plus jest-axe accessibility checks for the
       # rendered home page. No live services required (jsdom + MemoryRouter).
       - run: npm run test:landing
+
+  accessibility-audit:
+    name: WCAG 2.2 AAA audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      # Both audit suites run here (rather than reusing the two jobs above) so a
+      # single report can cover the admin dashboard and the landing page. Each
+      # suite writes reports/a11y/<app>.json as it audits.
+      - name: Run the admin accessibility suite
+        run: npm run test:admin
+      - name: Run the landing accessibility suite
+        run: npm run test:landing
+      # Renders reports/a11y/accessibility-report.html. --strict fails the job
+      # if any audited view has a violation or an app produced no results.
+      - name: Build the accessibility compliance report
+        run: npm run a11y:report -- --strict
+      - name: Upload the accessibility report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: accessibility-report
+          path: reports/a11y/accessibility-report.html
+          if-no-files-found: error
+          retention-days: 30
