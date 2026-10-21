@@ -93,4 +93,49 @@ describe('CorridorGlobe', () => {
     render(<CorridorGlobe />);
     expect(screen.getByRole('img', { name: /interactive 3d globe/i })).toBeInTheDocument();
   });
+
+  it('parks the animation loop under reduced motion and wakes it for manual drag', () => {
+    window.matchMedia = vi.fn().mockImplementation((query) => ({
+      matches: query === '(prefers-reduced-motion: reduce)',
+      media: query,
+      onchange: null,
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    }));
+    const raf = vi.spyOn(window, 'requestAnimationFrame').mockReturnValue(1);
+
+    render(<CorridorGlobe />);
+    // The first frame paints the static view and, with nothing moving,
+    // never schedules a second one.
+    expect(raf).not.toHaveBeenCalled();
+
+    // Manual interaction stays available: dragging wakes the loop.
+    const canvas = screen.getByRole('img', { name: /interactive 3d globe/i });
+    fireEvent.pointerDown(canvas, { clientX: 100, clientY: 100 });
+    expect(raf).toHaveBeenCalled();
+
+    raf.mockRestore();
+  });
+
+  it('keeps the continuous rotation loop when motion is not reduced', () => {
+    window.matchMedia = vi.fn().mockImplementation((query) => ({
+      matches: false,
+      media: query,
+      onchange: null,
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    }));
+    const raf = vi.spyOn(window, 'requestAnimationFrame').mockReturnValue(1);
+
+    render(<CorridorGlobe />);
+    expect(raf).toHaveBeenCalled();
+
+    raf.mockRestore();
+  });
 });

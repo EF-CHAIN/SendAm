@@ -3,6 +3,7 @@ import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import Navbar from './Navbar.jsx';
+import I18nProvider from '@/lib/I18nProvider.jsx';
 import { whatsappUrl } from '@/lib/links.js';
 
 function renderNavbar() {
@@ -50,9 +51,12 @@ describe('Navbar', () => {
     renderNavbar();
 
     const links = screen.getAllByRole('link');
-    for (const link of links) {
+    const select = screen.getAllByRole('combobox', { name: /language/i })[0];
+    // The language switcher sits between the Onboarding link and the CTA.
+    const stops = [...links.slice(0, -1), select, links[links.length - 1]];
+    for (const stop of stops) {
       await user.tab();
-      expect(link).toHaveFocus();
+      expect(stop).toHaveFocus();
     }
   });
 
@@ -126,7 +130,13 @@ describe('Navbar', () => {
       await user.click(toggle());
 
       const dialog = screen.getByRole('dialog');
-      const focusable = within(dialog).getAllByRole('link');
+      const drawerLinks = within(dialog).getAllByRole('link');
+      // DOM order: section links, Onboarding, the language switcher, the CTA.
+      const focusable = [
+        ...drawerLinks.slice(0, -1),
+        within(dialog).getByRole('combobox', { name: /language/i }),
+        drawerLinks[drawerLinks.length - 1],
+      ];
       const closeButton = within(dialog).getByRole('button', { name: /close menu/i });
       expect(closeButton).toHaveFocus();
 
@@ -163,6 +173,56 @@ describe('Navbar', () => {
       await user.click(toggle());
       await user.click(within(screen.getByRole('dialog')).getByRole('link', { name: 'Onboarding' }));
       expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    });
+  });
+
+  describe('language switcher', () => {
+    function renderWithI18n() {
+      return render(
+        <MemoryRouter>
+          <I18nProvider>
+            <Navbar />
+          </I18nProvider>
+        </MemoryRouter>
+      );
+    }
+
+    afterEach(() => {
+      window.localStorage.removeItem('sendam.lang');
+      document.documentElement.lang = '';
+    });
+
+    it('offers English, French, Swahili and Yoruba', () => {
+      renderNavbar();
+      const select = screen.getAllByRole('combobox', { name: /language/i })[0];
+      const codes = within(select)
+        .getAllByRole('option')
+        .map((option) => option.value);
+      expect(codes).toEqual(['en', 'fr', 'sw', 'yo']);
+    });
+
+    it('switches navigation labels and the CTA immediately, without a reload', async () => {
+      const user = userEvent.setup();
+      renderWithI18n();
+
+      const select = screen.getAllByRole('combobox', { name: /language/i })[0];
+      await user.selectOptions(select, 'fr');
+
+      expect(screen.getByRole('link', { name: 'Fonctionnalités' })).toHaveAttribute('href', '#features');
+      expect(screen.getByRole('link', { name: 'Comment ça marche' })).toBeInTheDocument();
+      expect(screen.getByRole('link', { name: /ouvrir whatsapp|démarrer/i })).toBeInTheDocument();
+      expect(document.documentElement.lang).toBe('fr');
+
+      await user.selectOptions(screen.getAllByRole('combobox', { name: /langue/i })[0], 'sw');
+      expect(screen.getByRole('link', { name: 'Vipengele' })).toBeInTheDocument();
+    });
+
+    it('persists the chosen language for the next visit', async () => {
+      const user = userEvent.setup();
+      renderWithI18n();
+      await user.selectOptions(screen.getAllByRole('combobox', { name: /language/i })[0], 'yo');
+      expect(window.localStorage.getItem('sendam.lang')).toBe('yo');
+      expect(screen.getByRole('link', { name: 'Àwọn ẹ̀yà' })).toBeInTheDocument();
     });
   });
 });
