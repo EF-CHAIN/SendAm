@@ -1,10 +1,11 @@
 /**
  * Dedicated Web Worker for background in-memory inverted index and fuzzy search.
+ * Covers transactions, users, and wallets (multi-entity omnibox — Issue #757).
  * Computes Levenshtein distance, token prefix match scoring, and multi-field matching
  * without blocking or freezing the main UI thread.
  */
 
-// Inverted index maps token prefixes and keywords to record IDs
+// In-memory store: all indexed records across entity types
 let records = [];
 let indexedRecords = [];
 
@@ -52,9 +53,9 @@ function tokenize(text) {
 }
 
 /**
- * Builds searchable representation of transaction/user record.
+ * Builds a searchable text representation for a transaction record.
  */
-function indexRecord(record) {
+function indexTransaction(record) {
   const searchableParts = [
     record.id || record._id || "",
     record.txHash || record.hash || "",
@@ -68,8 +69,59 @@ function indexRecord(record) {
     record.destination || "",
     record.memo || "",
   ];
+  return searchableParts.join(" ").toLowerCase();
+}
 
-  const fullText = searchableParts.join(" ").toLowerCase();
+/**
+ * Builds a searchable text representation for a user record.
+ */
+function indexUser(record) {
+  const searchableParts = [
+    record.id || record._id || "",
+    record.email || "",
+    record.phoneNumber || record.phone || "",
+    record.firstName || "",
+    record.lastName || "",
+    record.whatsappName || record.displayName || "",
+    record.kycStatus || record.status || "",
+    record.country || "",
+    record.tier || "",
+  ];
+  return searchableParts.join(" ").toLowerCase();
+}
+
+/**
+ * Builds a searchable text representation for a wallet record.
+ */
+function indexWallet(record) {
+  const searchableParts = [
+    record.id || record._id || "",
+    record.address || record.walletAddress || "",
+    record.network || record.chain || "",
+    record.asset || record.currency || "",
+    record.label || record.name || "",
+    record.status || "",
+    record.userId || record.owner || "",
+    record.balance != null ? String(record.balance) : "",
+  ];
+  return searchableParts.join(" ").toLowerCase();
+}
+
+/**
+ * Builds searchable representation of a record based on its entityType.
+ */
+function indexRecord(record) {
+  let fullText;
+  const entityType = record._entityType;
+
+  if (entityType === "user") {
+    fullText = indexUser(record);
+  } else if (entityType === "wallet") {
+    fullText = indexWallet(record);
+  } else {
+    fullText = indexTransaction(record);
+  }
+
   const tokens = Array.from(new Set(tokenize(fullText)));
 
   return {
@@ -157,8 +209,50 @@ self.onmessage = function (event) {
   const { type, payload, id } = event.data || {};
 
   switch (type) {
+    /**
+     * INDEX_MULTI: indexes transactions, users, and wallets in a single pass.
+     * Each record is tagged with _entityType before being passed to indexRecord().
+     * payload = { transactions: [], users: [], wallets: [] }
+     */
+    case "INDEX_MULTI": {
+      const transactions = (payload?.transactions || []).map((r) => ({
+        ...r,
+        _entityType: "transaction",
+      }));
+      const users = (payload?.users || []).map((r) => ({
+        ...r,
+        _entityType: "user",
+      }));
+      const wallets = (payload?.wallets || []).map((r) => ({
+        ...r,
+        _entityType: "wallet",
+      }));
+
+      records = [...transactions, ...users, ...wallets];
+      indexedRecords = records.map(indexRecord);
+
+      self.postMessage({
+        type: "INDEX_COMPLETE",
+        id,
+        count: indexedRecords.length,
+        breakdown: {
+          transactions: transactions.length,
+          users: users.length,
+          wallets: wallets.length,
+        },
+      });
+      break;
+    }
+
+    /**
+     * INDEX_DATA: legacy single-entity index for backward compatibility.
+     * Records are treated as transactions unless they carry _entityType.
+     */
     case "INDEX_DATA": {
-      records = payload?.records || [];
+      records = (payload?.records || []).map((r) => ({
+        _entityType: "transaction",
+        ...r,
+      }));
       indexedRecords = records.map(indexRecord);
       self.postMessage({
         type: "INDEX_COMPLETE",
