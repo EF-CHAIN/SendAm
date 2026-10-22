@@ -45,6 +45,21 @@ export const getAdminMe = async () => {
   return data?.data || null;
 };
 
+// Rotate the current session token after an explicit idle-warning confirmation.
+export const renewAdminSession = async () => {
+  const { data } = await api.post('/admin/session/renew');
+  const token = data?.data?.token;
+  if (!token) throw new Error('Session renewal did not return a token');
+  setToken(token);
+  return data?.data;
+};
+
+export const adminLogout = async () => {
+  const { data } = await api.post('/admin/logout');
+  removeToken();
+  return data;
+};
+
 // Self-serve password rotation. Required first step after a bootstrap/temporary
 // credential; also revokes all other active sessions for the operator.
 export const changeAdminPassword = async ({ currentPassword, newPassword }) => {

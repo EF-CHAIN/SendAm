@@ -127,3 +127,215 @@ it.each([
   expect(onQuickReply).not.toHaveBeenCalled();
   act(() => renderer.unmount());
 });
+function findByTestID(tree, testID) {
+  if (Array.isArray(tree)) {
+    for (const node of tree) {
+      const found = findByTestID(node, testID);
+      if (found) return found;
+    }
+    return null;
+  }
+  if (!tree || typeof tree !== 'object') return null;
+  if (tree.props?.testID === testID) return tree;
+  for (const child of tree.children ?? []) {
+    const found = findByTestID(child, testID);
+    if (found) return found;
+  }
+  return null;
+}
+
+function touchAt(pageX, pageY) {
+  return { nativeEvent: { touches: [{ pageX, pageY }] } };
+}
+
+describe('MessageList swipe to reply', () => {
+  const messages = [{ id: '1', text: 'Your balance is 10 XLM', sender: 'bot' }];
+  const renderers = [];
+
+  afterEach(() => {
+    act(() => renderers.splice(0).forEach((renderer) => renderer.unmount()));
+  });
+
+  async function renderList(props = {}) {
+    let renderer;
+    await act(async () => {
+      renderer = create(<MessageList messages={messages} {...props} />);
+    });
+    renderers.push(renderer);
+    return renderer;
+  }
+
+  it('shows a reply icon only while the bubble is dragged right', async () => {
+    const renderer = await renderList();
+    expect(findByTestID(renderer.toJSON(), 'reply-icon-1')).toBeNull();
+
+    const row = findByTestID(renderer.toJSON(), 'swipe-row-1');
+    expect(row).not.toBeNull();
+
+    await act(async () => {
+      row.props.onTouchStart(touchAt(100, 80));
+      row.props.onResponderMove(touchAt(160, 82));
+    });
+
+    expect(findByTestID(renderer.toJSON(), 'reply-icon-1')).not.toBeNull();
+  });
+
+  it('calls onReply and hides the icon when released past the threshold', async () => {
+    const onReply = jest.fn();
+    const renderer = await renderList({ onReply });
+
+    await act(async () => {
+      const row = findByTestID(renderer.toJSON(), 'swipe-row-1');
+      row.props.onTouchStart(touchAt(100, 80));
+      row.props.onResponderMove(touchAt(180, 80));
+    });
+
+    expect(onReply).not.toHaveBeenCalled();
+
+    await act(async () => {
+      findByTestID(renderer.toJSON(), 'swipe-row-1').props.onResponderRelease();
+    });
+
+    expect(onReply).toHaveBeenCalledTimes(1);
+    expect(onReply).toHaveBeenCalledWith(messages[0]);
+    expect(findByTestID(renderer.toJSON(), 'reply-icon-1')).toBeNull();
+  });
+
+  it('does not reply for a swipe shorter than the threshold', async () => {
+    const onReply = jest.fn();
+    const renderer = await renderList({ onReply });
+
+    await act(async () => {
+      const row = findByTestID(renderer.toJSON(), 'swipe-row-1');
+      row.props.onTouchStart(touchAt(100, 80));
+      row.props.onResponderMove(touchAt(130, 80));
+    });
+
+    await act(async () => {
+      findByTestID(renderer.toJSON(), 'swipe-row-1').props.onResponderRelease();
+    });
+
+    expect(onReply).not.toHaveBeenCalled();
+  });
+
+  it('only claims gestures that are clearly horizontal swipes to the right', async () => {
+    const renderer = await renderList();
+    const row = findByTestID(renderer.toJSON(), 'swipe-row-1');
+    row.props.onTouchStart(touchAt(100, 80));
+
+    expect(row.props.onMoveShouldSetResponder(touchAt(90, 80))).toBe(false);
+    expect(row.props.onMoveShouldSetResponder(touchAt(120, 150))).toBe(false);
+    expect(row.props.onMoveShouldSetResponder(touchAt(150, 82))).toBe(true);
+  });
+
+  it('renders the quoted message above the reply text', async () => {
+    let renderer;
+    await act(async () => {
+      renderer = create(
+        <MessageList
+          messages={[
+            {
+              id: '4',
+              text: 'Sure, sending now',
+              sender: 'user',
+              replyTo: { id: '2', text: 'Your SendAm balances: 10 XLM', sender: 'bot' },
+            },
+          ]}
+        />
+      );
+    });
+
+    const quoted = findByTestID(renderer.toJSON(), 'bubble-user');
+    renderers.push(renderer);
+    expect(quoted).not.toBeNull();
+
+    const texts = [];
+    (function walk(node) {
+      if (!node || typeof node !== 'object') return;
+      if (node.type === 'Text') texts.push(node.children?.[0]);
+      (node.children ?? []).forEach(walk);
+    })(renderer.toJSON());
+
+    expect(texts).toContain('SendAm');
+    expect(texts).toContain('Your SendAm balances: 10 XLM');
+    expect(texts).toContain('Sure, sending now');
+  });
+});
+
+describe('copy and swipe interaction', () => {
+  let renderer;
+  const message = {
+    id: 'quoted-reply',
+    text: 'Sending now\nReference: 你好 💸  ',
+    sender: 'user',
+    replyTo: { id: 'original', text: 'Please send 5 XLM', sender: 'bot' },
+  };
+
+  beforeEach(() => Clipboard.setStringAsync.mockClear());
+  afterEach(() => act(() => renderer?.unmount()));
+
+  async function renderReply(onReply) {
+    await act(async () => {
+      renderer = create(<MessageList messages={[message]} onReply={onReply} />);
+    });
+    const copy = renderer.root.findByType(MessageCopyButton);
+    return copy.findAll((node) => node.props.accessibilityRole === 'button' && typeof node.props.onPress === 'function')[0];
+  }
+
+  it('copies only the message text, not its quoted preview, without starting a reply', async () => {
+    const onReply = jest.fn();
+    const button = await renderReply(onReply);
+    const row = findByTestID(renderer.toJSON(), 'swipe-row-quoted-reply');
+    row.props.onTouchStart(touchAt(100, 80));
+    expect(row.props.onMoveShouldSetResponder(touchAt(102, 81))).toBe(false);
+
+    await act(async () => { await button.props.onPress(); });
+
+    expect(Clipboard.setStringAsync).toHaveBeenCalledTimes(1);
+    expect(Clipboard.setStringAsync).toHaveBeenCalledWith(message.text);
+    expect(button.props.accessibilityLabel).toBe('Message copied');
+    expect(onReply).not.toHaveBeenCalled();
+  });
+
+  it('keeps swipe-to-reply independent from copying and preserves the copy control afterward', async () => {
+    const onReply = jest.fn();
+    const button = await renderReply(onReply);
+    await act(async () => {
+      const row = findByTestID(renderer.toJSON(), 'swipe-row-quoted-reply');
+      row.props.onTouchStart(touchAt(100, 80));
+      row.props.onResponderMove(touchAt(180, 80));
+      row.props.onResponderRelease();
+    });
+
+    expect(onReply).toHaveBeenCalledTimes(1);
+    expect(onReply).toHaveBeenCalledWith(message);
+    expect(Clipboard.setStringAsync).not.toHaveBeenCalled();
+    expect(findByTestID(renderer.toJSON(), 'reply-icon-quoted-reply')).toBeNull();
+
+    await act(async () => { await button.props.onPress(); });
+    expect(Clipboard.setStringAsync).toHaveBeenCalledWith(message.text);
+    expect(onReply).toHaveBeenCalledTimes(1);
+  });
+
+  it('records a mouse press without claiming it or treating a small movement as a swipe', async () => {
+    const onReply = jest.fn();
+    const button = await renderReply(onReply);
+    const row = findByTestID(renderer.toJSON(), 'swipe-row-quoted-reply');
+    const mouseAt = (pageX, pageY) => ({ nativeEvent: { pageX, pageY } });
+
+    expect(row.props.onStartShouldSetResponderCapture(mouseAt(600, 200))).toBe(false);
+    expect(row.props.onMoveShouldSetResponder(mouseAt(601, 201))).toBe(false);
+    await act(async () => { await button.props.onPress(); });
+    expect(Clipboard.setStringAsync).toHaveBeenCalledWith(message.text);
+    expect(onReply).not.toHaveBeenCalled();
+
+    expect(row.props.onStartShouldSetResponderCapture(mouseAt(600, 200))).toBe(false);
+    expect(row.props.onMoveShouldSetResponder(mouseAt(670, 201))).toBe(true);
+    await act(async () => {
+      row.props.onResponderMove(mouseAt(670, 201));
+      row.props.onResponderRelease();
+    });
+    expect(onReply).toHaveBeenCalledTimes(1);
+    expect(Clipboard.setStringAsync).toHaveBeenCalledTimes(1);
+  });
+});

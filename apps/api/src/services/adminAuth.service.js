@@ -56,6 +56,23 @@ const verifyToken = async (token) => {
   await prisma.adminSession.update({ where: { id: session.id }, data: { lastUsedAt: new Date() } });
   return { id: session.admin.id, email: session.admin.email, name: session.admin.name, role: session.admin.role.name, permissions: session.admin.role.permissions, sessionId: session.id, mustChangePassword: session.admin.mustChangePassword === true };
 };
+const renewSession = async ({ adminId, sessionId }) => prisma.$transaction(async (tx) => {
+  const now = new Date();
+  const current = await tx.adminSession.findUnique({ where: { id: sessionId } });
+  if (!current || current.adminId !== adminId || current.revokedAt || current.expiresAt <= now) {
+    throw Object.assign(new Error('Session expired'), { statusCode: 401 });
+  }
+  const token = crypto.randomBytes(32).toString('base64url');
+  const revoked = await tx.adminSession.updateMany({
+    where: { id: sessionId, adminId, revokedAt: null, expiresAt: { gt: now } },
+    data: { revokedAt: now },
+  });
+  if (revoked.count !== 1) throw Object.assign(new Error('Session expired'), { statusCode: 401 });
+  const session = await tx.adminSession.create({
+    data: { adminId, tokenHash: tokenHash(token), expiresAt: new Date(now.getTime() + TTL_MS) },
+  });
+  return { token, session };
+});
 const hasPermission = (admin, permission) => Boolean(admin?.permissions?.includes('*') || admin?.permissions?.includes(permission));
 const createInvitation = async ({ email, name, roleName, createdById }) => {
   const role = await prisma.adminRole.findUnique({ where: { name: roleName } });
@@ -82,4 +99,4 @@ const changeOwnPassword = async ({ adminId, currentPassword, newPassword, sessio
   await tx.adminSession.updateMany({ where: { adminId, revokedAt: null, ...(sessionId ? { id: { not: sessionId } } : {}) }, data: { revokedAt: new Date() } });
   return { id: admin.id, email: admin.email, name: admin.name };
 });
-module.exports = { ROLE_PERMISSIONS, hashPassword, verifyPassword, ensureRoles, authenticate, verifyToken, hasPermission, createInvitation, acceptInvitation, revokeSessions, changeOwnPassword };
+module.exports = { ROLE_PERMISSIONS, hashPassword, verifyPassword, ensureRoles, authenticate, verifyToken, renewSession, hasPermission, createInvitation, acceptInvitation, revokeSessions, changeOwnPassword };
