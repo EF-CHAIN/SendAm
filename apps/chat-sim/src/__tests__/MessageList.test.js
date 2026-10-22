@@ -486,6 +486,39 @@ describe('copy, swipe and attachment integration', () => {
     expect(onReply).toHaveBeenCalledWith(message);
     expect(Clipboard.setStringAsync).not.toHaveBeenCalled();
   });
+
+  it.each(attachments)('preserves an attached $type card before voice controls without copying the voice label', async (attachment) => {
+    const message = {
+      id: `voice-${attachment.type}`,
+      sender: 'user',
+      type: 'voice',
+      duration: 5,
+      text: '🎤 Voice note (0:05)',
+      attachment,
+      replyTo: { id: 'original', text: 'Please send your receipt', sender: 'bot' },
+    };
+    const onReply = jest.fn();
+    await act(async () => {
+      renderer = create(<MessageList messages={[message]} onReply={onReply} />);
+    });
+
+    const tree = renderer.toJSON();
+    expect(nodesMatching(tree, (node) => node.props?.testID === 'bubble-user')).toHaveLength(1);
+    const bubble = findByTestID(tree, 'bubble-user');
+    expect(bubble.children.map((child) => child.props?.testID).filter(Boolean)).toEqual([
+      'media-card', `voice-note-${message.id}`,
+    ]);
+    expect(nodesMatching(bubble, (node) => node.type === 'Text' && node.children?.[0] === message.replyTo.text)).toHaveLength(1);
+    expect(renderer.root.findAllByType(MessageCopyButton)).toHaveLength(0);
+    const row = findByTestID(tree, `swipe-row-${message.id}`);
+    await act(async () => {
+      row.props.onTouchStart(touchAt(100, 80));
+      row.props.onResponderMove(touchAt(180, 80));
+      row.props.onResponderRelease();
+    });
+    expect(onReply).toHaveBeenCalledWith(message);
+    expect(Clipboard.setStringAsync).not.toHaveBeenCalled();
+  });
 });
 
 describe('voice controls and swipe integration', () => {

@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
+import { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo } from 'react';
 import {
   SearchX,
   FilterX,
@@ -10,8 +10,6 @@ import {
   ChevronDown,
   RotateCcw,
 } from 'lucide-react';
-import { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo } from 'react';
-import { SearchX, FilterX, ArrowDown, ArrowUp, ChevronsUpDown } from 'lucide-react';
 import { useSearchParams } from 'react-router-dom';
 
 const FOCUSABLE_HEADER = 'focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary';
@@ -121,12 +119,11 @@ export default function DataTable({
   storageKey,
 }) {
   const [sort, setSort] = useState(() => normalizeSort(defaultSort));
-  const [sort, setSort] = useState(defaultSort);
 
   // Column visibility/order preferences, scoped to this table by storageKey or
   // the caption so different tables do not share a saved layout.
   const storageId = storageKey || `datatable:columns:${caption || 'default'}`;
-  const [columnPrefs, setColumnPrefs] = useState(() => {
+  const [storedPrefs, setColumnPrefs] = useState(() => {
     const stored = readColumnPrefs(storageId);
     if (!stored) return { order: columns.map(columnId), hidden: [] };
     return reconcileColumnPrefs(stored, columns);
@@ -191,10 +188,12 @@ export default function DataTable({
   );
   const [focusedIndex, setFocusedIndex] = useState(null);
 
-  // Keep preferences in sync when the columns prop changes.
-  useEffect(() => {
-    setColumnPrefs((current) => reconcileColumnPrefs(current, columns));
-  }, [columns]);
+  // Reconcile on read so columns added or removed by the parent show up
+  // without an effect-driven state update.
+  const columnPrefs = useMemo(
+    () => reconcileColumnPrefs(storedPrefs, columns),
+    [storedPrefs, columns]
+  );
 
   // Persist preferences so the layout is restored on the next visit.
   useEffect(() => {
@@ -535,8 +534,29 @@ export default function DataTable({
     : undefined;
 
   return (
-    <div className="w-full">
-      <div className="mb-2 flex justify-end">
+    <div className="w-full min-w-0">
+      <div className="mb-3 flex flex-wrap items-center justify-end gap-2">
+        <div
+          role="group"
+          aria-label={caption ? `${caption} density` : 'Table density'}
+          className="inline-flex rounded-lg border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-1 gap-1"
+        >
+          {Object.entries(DENSITIES).map(([value, option]) => (
+            <button
+              key={value}
+              type="button"
+              aria-pressed={density === value}
+              onClick={() => setDensity(value)}
+              className={`px-2 sm:px-3 py-2 text-xs sm:text-sm font-medium rounded-md transition-colors ${FOCUSABLE_HEADER} ${
+                density === value
+                  ? 'bg-teal-100 text-teal-900 dark:bg-teal-950 dark:text-teal-200'
+                  : 'text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-slate-800'
+              }`}
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
         <div className="relative" ref={customizeRef}>
           <button
             type="button"
@@ -618,14 +638,18 @@ export default function DataTable({
         onScroll={isVirtualized ? handleScroll : undefined}
         style={containerStyles}
         data-testid="datatable-container"
-      data-virtualized={isVirtualized}
-      className="w-full max-w-full overflow-x-auto bg-white dark:bg-slate-900 rounded-xl border border-gray-100 dark:border-slate-800 shadow-sm focus:outline-none"
-      tabIndex={isVirtualized ? 0 : undefined}
-      aria-label={caption ? `${caption} scrollable view` : undefined}
-    >
+        data-virtualized={isVirtualized}
+        data-density={density}
+        className="w-full max-w-full overflow-x-auto bg-white dark:bg-slate-900 rounded-xl border border-gray-100 dark:border-slate-800 shadow-sm focus:outline-none"
+        tabIndex={isVirtualized ? 0 : undefined}
+        // A keyboard-focusable scroll container needs a role and a name so
+        // screen readers announce what receives focus (WCAG 2.1.1, 4.1.2).
+        role={isVirtualized ? 'region' : undefined}
+        aria-label={isVirtualized ? `${caption || 'Table'} scrollable view` : undefined}
+      >
       <table className="min-w-max w-full text-sm text-left text-gray-600 dark:text-gray-300 border-collapse">
         {caption && <caption className="sr-only">{caption}</caption>}
-        <thead className="text-xs text-gray-500 dark:text-gray-400 uppercase bg-gray-50 dark:bg-slate-800/60 border-b border-gray-100 dark:border-slate-800 sticky top-0 z-10">
+        <thead ref={headerRef} className="text-xs text-gray-500 dark:text-gray-400 uppercase bg-gray-50 dark:bg-slate-800/60 border-b border-gray-100 dark:border-slate-800 sticky top-0 z-10">
           <tr>
             {visibleColumns.map((col, idx) => (
               <th
@@ -665,6 +689,7 @@ export default function DataTable({
                   else rowRefs.current.delete(absoluteIdx);
                 }}
                 data-row-index={absoluteIdx}
+                style={{ height: `${effectiveRowHeight}px` }}
                 className={`border-b border-gray-50 dark:border-slate-800/60 hover:bg-gray-50/50 dark:hover:bg-slate-800/50 transition-colors focus:outline-none focus:ring-2 focus:ring-primary/40 focus:bg-gray-100 dark:focus:bg-slate-800 ${rowClassName}`}
                 onClick={isClickable ? () => onRowClick(row) : undefined}
                 onKeyDown={(e) => handleKeyDown(e, absoluteIdx)}
@@ -672,7 +697,7 @@ export default function DataTable({
                 aria-label={isClickable ? `View details for row ${absoluteIdx + 1}` : undefined}
               >
                 {visibleColumns.map((col, colIdx) => (
-                  <td key={colIdx} className="px-4 sm:px-6 py-4 whitespace-nowrap">
+                  <td key={colIdx} className={`px-4 sm:px-6 whitespace-nowrap ${densityConfig.className}`}>
                     {col.render ? col.render(row) : row[col.accessor]}
                   </td>
                 ))}
@@ -688,123 +713,6 @@ export default function DataTable({
           )}
         </tbody>
       </table>
-              <td colSpan={columns.length} style={{ padding: 0, border: 'none' }} />
-    <div className="w-full min-w-0">
-      <div className="flex justify-end mb-3">
-        <div
-          role="group"
-          aria-label={caption ? `${caption} density` : 'Table density'}
-          className="inline-flex rounded-lg border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-1 gap-1"
-        >
-          {Object.entries(DENSITIES).map(([value, option]) => (
-            <button
-              key={value}
-              type="button"
-              aria-pressed={density === value}
-              onClick={() => setDensity(value)}
-              className={`px-2 sm:px-3 py-2 text-xs sm:text-sm font-medium rounded-md transition-colors ${FOCUSABLE_HEADER} ${
-                density === value
-                  ? 'bg-teal-100 text-teal-900 dark:bg-teal-950 dark:text-teal-200'
-                  : 'text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-slate-800'
-              }`}
-            >
-              {option.label}
-            </button>
-          ))}
-        </div>
-      </div>
-      <div
-        ref={containerRef}
-        onScroll={isVirtualized ? handleScroll : undefined}
-        style={containerStyles}
-        data-testid="datatable-container"
-        data-virtualized={isVirtualized}
-        data-density={density}
-        className="w-full max-w-full overflow-x-auto bg-white dark:bg-slate-900 rounded-xl border border-gray-100 dark:border-slate-800 shadow-sm focus:outline-none"
-        tabIndex={isVirtualized ? 0 : undefined}
-        aria-label={caption ? `${caption} scrollable view` : undefined}
-      >
-        <table className="min-w-max w-full text-sm text-left text-gray-600 dark:text-gray-300 border-collapse">
-          {caption && <caption className="sr-only">{caption}</caption>}
-          <thead ref={headerRef} className="text-xs text-gray-500 dark:text-gray-400 uppercase bg-gray-50 dark:bg-slate-800/60 border-b border-gray-100 dark:border-slate-800 sticky top-0 z-10">
-            <tr>
-              {columns.map((col, idx) => (
-                <th
-                  key={idx}
-                  scope="col"
-                  aria-sort={ariaSortFor(col)}
-                  className="px-4 sm:px-6 py-4 whitespace-nowrap bg-gray-50 dark:bg-slate-800"
-                >
-                  {col.sortable ? (
-                    <button
-                      type="button"
-                      onClick={() => handleSort(col)}
-                      className={`inline-flex items-center gap-1.5 uppercase font-semibold ${FOCUSABLE_HEADER}`}
-                    >
-                      {col.header}
-                      {sort?.key === sortKeyOf(col) ? (
-                        sort.direction === 'ascending' ? (
-                          <ArrowUp size={14} aria-hidden="true" />
-                        ) : (
-                          <ArrowDown size={14} aria-hidden="true" />
-                        )
-                      ) : (
-                        <ChevronsUpDown size={14} aria-hidden="true" />
-                      )}
-                    </button>
-                  ) : (
-                    col.header
-                  )}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {/* Top virtual spacer */}
-            {isVirtualized && topPadding > 0 && (
-              <tr style={{ height: `${topPadding}px` }} aria-hidden="true">
-                <td colSpan={columns.length} style={{ padding: 0, border: 'none' }} />
-              </tr>
-            )}
-
-            {/* Visible Rows */}
-            {visibleRows.map((row, relativeIdx) => {
-              const absoluteIdx = isVirtualized ? startIndex + relativeIdx : relativeIdx;
-              const rowKey = row[keyField] || absoluteIdx;
-              const isClickable = Boolean(onRowClick);
-
-              return (
-                <tr
-                  key={rowKey}
-                  ref={(el) => {
-                    if (el) rowRefs.current.set(absoluteIdx, el);
-                    else rowRefs.current.delete(absoluteIdx);
-                  }}
-                  data-row-index={absoluteIdx}
-                  style={{ height: `${effectiveRowHeight}px` }}
-                  className={`border-b border-gray-50 dark:border-slate-800/60 hover:bg-gray-50/50 dark:hover:bg-slate-800/50 transition-colors focus:outline-none focus:ring-2 focus:ring-primary/40 focus:bg-gray-100 dark:focus:bg-slate-800 ${rowClassName}`}
-                  onClick={isClickable ? () => onRowClick(row) : undefined}
-                  onKeyDown={(e) => handleKeyDown(e, absoluteIdx)}
-                  tabIndex={isClickable || isVirtualized ? 0 : undefined}
-                  aria-label={isClickable ? `View details for row ${absoluteIdx + 1}` : undefined}
-                >
-                  {columns.map((col, colIdx) => (
-                    <td key={colIdx} className={`px-4 sm:px-6 whitespace-nowrap ${densityConfig.className}`}>
-                      {col.render ? col.render(row) : row[col.accessor]}
-                    </td>
-                  ))}
-                </tr>
-              );
-            })}
-
-            {/* Bottom virtual spacer */}
-            {isVirtualized && bottomPadding > 0 && (
-              <tr style={{ height: `${bottomPadding}px` }} aria-hidden="true">
-                <td colSpan={columns.length} style={{ padding: 0, border: 'none' }} />
-              </tr>
-            )}
-          </tbody>
-        </table>
       </div>
     </div>
   );

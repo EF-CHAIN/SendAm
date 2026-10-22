@@ -1,5 +1,3 @@
-import { useEffect, useRef, useState, useId } from 'react';
-import { AlertTriangle, ArrowRight, CheckCircle2, TrendingDown, RefreshCw, Zap } from 'lucide-react';
 import { useState, useId } from 'react';
 import { ArrowRight, ArrowLeftRight, CheckCircle2, ChevronDown, TrendingDown, RefreshCw, Zap } from 'lucide-react';
 import { whatsappUrl } from '@/lib/links.js';
@@ -10,32 +8,6 @@ import {
   getExchangeRate,
 } from '@/lib/currencyConstants.js';
 
-// How long a quoted rate is shown before the calculator refreshes it, and how
-// old it may grow before users are warned instead of silently shown it.
-const RATE_REFRESH_INTERVAL_S = 30;
-const RATE_STALE_AFTER_MS = 60_000;
-
-/** The refresh seam. The landing page quotes from the bundled indicative
- * table today, so refreshing resolves to a fresh read of it; a live rates
- * endpoint slots in here without touching the countdown machinery. */
-async function defaultRefreshRates() {
-  return EXCHANGE_RATES;
-}
-
-export default function CurrencyCalculator({ refreshRates = defaultRefreshRates }) {
-  const [amount, setAmount] = useState('100');
-  const [sourceCurrency, setSourceCurrency] = useState('USD');
-  const [targetCurrency, setTargetCurrency] = useState('NGN');
-  // Freshness machinery (#716): when the current quote was obtained, the
-  // countdown to the next refresh, and whether the last refresh failed.
-  const [secondsToRefresh, setSecondsToRefresh] = useState(RATE_REFRESH_INTERVAL_S);
-  const [rateStatus, setRateStatus] = useState('live'); // 'live' | 'refreshing' | 'failed'
-  const [isPastStaleAge, setIsPastStaleAge] = useState(false);
-  const refreshingRef = useRef(false);
-  // Mirrors lastRefreshedAt for the interval callback: a state update only
-  // reaches the next effect run, so without the ref the tick right after a
-  // refresh still sees the old timestamp and fires a second refresh.
-  const lastRefreshedAtRef = useRef(null);
 // Every currency the calculator can display, so a swapped corridor can resolve
 // its flags and symbols even when a code leaves its original list.
 const ALL_CURRENCIES = [...SOURCE_CURRENCIES, ...TARGET_CURRENCIES];
@@ -89,42 +61,6 @@ export default function CurrencyCalculator() {
     currentRate >= 1
       ? currentRate.toLocaleString()
       : currentRate.toLocaleString(undefined, { maximumFractionDigits: 6 });
-
-  useEffect(() => {
-    // Stamp the initial quote on mount (render must stay pure, so not inline).
-    if (lastRefreshedAtRef.current === null) {
-      lastRefreshedAtRef.current = Date.now();
-    }
-    const tick = setInterval(() => {
-      const ageMs = Date.now() - lastRefreshedAtRef.current;
-      const remaining = RATE_REFRESH_INTERVAL_S - Math.floor(ageMs / 1000);
-      setSecondsToRefresh(Math.max(0, remaining));
-      setIsPastStaleAge(ageMs > RATE_STALE_AFTER_MS);
-      if (remaining <= 0 && !refreshingRef.current) {
-        refreshingRef.current = true;
-        setRateStatus('refreshing');
-        Promise.resolve()
-          .then(() => refreshRates())
-          .then(() => {
-            lastRefreshedAtRef.current = Date.now();
-            setSecondsToRefresh(RATE_REFRESH_INTERVAL_S);
-            setIsPastStaleAge(false);
-            setRateStatus('live');
-          })
-          .catch(() => {
-            // Keep the old timestamp: the quote really is this old, and the
-            // stale warning below must say so rather than pretend.
-            setRateStatus('failed');
-          })
-          .finally(() => {
-            refreshingRef.current = false;
-          });
-      }
-    }, 1000);
-    return () => clearInterval(tick);
-  }, [refreshRates]);
-
-  const ratesAreStale = rateStatus === 'failed' || isPastStaleAge;
 
   const handleAmountChange = (e) => {
     const val = e.target.value;
@@ -259,48 +195,13 @@ export default function CurrencyCalculator() {
               </div>
             </div>
 
-            {/* Exchange rate display with live freshness */}
-            <div className="flex flex-wrap items-center gap-2 text-xs font-medium text-slate-500 bg-slate-50 rounded-xl p-3 border border-slate-100">
-              <RefreshCw
-                size={14}
-                className={`text-primary shrink-0 ${rateStatus === 'refreshing' ? 'animate-spin' : ''}`}
-                aria-hidden="true"
-              />
+            {/* Exchange rate display */}
+            <div className="flex items-center gap-2 text-xs font-medium text-slate-500 bg-slate-50 rounded-xl p-3 border border-slate-100">
+              <RefreshCw size={14} className="text-primary shrink-0" aria-hidden="true" />
               <span>
                 1 {sourceCurrency} = {rateLabel} {targetCurrency}
               </span>
-              <span className="ml-auto inline-flex items-center gap-1.5" data-testid="rate-freshness">
-                <span
-                  aria-hidden="true"
-                  className={`h-2 w-2 shrink-0 rounded-full ${
-                    ratesAreStale
-                      ? 'bg-red-500'
-                      : 'bg-emerald-500 motion-safe:animate-pulse'
-                  }`}
-                />
-                <span className="text-slate-400">
-                  {rateStatus === 'refreshing'
-                    ? 'Refreshing rates…'
-                    : `Rates refresh in ${secondsToRefresh}s`}
-                </span>
-              </span>
             </div>
-
-            {ratesAreStale && (
-              <div
-                role="alert"
-                className="flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800"
-              >
-                <AlertTriangle size={14} className="mt-0.5 shrink-0" aria-hidden="true" />
-                <span>
-                  {rateStatus === 'failed'
-                    ? 'These rates could not be refreshed and may be out of date. '
-                    : 'These rates are more than a minute old. '}
-                  The amount your recipient gets may differ — the final rate is locked when you
-                  send.
-                </span>
-              </div>
-            )}
           </div>
 
           {/* Swap currencies */}

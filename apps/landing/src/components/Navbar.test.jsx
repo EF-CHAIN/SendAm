@@ -35,6 +35,25 @@ describe('Navbar', () => {
     expect(screen.getByRole('link', { name: 'FAQ' })).toHaveAttribute('href', '#faq');
   });
 
+  it('highlights the active section nav link with primary color underline when clicked', async () => {
+    const user = userEvent.setup();
+    const section = document.createElement('section');
+    section.id = 'features';
+    section.scrollIntoView = vi.fn();
+    document.body.appendChild(section);
+
+    renderNavbar();
+    const desktopFeaturesLink = screen.getAllByRole('link', { name: 'Features' })[0];
+    expect(desktopFeaturesLink).not.toHaveClass('border-primary');
+
+    await user.click(desktopFeaturesLink);
+    expect(desktopFeaturesLink).toHaveClass('border-primary');
+    expect(desktopFeaturesLink).toHaveClass('text-primary');
+    expect(desktopFeaturesLink).toHaveAttribute('data-active', 'true');
+
+    section.remove();
+  });
+
   it('points the primary CTA at the configured WhatsApp destination', () => {
     renderNavbar();
     const cta = screen.getByRole('link', { name: /whatsapp|start/i });

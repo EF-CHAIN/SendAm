@@ -1,9 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import QRCode from '@ttsalpha/qrcode';
 import {
   Alert,
   Animated,
-  Alert,
   KeyboardAvoidingView,
   Modal,
   Platform,
@@ -14,6 +13,7 @@ import {
   View,
 } from 'react-native';
 import MessageList, { parseQuickReplies } from './MessageList';
+import EmojiPicker from './EmojiPicker';
 import usePolling from './usePolling';
 import {
   PaymentStateMachine,
@@ -136,6 +136,12 @@ export default function ChatScreen() {
   const [phoneInput, setPhoneInput] = useState('');
   const [messages, setMessages] = useState([]);
   const [inputText, setInputText] = useState('');
+  const inputRef = useRef(null);
+  const [inputSelection, setInputSelection] = useState({ start: 0, end: 0 });
+  const [emojiPickerOpen, setEmojiPickerOpen] = useState(false);
+  const [composerHeight, setComposerHeight] = useState(60);
+  const [screenHeight, setScreenHeight] = useState(600);
+  const restoreInputFocus = useRef(false);
   const [sending, setSending] = useState(false);
   const [isListening, setIsListening] = useState(false);
   const [voiceSynthesizeEnabled, setVoiceSynthesizeEnabled] = useState(true);
@@ -143,6 +149,7 @@ export default function ChatScreen() {
   const [isRecording, setIsRecording] = useState(false);
   const [recordSeconds, setRecordSeconds] = useState(0);
   const recordTimerRef = useRef(null);
+  const recordedPress = useRef(false);
   const [disabledReplies, setDisabledReplies] = useState({});
   const [networkProfile, setNetworkProfile] = useState(NETWORK_PROFILES[0]);
   const [networkDropdownOpen, setNetworkDropdownOpen] = useState(false);
@@ -187,6 +194,30 @@ export default function ChatScreen() {
 
   usePolling(phoneNumber, setMessages);
 
+  useLayoutEffect(() => {
+    if (!emojiPickerOpen && restoreInputFocus.current) {
+      restoreInputFocus.current = false;
+      inputRef.current?.focus();
+    }
+  }, [emojiPickerOpen, inputText]);
+
+  function closeEmojiPicker() {
+    restoreInputFocus.current = true;
+    setEmojiPickerOpen(false);
+  }
+
+  function insertEmoji(emoji) {
+    if (sending) return;
+    // TextInput selection offsets and JS string slices both use UTF-16 units,
+    // so multi-code-unit flags advance the caret by their full string length.
+    const draft = previewAttachment ? captionText : inputText;
+    const start = Math.min(inputSelection.start, draft.length);
+    const end = Math.min(inputSelection.end, draft.length);
+    (previewAttachment ? setCaptionText : setInputText)(draft.slice(0, start) + emoji + draft.slice(end));
+    setInputSelection({ start: start + emoji.length, end: start + emoji.length });
+    closeEmojiPicker();
+  }
+
   function handleStart() {
     const trimmed = phoneInput.trim();
     if (!trimmed) return;
@@ -199,9 +230,13 @@ export default function ChatScreen() {
     setPhoneInput('');
     setMessages([]);
     setInputText('');
+    setInputSelection({ start: 0, end: 0 });
+    setEmojiPickerOpen(false);
     setSending(false);
     setIsListening(false);
     setDisabledReplies({});
+    setReplyTo(null);
+    cancelVoiceRecording();
     setAttachmentMenuOpen(false);
     setPreviewAttachment(null);
     setCaptionText('');
@@ -327,6 +362,7 @@ export default function ChatScreen() {
       }
 
       setInputText(transcript);
+      setInputSelection({ start: transcript.length, end: transcript.length });
 
       const parsed = stateMachine.parsePaymentIntent(transcript);
       if (parsed) {
@@ -346,6 +382,7 @@ export default function ChatScreen() {
 
   function startVoiceRecording() {
     if (sending) return;
+    setEmojiPickerOpen(false);
     setIsRecording(true);
     setRecordSeconds(0);
     clearInterval(recordTimerRef.current);
@@ -391,56 +428,27 @@ export default function ChatScreen() {
   }
 
   async function handleSend(customText, skipUserBubble = false) {
-    const text = (customText !== undefined ? customText : inputText).trim();
-    if (!text || sending) return;
-
-    if (!skipUserBubble) {
-      setMessages((prev) => [
-        ...prev,
-        { id: `u-${Date.now()}`, text, sender: 'user' },
-      ]);
-    }
-  async function handleSend(customText) {
-    const attachment = previewAttachment;
-    const text = (
-      customText !== undefined
-        ? customText
-        : attachment
-        ? captionText
-        : inputText
-    ).trim();
-
+    const attachment = customText === undefined ? previewAttachment : null;
+    const text = (customText !== undefined ? customText : attachment ? captionText : inputText).trim();
     if ((!text && !attachment) || sending) return;
-
     const userMessageText = text || (attachment ? (attachment.type === 'photo' ? 'Photo' : attachment.name) : '');
-
     const quotedReply = replyTo
       ? { id: replyTo.id, text: replyTo.text, sender: replyTo.sender }
       : null;
-
-    setMessages((prev) => [
-      ...prev,
-      {
+    if (!skipUserBubble) {
+      setMessages((prev) => [...prev, {
         id: `u-${Date.now()}`,
-        text: text,
+        text,
         attachment: attachment || undefined,
         sender: 'user',
         timestamp: new Date().toISOString(),
-      },
-    ]);
-
-    if (attachment) {
-      handleClearAttachment();
-    } else {
-      setInputText('');
-    }
-        text,
-        sender: 'user',
-        timestamp: new Date().toISOString(),
         ...(quotedReply ? { replyTo: quotedReply } : {}),
-      },
-    ]);
+      }]);
+    }
+    if (attachment) handleClearAttachment();
     setInputText('');
+    setInputSelection({ start: 0, end: 0 });
+    setEmojiPickerOpen(false);
     setReplyTo(null);
     setSending(true);
 
@@ -591,6 +599,7 @@ export default function ChatScreen() {
   return (
     <KeyboardAvoidingView
       className="flex-1 bg-white"
+      onLayout={({ nativeEvent }) => setScreenHeight(nativeEvent.layout.height)}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     >
       <View className="flex-row items-center justify-between px-3 py-2 border-b border-gray-200">
@@ -902,6 +911,10 @@ export default function ChatScreen() {
           >
             <Text className="text-base">📄</Text>
             <Text className="text-xs font-semibold text-blue-800">Document</Text>
+          </Pressable>
+        </View>
+      )}
+
       {replyTo && (
         <View
           testID="reply-banner"
@@ -928,8 +941,23 @@ export default function ChatScreen() {
         </View>
       )}
 
-      <View className="flex-row items-center gap-2 px-3 py-2 border-t border-gray-200">
-        {isRecording ? (
+      {emojiPickerOpen && (
+        <Pressable testID="emoji-picker-backdrop" accessibilityRole="button" accessibilityLabel="Dismiss emoji picker"
+          onPress={closeEmojiPicker} style={{ position: 'absolute', top: 0, bottom: 0, left: 0, right: 0, zIndex: 1 }} />
+      )}
+      {emojiPickerOpen && (
+        <EmojiPicker onSelect={insertEmoji} onClose={closeEmojiPicker} bottom={composerHeight}
+          maxHeight={Math.min(340, Math.max(120, screenHeight - composerHeight - 16))} />
+      )}
+      <View className="flex-row items-center gap-2 px-3 py-2 border-t border-gray-200 bg-white"
+        style={{ zIndex: 2 }} onLayout={({ nativeEvent }) => setComposerHeight(nativeEvent.layout.height)}>
+        <Pressable accessibilityRole="button" accessibilityLabel="Choose emoji"
+          accessibilityState={{ expanded: emojiPickerOpen, disabled: sending || isRecording }}
+          disabled={sending || isRecording} onPress={() => emojiPickerOpen ? closeEmojiPicker() : setEmojiPickerOpen(true)}
+          style={{ minWidth: 44, minHeight: 44, alignItems: 'center', justifyContent: 'center' }}>
+          <Text style={{ fontSize: 24 }}>☺</Text>
+        </Pressable>
+        {isRecording && (
           <View
             className="flex-1 flex-row items-center justify-between bg-red-50 border border-red-200 rounded-full px-4 py-2"
             testID="audio-recording-bar"
@@ -955,37 +983,14 @@ export default function ChatScreen() {
               <Text className="text-xs font-semibold text-gray-500">Cancel</Text>
             </Pressable>
           </View>
-        ) : (
-          <>
-            <TextInput
-              className="flex-1 border border-gray-300 rounded-full px-4 py-2 text-base"
-              placeholder="Type a message or hold mic"
-              value={inputText}
-              onChangeText={setInputText}
-              onSubmitEditing={() => handleSend()}
-              editable={!sending}
-            />
-            {inputText.trim() ? (
-              <Pressable
-                testID="send-button"
-                className="bg-green-500 rounded-full px-4 py-2 items-center justify-center"
-                onPress={() => handleSend()}
-                disabled={sending}
-              >
-                <Text className="text-white font-semibold">
-                  {sending ? '...' : 'Send'}
-                </Text>
-              </Pressable>
-            ) : null}
-          </>
         )}
-
         <Pressable
           testID="paperclip-button"
           className={`rounded-full p-2 items-center justify-center ${attachmentMenuOpen ? 'bg-emerald-200' : 'bg-gray-100'}`}
           onPress={() => setAttachmentMenuOpen((prev) => !prev)}
         >
           <Text className="text-sm">📎</Text>
+
         </Pressable>
         <Pressable
           testID="mic-button"
@@ -996,25 +1001,24 @@ export default function ChatScreen() {
               ? 'bg-amber-500'
               : 'bg-green-500'
           }`}
-          onPressIn={startVoiceRecording}
+          accessibilityLabel="Tap to dictate or hold to record"
+          onPressIn={() => { recordedPress.current = false; }}
+          onLongPress={() => { recordedPress.current = true; startVoiceRecording(); }}
           onPressOut={stopVoiceRecordingAndSend}
-          onPress={() => {
-            if (isRecording) {
-              stopVoiceRecordingAndSend();
-            } else {
-              startVoiceRecording();
-            }
-          }}
-          className={`rounded-full p-2 items-center justify-center ${isListening ? 'bg-red-500' : 'bg-gray-200'}`}
-          onPress={handleVoiceInput}
+          onPress={() => { if (!recordedPress.current) handleVoiceInput(); }}
         >
           <Text className="text-xs font-bold">{isListening ? 'REC...' : 'MIC'}</Text>
         </Pressable>
         <TextInput
+          ref={inputRef}
+          accessibilityLabel="Message"
+          style={{ minWidth: 0 }}
           className="flex-1 border border-gray-300 rounded-full px-4 py-2 text-base"
           placeholder={previewAttachment ? 'Caption or press Send...' : 'Type a message or use speech'}
           value={previewAttachment ? captionText : inputText}
           onChangeText={previewAttachment ? setCaptionText : setInputText}
+          selection={inputSelection}
+          onSelectionChange={({ nativeEvent }) => setInputSelection(nativeEvent.selection)}
           onSubmitEditing={() => handleSend()}
           editable={!sending}
         />
@@ -1025,7 +1029,7 @@ export default function ChatScreen() {
           disabled={sending || (!inputText.trim() && !previewAttachment && !captionText.trim())}
         >
           <Text className="text-xs font-bold text-white">
-            {isRecording ? 'REC' : 'MIC'}
+            {sending ? '...' : 'Send'}
           </Text>
         </Pressable>
       </View>

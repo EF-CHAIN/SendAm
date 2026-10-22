@@ -1,8 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Link } from 'react-router-dom';
-import { Menu, Moon, MessageCircle, Sun, X } from 'lucide-react';
-import { Globe, Menu, MessageCircle, X } from 'lucide-react';
+import { Globe, Menu, MessageCircle, Moon, Sun, X } from 'lucide-react';
 import { whatsappUrl } from '@/lib/links.js';
 import { LANGUAGES, useI18n } from '@/lib/i18n.js';
 
@@ -22,18 +21,76 @@ function setScrollLock(locked, previous = '') {
   return before;
 }
 
-const desktopLinkClass = 'text-sm font-medium text-slate-600 transition-colors hover:text-primary';
-const drawerLinkClass =
-  'block rounded-lg px-3 py-3 text-base font-medium text-slate-700 transition-colors hover:bg-slate-50 hover:text-primary';
+const desktopLinkBaseClass =
+  'relative pb-1 text-sm font-medium transition-all duration-200 border-b-2';
+const getDesktopLinkClass = (isActive) =>
+  `${desktopLinkBaseClass} ${
+    isActive
+      ? 'text-primary border-primary font-semibold'
+      : 'text-slate-600 border-transparent hover:text-primary'
+  }`;
+
+const drawerLinkBaseClass =
+  'block rounded-lg px-3 py-3 text-base font-medium transition-colors border-l-4';
+const getDrawerLinkClass = (isActive) =>
+  `${drawerLinkBaseClass} ${
+    isActive
+      ? 'border-primary bg-primary/5 text-primary font-semibold'
+      : 'border-transparent text-slate-700 hover:bg-slate-50 hover:text-primary'
+  }`;
 
 export default function Navbar({ theme = 'light', onToggleTheme } = {}) {
   const [open, setOpen] = useState(false);
+  const [activeSection, setActiveSection] = useState('');
   const [shown, setShown] = useState(false);
   const toggleRef = useRef(null);
   const drawerRef = useRef(null);
   const { lang, setLang, t } = useI18n();
 
   const close = useCallback(() => setOpen(false), []);
+
+  // Track viewport intersection of major section tags for scroll-spy highlighting (#743)
+  useEffect(() => {
+    if (typeof window === 'undefined' || !('IntersectionObserver' in window)) return undefined;
+
+    const sectionElements = SECTION_LINKS.map(({ href }) =>
+      document.getElementById(href.slice(1))
+    ).filter(Boolean);
+
+    if (sectionElements.length === 0) return undefined;
+
+    const visibleRatios = new Map();
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          visibleRatios.set(entry.target.id, entry.isIntersecting ? entry.intersectionRatio : 0);
+        });
+
+        let bestId = '';
+        let highestRatio = 0;
+        visibleRatios.forEach((ratio, id) => {
+          if (ratio > highestRatio) {
+            highestRatio = ratio;
+            bestId = id;
+          }
+        });
+
+        if (bestId && highestRatio > 0) {
+          setActiveSection(`#${bestId}`);
+        }
+      },
+      {
+        root: null,
+        rootMargin: '-20% 0px -40% 0px',
+        threshold: [0, 0.1, 0.25, 0.5, 0.75, 1],
+      }
+    );
+
+    sectionElements.forEach((el) => observer.observe(el));
+
+    return () => observer.disconnect();
+  }, []);
 
   // While the drawer is open: lock page scroll, move focus inside, close on
   // Escape, keep Tab within the drawer, and hand focus back to the toggle.
@@ -100,6 +157,7 @@ export default function Navbar({ theme = 'light', onToggleTheme } = {}) {
     const target = document.getElementById(href.slice(1));
     if (!target) return; // fall back to the browser's default anchor behaviour
     event.preventDefault();
+    setActiveSection(href);
     // Release the scroll lock first, otherwise the smooth scroll has no effect.
     setScrollLock(false);
     setOpen(false);
@@ -116,12 +174,22 @@ export default function Navbar({ theme = 'light', onToggleTheme } = {}) {
         </Link>
 
         <div className="hidden items-center gap-7 md:flex">
-          {SECTION_LINKS.map(({ href, labelKey }) => (
-            <a key={href} href={href} className={desktopLinkClass}>
-              {t(labelKey)}
-            </a>
-          ))}
-          <Link to="/onboarding" className={desktopLinkClass}>
+          {SECTION_LINKS.map(({ href, labelKey }) => {
+            const isActive = activeSection === href;
+            return (
+              <a
+                key={href}
+                href={href}
+                className={getDesktopLinkClass(isActive)}
+                onClick={(event) => handleSectionClick(event, href)}
+                aria-current={isActive ? 'true' : undefined}
+                data-active={isActive ? 'true' : undefined}
+              >
+                {t(labelKey)}
+              </a>
+            );
+          })}
+          <Link to="/onboarding" className={`${desktopLinkBaseClass} text-slate-600 border-transparent hover:text-primary`}>
             {t('nav.onboarding')}
           </Link>
         </div>
@@ -211,17 +279,22 @@ export default function Navbar({ theme = 'light', onToggleTheme } = {}) {
                 </button>
               </div>
 
-              {SECTION_LINKS.map(({ href, labelKey }) => (
-                <a
-                  key={href}
-                  href={href}
-                  className={drawerLinkClass}
-                  onClick={(event) => handleSectionClick(event, href)}
-                >
-                  {t(labelKey)}
-                </a>
-              ))}
-              <Link to="/onboarding" className={drawerLinkClass} onClick={close}>
+              {SECTION_LINKS.map(({ href, labelKey }) => {
+                const isActive = activeSection === href;
+                return (
+                  <a
+                    key={href}
+                    href={href}
+                    className={getDrawerLinkClass(isActive)}
+                    onClick={(event) => handleSectionClick(event, href)}
+                    aria-current={isActive ? 'true' : undefined}
+                    data-active={isActive ? 'true' : undefined}
+                  >
+                    {t(labelKey)}
+                  </a>
+                );
+              })}
+              <Link to="/onboarding" className={`${drawerLinkBaseClass} border-transparent text-slate-700 hover:bg-slate-50 hover:text-primary`} onClick={close}>
                 {t('nav.onboarding')}
               </Link>
 

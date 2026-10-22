@@ -359,6 +359,9 @@ describe('DataTable column customization', () => {
 
     expect(headerLabels()).toEqual(['Name', 'Role', 'Status']);
     expect(screen.getByRole('checkbox', { name: 'Role' })).toBeChecked();
+  });
+});
+
 describe('DataTable multi-column sorting', () => {
   const sortColumns = [
     { header: 'Status', accessor: 'status', sortable: true },
@@ -448,6 +451,9 @@ describe('DataTable multi-column sorting', () => {
     expect(statusOrderOf()).toEqual(['complete', 'complete', 'pending', 'pending']);
     expect(screen.getAllByTestId('sort-priority-badge').map((b) => b.textContent)).toEqual(['1', '2']);
     expect(screen.getByRole('columnheader', { name: /date/i })).toHaveAttribute('aria-sort', 'descending');
+  });
+});
+
 describe('DataTable density', () => {
   const data = Array.from({ length: 200 }, (_, index) => ({ id: index + 1, name: `User ${index + 1}` }));
   const dataRows = () => Array.from(screen.getByRole('table').querySelectorAll('tr[data-row-index]'));
