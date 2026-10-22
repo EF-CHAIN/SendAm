@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import {
   LayoutDashboard,
@@ -12,7 +12,7 @@ import {
   ShieldCheck,
 } from 'lucide-react';
 import { removeToken } from '@/lib/auth';
-import { getAdminMe } from '@/lib/adminApi';
+import { getAdminMe, getAdminKyc } from '@/lib/adminApi';
 import { hasPermission } from '@/lib/permissions';
 
 const ALL_LINKS = [
@@ -25,10 +25,19 @@ const ALL_LINKS = [
   { name: 'Health', path: '/system-health', icon: Activity, permission: 'operations.write' },
 ];
 
-export default function AdminSidebar({ onOpenSearch }) {
+export default function AdminSidebar({
+  onOpenSearch,
+  pendingKycCount,
+  pollIntervalMs = 15000,
+}) {
   const { pathname } = useLocation();
   const navigate = useNavigate();
   const [permissions, setPermissions] = useState(null);
+  const [liveKycCount, setLiveKycCount] = useState(0);
+  const [isPulsing, setIsPulsing] = useState(false);
+  const prevCountRef = useRef(null);
+
+  const kycCount = typeof pendingKycCount === 'number' ? pendingKycCount : liveKycCount;
 
   useEffect(() => {
     let active = true;
@@ -43,6 +52,44 @@ export default function AdminSidebar({ onOpenSearch }) {
       active = false;
     };
   }, []);
+
+  // Poll for pending KYC submission count in real-time when operator has compliance.read permission
+  useEffect(() => {
+    if (typeof pendingKycCount === 'number') return;
+    if (!permissions || !hasPermission(permissions, 'compliance.read')) return;
+
+    let active = true;
+    const fetchPendingKyc = async () => {
+      if (typeof document !== 'undefined' && document.hidden) return;
+      try {
+        const res = await getAdminKyc({ status: 'pending', limit: 1 });
+        if (active) {
+          const total = Number(res?.pagination?.total ?? (Array.isArray(res?.data) ? res.data.length : 0)) || 0;
+          setLiveKycCount((prev) => (prev === total ? prev : total));
+        }
+      } catch {
+        // Silently catch network or permission errors during polling
+      }
+    };
+
+    fetchPendingKyc();
+    const timer = setInterval(fetchPendingKyc, pollIntervalMs);
+
+    return () => {
+      active = false;
+      clearInterval(timer);
+    };
+  }, [permissions, pendingKycCount, pollIntervalMs]);
+
+  // Trigger gentle animation pulse whenever the unreviewed count increases
+  useEffect(() => {
+    if (prevCountRef.current !== null && kycCount > prevCountRef.current) {
+      setIsPulsing(true);
+      const timer = setTimeout(() => setIsPulsing(false), 1000);
+      return () => clearTimeout(timer);
+    }
+    prevCountRef.current = kycCount;
+  }, [kycCount]);
 
   const links = permissions
     ? ALL_LINKS.filter((l) => hasPermission(permissions, l.permission))
@@ -80,22 +127,45 @@ export default function AdminSidebar({ onOpenSearch }) {
           {links.map((link) => {
             const Icon = link.icon;
             const isActive = pathname === link.path;
+            const isKyc = link.path === '/kyc';
+            const showKycBadge = isKyc && kycCount > 0;
+
             return (
-              <Link
-                key={link.path}
-                to={link.path}
-                aria-current={isActive ? 'page' : undefined}
-                className={`flex items-center gap-2 md:gap-3 px-3 md:px-4 py-2.5 md:py-3 rounded-lg text-sm font-medium transition-colors ${
-                  isActive
-                    ? 'bg-secondary dark:bg-teal-950/50 text-primary dark:text-teal-400'
-                    : 'text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-slate-800 hover:text-dark dark:hover:text-white'
-                }`}
-              >
-                <Icon
-                  className={`w-5 h-5 shrink-0 ${isActive ? 'text-primary dark:text-teal-400' : 'text-gray-400 dark:text-gray-500'}`}
-                />
-                {link.name}
-              </Link>
+              <div key={link.path} className="relative">
+                <Link
+                  to={link.path}
+                  aria-current={isActive ? 'page' : undefined}
+                  aria-describedby={showKycBadge ? 'kyc-pending-count' : undefined}
+                  className={`flex items-center justify-between gap-2 md:gap-3 px-3 md:px-4 py-2.5 md:py-3 rounded-lg text-sm font-medium transition-colors ${
+                    isActive
+                      ? 'bg-secondary dark:bg-teal-950/50 text-primary dark:text-teal-400'
+                      : 'text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-slate-800 hover:text-dark dark:hover:text-white'
+                  }`}
+                >
+                  <div className="flex items-center gap-2 md:gap-3 min-w-0">
+                    <Icon
+                      className={`w-5 h-5 shrink-0 ${isActive ? 'text-primary dark:text-teal-400' : 'text-gray-400 dark:text-gray-500'}`}
+                    />
+                    <span className="truncate">{link.name}</span>
+                  </div>
+                  {showKycBadge && (
+                    <span
+                      data-testid="kyc-counter-badge"
+                      aria-hidden="true"
+                      className={`inline-flex items-center justify-center min-w-[20px] px-1.5 py-0.5 text-xs font-bold rounded-full bg-amber-100 dark:bg-amber-950/60 text-amber-900 dark:text-amber-300 border border-amber-200 dark:border-amber-800/60 shrink-0 transition-transform duration-300 motion-reduce:transition-none motion-reduce:animate-none ${
+                        isPulsing ? 'animate-pulse scale-110' : 'scale-100'
+                      }`}
+                    >
+                      {kycCount}
+                    </span>
+                  )}
+                </Link>
+                {showKycBadge && (
+                  <span id="kyc-pending-count" className="sr-only">
+                    {kycCount} pending verification submissions
+                  </span>
+                )}
+              </div>
             );
           })}
           {permissions && (
@@ -119,3 +189,4 @@ export default function AdminSidebar({ onOpenSearch }) {
     </aside>
   );
 }
+

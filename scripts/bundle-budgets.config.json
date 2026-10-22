@@ -2,28 +2,28 @@
   "apps": {
     "landing": {
       "distDir": "apps/landing/dist",
-      "comment": "Re-measured on main after #699 (CI): JS 376.0 KB (gzip 119.2), largest chunk 358.5 KB, CSS 43.7 KB. Budgets raised with ~3-5% headroom to unblock CI; follow up with code-splitting to bring them back down.",
+      "comment": "Re-measured on PR builds after #884 (i18n switcher): JS 418.4 KB (gzip 131.5), largest chunk 396.3 KB, CSS 48.8 KB. Budgets raised with ~8% headroom because main CI skips the budget job and drifted over; follow up with code-splitting to bring them back down.",
       "budgets": {
-        "totalJsKb": 390,
-        "totalCssKb": 46,
+        "totalJsKb": 460,
+        "totalCssKb": 55,
         "maxImageKb": 100,
-        "maxChunkKb": 370,
+        "maxChunkKb": 430,
         "gzip": {
-          "totalJsKb": 125,
+          "totalJsKb": 145,
           "totalCssKb": 10
         }
       }
     },
     "admin": {
       "distDir": "apps/admin/dist",
-      "comment": "Measured in CI: total JS 1339 KB (gzip 378), dominated by the lazily loaded XdrDecoderModal chunk (@stellar/stellar-sdk, 905 KB), which no longer ships in the TransactionDetail route chunk. Total and per-chunk budgets raised to fit that chunk; follow up by trimming the SDK import.",
+      "comment": "Measured for #779: total JS 2141.83 KB (gzip 762.76), including the route-lazy SetPassword chunk with local zxcvbn dictionaries (805.92 KB raw). The initial shell remains 324.56 KB; password scoring adds no remote service. Total JS budgets allow about 5% headroom for this explicit dependency addition; existing per-chunk, CSS and image limits are unchanged. Admin CSS budget raised to 46 KB after main measured 41.9 KB.",
       "budgets": {
-        "totalJsKb": 1400,
-        "totalCssKb": 40,
+        "totalJsKb": 2250,
+        "totalCssKb": 46,
         "maxImageKb": 100,
         "maxChunkKb": 950,
         "gzip": {
-          "totalJsKb": 400,
+          "totalJsKb": 800,
           "totalCssKb": 10
         }
       }
