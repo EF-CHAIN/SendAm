@@ -9,16 +9,18 @@ import PWABanner from './components/PWABanner.jsx';
 import CookieConsentBanner from './components/CookieConsentBanner.jsx';
 import Home from './pages/Home.jsx';
 import NotFound from './pages/NotFound.jsx';
+import { useTheme } from './lib/theme.js';
 
 const OnboardingStatus = lazy(() => import('./pages/OnboardingStatus.jsx'));
 
 export default function App() {
+  const { theme, toggleTheme } = useTheme();
   return (
     <ErrorBoundary variant="landing">
       <I18nProvider>
       <div className="flex flex-col min-h-screen bg-gray-50 text-dark font-sans">
         <NetworkStatusBanner />
-        <Navbar />
+        <Navbar theme={theme} onToggleTheme={toggleTheme} />
         <main className="flex-grow w-full min-w-0">
           <Suspense fallback={null}>
             <Routes>

@@ -267,6 +267,95 @@ describe('DataTable Virtualization & Keyboard Navigation', () => {
   });
 });
 
+describe('DataTable multi-column sorting', () => {
+  const sortColumns = [
+    { header: 'Status', accessor: 'status', sortable: true },
+    { header: 'Date', accessor: 'date', sortable: true },
+  ];
+  const rows = [
+    { id: 1, status: 'pending', date: '2026-01-02' },
+    { id: 2, status: 'complete', date: '2026-01-03' },
+    { id: 3, status: 'pending', date: '2026-01-01' },
+    { id: 4, status: 'complete', date: '2026-01-01' },
+  ];
+
+  const dateOrderOf = () => Array.from(document.querySelectorAll('tbody tr[data-row-index]')).map((tr) => tr.querySelectorAll('td')[1].textContent);
+  const statusOrderOf = () => Array.from(document.querySelectorAll('tbody tr[data-row-index]')).map((tr) => tr.querySelectorAll('td')[0].textContent);
+  const header = (label) => screen.getByRole('button', { name: new RegExp(`^${label}`, 'i') });
+
+  it('plain click sorts ascending, then flips to descending on the next click', async () => {
+    const user = userEvent.setup();
+    renderTable(<DataTable columns={sortColumns} data={rows} keyField="id" />);
+
+    await user.click(header('Status'));
+    expect(statusOrderOf()).toEqual(['complete', 'complete', 'pending', 'pending']);
+    expect(screen.getByRole('columnheader', { name: /status/i })).toHaveAttribute('aria-sort', 'ascending');
+
+    await user.click(header('Status'));
+    expect(statusOrderOf()).toEqual(['pending', 'pending', 'complete', 'complete']);
+    expect(screen.getByRole('columnheader', { name: /status/i })).toHaveAttribute('aria-sort', 'descending');
+  });
+
+  it('shift+click adds a secondary key and shows priority badges 1 and 2', async () => {
+    const user = userEvent.setup();
+    renderTable(<DataTable columns={sortColumns} data={rows} keyField="id" />);
+
+    await user.click(header('Status'));
+    await user.keyboard('{Shift>}');
+    await user.click(header('Date'));
+    await user.keyboard('{/Shift}');
+
+    const badges = screen.getAllByTestId('sort-priority-badge').map((badge) => badge.textContent);
+    expect(badges).toEqual(['1', '2']);
+    // complete (2026-01-01 then 2026-01-03), then pending (2026-01-01 then 2026-01-02)
+    expect(dateOrderOf()).toEqual(['2026-01-01', '2026-01-03', '2026-01-01', '2026-01-02']);
+    expect(screen.getByRole('columnheader', { name: /date/i })).toHaveAttribute('aria-sort', 'ascending');
+  });
+
+  it('plain click after a multi-sort clears the secondary keys', async () => {
+    const user = userEvent.setup();
+    renderTable(<DataTable columns={sortColumns} data={rows} keyField="id" />);
+
+    await user.click(header('Status'));
+    await user.keyboard('{Shift>}');
+    await user.click(header('Date'));
+    await user.keyboard('{/Shift}');
+    await user.click(header('Date'));
+
+    expect(screen.queryByTestId('sort-priority-badge')).not.toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: /status/i })).toHaveAttribute('aria-sort', 'none');
+    expect(screen.getByRole('columnheader', { name: /date/i })).toHaveAttribute('aria-sort', 'ascending');
+  });
+
+  it('shift+click on a sorted column flips its direction without adding a badge', async () => {
+    const user = userEvent.setup();
+    renderTable(<DataTable columns={sortColumns} data={rows} keyField="id" />);
+
+    await user.click(header('Status'));
+    await user.keyboard('{Shift>}');
+    await user.click(header('Status'));
+    await user.keyboard('{/Shift}');
+
+    expect(screen.getByRole('columnheader', { name: /status/i })).toHaveAttribute('aria-sort', 'descending');
+    expect(screen.queryByTestId('sort-priority-badge')).not.toBeInTheDocument();
+  });
+
+  it('accepts a multi-key defaultSort array', () => {
+    renderTable(
+      <DataTable
+        columns={sortColumns}
+        data={rows}
+        keyField="id"
+        defaultSort={[
+          { key: 'status', direction: 'ascending' },
+          { key: 'date', direction: 'descending' },
+        ]}
+      />
+    );
+
+    expect(statusOrderOf()).toEqual(['complete', 'complete', 'pending', 'pending']);
+    expect(screen.getAllByTestId('sort-priority-badge').map((b) => b.textContent)).toEqual(['1', '2']);
+    expect(screen.getByRole('columnheader', { name: /date/i })).toHaveAttribute('aria-sort', 'descending');
 describe('DataTable density', () => {
   const data = Array.from({ length: 200 }, (_, index) => ({ id: index + 1, name: `User ${index + 1}` }));
   const dataRows = () => Array.from(screen.getByRole('table').querySelectorAll('tr[data-row-index]'));

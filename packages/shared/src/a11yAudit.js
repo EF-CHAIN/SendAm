@@ -10,6 +10,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { configureAxe } from 'jest-axe';
 import tailwindColors from 'tailwindcss/colors';
+import { contrastRatio } from './contrast.js';
 
 // ── The ruleset ────────────────────────────────────────────────────────────
 
@@ -91,28 +92,9 @@ export const CONTRAST_THRESHOLDS = {
   AAA: 7,
 };
 
-const linearise = (channel) => {
-  const c = channel / 255;
-  return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
-};
-
-export const relativeLuminance = (hex) => {
-  const digits = String(hex).replace('#', '').trim();
-  const full =
-    digits.length === 3
-      ? digits
-          .split('')
-          .map((c) => c + c)
-          .join('')
-      : digits;
-  const [r, g, b] = [0, 2, 4].map((i) => linearise(parseInt(full.slice(i, i + 2), 16)));
-  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
-};
-
-export const contrastRatio = (a, b) => {
-  const [lighter, darker] = [relativeLuminance(a), relativeLuminance(b)].sort((x, y) => y - x);
-  return (lighter + 0.05) / (darker + 0.05);
-};
+// The maths lives in contrast.js so the browser-side dev checker can share it
+// without pulling in this module's Node-only imports.
+export { relativeLuminance, contrastRatio } from './contrast.js';
 
 // Colours the apps define in their own tailwind.config.js rather than pulling
 // from the Tailwind default palette. Kept in sync with both configs.

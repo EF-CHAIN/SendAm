@@ -163,15 +163,49 @@ function SwipeableBubble({ item, isUser, onReply, hoverOnly }) {
               </Text>
             </View>
           )}
-          <View className="flex-row items-start gap-2">
-            <Text
-              className={isUser ? 'text-white' : 'text-gray-900'}
-              style={{ flexShrink: 1, minWidth: 0, paddingTop: 12 }}
-            >
-              {item.text}
-            </Text>
-            <MessageCopyButton text={item.text} isUser={isUser} visible={!hoverOnly || hovered} />
-          </View>
+          {item.attachment && (
+            <View testID="media-card" className="mb-2 rounded-lg overflow-hidden bg-black/10 p-1">
+              {item.attachment.type === 'photo' && item.attachment.uri ? (
+                <View testID="media-photo-container" className="rounded overflow-hidden">
+                  {/* Thumbnail preview */}
+                  <img
+                    src={item.attachment.uri}
+                    alt={item.attachment.name || 'Photo attachment'}
+                    draggable={false}
+                    style={{ width: '100%', maxHeight: 200, objectFit: 'cover', borderRadius: 8 }}
+                  />
+                </View>
+              ) : (
+                <View testID="media-doc-container" className="flex-row items-center gap-2 p-2 bg-white/20 rounded">
+                  <Text className="text-xl">📄</Text>
+                  <View className="flex-1">
+                    <Text
+                      numberOfLines={1}
+                      className={`text-xs font-semibold ${isUser ? 'text-white' : 'text-gray-900'}`}
+                    >
+                      {item.attachment.name || 'Document'}
+                    </Text>
+                    {item.attachment.size ? (
+                      <Text className={`text-[10px] ${isUser ? 'text-white/80' : 'text-gray-600'}`}>
+                        {item.attachment.size}
+                      </Text>
+                    ) : null}
+                  </View>
+                </View>
+              )}
+            </View>
+          )}
+          {Boolean(item.text) && (
+            <View className="flex-row items-start gap-2">
+              <Text
+                className={isUser ? 'text-white' : 'text-gray-900'}
+                style={{ flexShrink: 1, minWidth: 0, paddingTop: 12 }}
+              >
+                {item.text}
+              </Text>
+              <MessageCopyButton text={item.text} isUser={isUser} visible={!hoverOnly || hovered} />
+            </View>
+          )}
         </View>
       </Animated.View>
       {swiping && (

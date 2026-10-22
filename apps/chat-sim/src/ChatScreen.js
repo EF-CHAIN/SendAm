@@ -128,6 +128,11 @@ export default function ChatScreen() {
   const [voiceSynthesizeEnabled, setVoiceSynthesizeEnabled] = useState(true);
   const [devModeOpen, setDevModeOpen] = useState(false);
   const [disabledReplies, setDisabledReplies] = useState({});
+  const [attachmentMenuOpen, setAttachmentMenuOpen] = useState(false);
+  const [previewAttachment, setPreviewAttachment] = useState(null);
+  const [captionText, setCaptionText] = useState('');
+  const photoInputRef = useRef(null);
+  const docInputRef = useRef(null);
   const [replyTo, setReplyTo] = useState(null);
 
   // Initialize deterministic Payment State Machine engine
@@ -174,6 +179,53 @@ export default function ChatScreen() {
     setSending(false);
     setIsListening(false);
     setDisabledReplies({});
+    setAttachmentMenuOpen(false);
+    setPreviewAttachment(null);
+    setCaptionText('');
+  }
+
+  function handleFileSelect(event, type) {
+    const file = event.target?.files?.[0];
+    if (!file) return;
+
+    const attachmentObj = {
+      type, // 'photo' or 'document'
+      name: file.name || (type === 'photo' ? 'photo.jpg' : 'document.pdf'),
+      size: file.size ? `${(file.size / 1024).toFixed(1)} KB` : '',
+    };
+
+    if (type === 'photo') {
+      if (typeof FileReader !== 'undefined') {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          setPreviewAttachment({
+            ...attachmentObj,
+            uri: e.target?.result,
+          });
+          setAttachmentMenuOpen(false);
+        };
+        reader.readAsDataURL(file);
+      } else {
+        setPreviewAttachment({
+          ...attachmentObj,
+          uri: file.uri || 'data:image/jpeg;base64,mock',
+        });
+        setAttachmentMenuOpen(false);
+      }
+    } else {
+      setPreviewAttachment({
+        ...attachmentObj,
+        uri: null,
+      });
+      setAttachmentMenuOpen(false);
+    }
+  }
+
+  function handleClearAttachment() {
+    setPreviewAttachment(null);
+    setCaptionText('');
+    if (photoInputRef.current) photoInputRef.current.value = '';
+    if (docInputRef.current) docInputRef.current.value = '';
     setReplyTo(null);
   }
 
@@ -245,8 +297,18 @@ export default function ChatScreen() {
   }
 
   async function handleSend(customText) {
-    const text = (customText !== undefined ? customText : inputText).trim();
-    if (!text || sending) return;
+    const attachment = previewAttachment;
+    const text = (
+      customText !== undefined
+        ? customText
+        : attachment
+        ? captionText
+        : inputText
+    ).trim();
+
+    if ((!text && !attachment) || sending) return;
+
+    const userMessageText = text || (attachment ? (attachment.type === 'photo' ? 'Photo' : attachment.name) : '');
 
     const quotedReply = replyTo
       ? { id: replyTo.id, text: replyTo.text, sender: replyTo.sender }
@@ -256,6 +318,18 @@ export default function ChatScreen() {
       ...prev,
       {
         id: `u-${Date.now()}`,
+        text: text,
+        attachment: attachment || undefined,
+        sender: 'user',
+        timestamp: new Date().toISOString(),
+      },
+    ]);
+
+    if (attachment) {
+      handleClearAttachment();
+    } else {
+      setInputText('');
+    }
         text,
         sender: 'user',
         timestamp: new Date().toISOString(),
@@ -292,7 +366,7 @@ export default function ChatScreen() {
       const response = await fetch(`${API_BASE_URL}/api/sim/message`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ phoneNumber, text }),
+        body: JSON.stringify({ phoneNumber, text: userMessageText }),
       });
       if (!response.ok) {
         throw new Error(`Request failed with status ${response.status}`);
@@ -493,6 +567,125 @@ export default function ChatScreen() {
         </View>
       )}
 
+      {/* Hidden file inputs for web/mobile browsers */}
+      {typeof document !== 'undefined' && (
+        <View style={{ display: 'none' }}>
+          <input
+            type="file"
+            ref={photoInputRef}
+            accept="image/*"
+            data-testid="photo-file-input"
+            onChange={(e) => handleFileSelect(e, 'photo')}
+          />
+          <input
+            type="file"
+            ref={docInputRef}
+            accept=".pdf,.doc,.docx,.txt"
+            data-testid="doc-file-input"
+            onChange={(e) => handleFileSelect(e, 'document')}
+          />
+        </View>
+      )}
+
+      {/* Inline Media Preview Bubble above input */}
+      {previewAttachment && (
+        <View
+          testID="attachment-preview-bubble"
+          className="mx-3 mb-2 p-3 bg-gray-50 border border-emerald-300 rounded-xl shadow-sm gap-2"
+        >
+          <View className="flex-row items-center justify-between">
+            <View className="flex-row items-center gap-2">
+              <Text className="text-sm font-bold text-gray-800">
+                {previewAttachment.type === 'photo' ? '📷 Photo Preview' : '📄 Document'}
+              </Text>
+              <Text className="text-xs text-gray-500">
+                {previewAttachment.name} {previewAttachment.size ? `(${previewAttachment.size})` : ''}
+              </Text>
+            </View>
+            <Pressable
+              testID="cancel-attachment-button"
+              onPress={handleClearAttachment}
+              className="p-1 rounded-full bg-gray-200"
+            >
+              <Text className="text-xs font-bold text-gray-600 px-1">✕</Text>
+            </Pressable>
+          </View>
+
+          {previewAttachment.type === 'photo' && previewAttachment.uri ? (
+            <View className="rounded-lg overflow-hidden border border-gray-200 max-h-48 bg-black/5 items-center justify-center">
+              <img
+                src={previewAttachment.uri}
+                alt="Selected preview"
+                data-testid="preview-thumbnail-img"
+                style={{ maxHeight: 180, maxWidth: '100%', objectFit: 'contain' }}
+              />
+            </View>
+          ) : (
+            <View className="p-3 bg-white rounded border border-gray-200 flex-row items-center gap-3">
+              <Text className="text-2xl">📄</Text>
+              <View>
+                <Text className="text-sm font-semibold text-gray-800">{previewAttachment.name}</Text>
+                {previewAttachment.size ? (
+                  <Text className="text-xs text-gray-500">{previewAttachment.size}</Text>
+                ) : null}
+              </View>
+            </View>
+          )}
+
+          {/* Caption input */}
+          <TextInput
+            testID="attachment-caption-input"
+            className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm bg-white"
+            placeholder="Add a caption..."
+            value={captionText}
+            onChangeText={setCaptionText}
+            editable={!sending}
+            onSubmitEditing={() => handleSend()}
+          />
+        </View>
+      )}
+
+      {/* Paperclip Attachment Popup Menu */}
+      {attachmentMenuOpen && (
+        <View
+          testID="attachment-menu"
+          className="mx-3 mb-2 p-2 bg-white rounded-xl border border-gray-200 shadow-md flex-row gap-3"
+        >
+          <Pressable
+            testID="attach-photo-button"
+            className="flex-row items-center gap-2 p-2 rounded-lg bg-emerald-50 active:bg-emerald-100 flex-1 justify-center"
+            onPress={() => {
+              if (photoInputRef.current) {
+                photoInputRef.current.click();
+              } else {
+                // Fallback for tests or non-DOM
+                handleFileSelect(
+                  { target: { files: [{ name: 'sample-id.jpg', size: 102400, type: 'image/jpeg' }] } },
+                  'photo'
+                );
+              }
+            }}
+          >
+            <Text className="text-base">📷</Text>
+            <Text className="text-xs font-semibold text-emerald-800">Photo</Text>
+          </Pressable>
+          <Pressable
+            testID="attach-doc-button"
+            className="flex-row items-center gap-2 p-2 rounded-lg bg-blue-50 active:bg-blue-100 flex-1 justify-center"
+            onPress={() => {
+              if (docInputRef.current) {
+                docInputRef.current.click();
+              } else {
+                // Fallback for tests or non-DOM
+                handleFileSelect(
+                  { target: { files: [{ name: 'receipt.pdf', size: 204800, type: 'application/pdf' }] } },
+                  'document'
+                );
+              }
+            }}
+          >
+            <Text className="text-base">📄</Text>
+            <Text className="text-xs font-semibold text-blue-800">Document</Text>
       {replyTo && (
         <View
           testID="reply-banner"
@@ -521,6 +714,13 @@ export default function ChatScreen() {
 
       <View className="flex-row items-center gap-2 px-3 py-2 border-t border-gray-200">
         <Pressable
+          testID="paperclip-button"
+          className={`rounded-full p-2 items-center justify-center ${attachmentMenuOpen ? 'bg-emerald-200' : 'bg-gray-100'}`}
+          onPress={() => setAttachmentMenuOpen((prev) => !prev)}
+        >
+          <Text className="text-sm">📎</Text>
+        </Pressable>
+        <Pressable
           testID="mic-button"
           className={`rounded-full p-2 items-center justify-center ${isListening ? 'bg-red-500' : 'bg-gray-200'}`}
           onPress={handleVoiceInput}
@@ -529,9 +729,9 @@ export default function ChatScreen() {
         </Pressable>
         <TextInput
           className="flex-1 border border-gray-300 rounded-full px-4 py-2 text-base"
-          placeholder="Type a message or use speech"
-          value={inputText}
-          onChangeText={setInputText}
+          placeholder={previewAttachment ? 'Caption or press Send...' : 'Type a message or use speech'}
+          value={previewAttachment ? captionText : inputText}
+          onChangeText={previewAttachment ? setCaptionText : setInputText}
           onSubmitEditing={() => handleSend()}
           editable={!sending}
         />
@@ -539,7 +739,7 @@ export default function ChatScreen() {
           testID="send-button"
           className="bg-green-500 rounded-full px-4 py-2 items-center justify-center"
           onPress={() => handleSend()}
-          disabled={sending || !inputText.trim()}
+          disabled={sending || (!inputText.trim() && !previewAttachment && !captionText.trim())}
         >
           <Text className="text-white font-semibold">
             {sending ? '...' : 'Send'}

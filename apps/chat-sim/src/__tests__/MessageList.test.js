@@ -339,3 +339,91 @@ describe('copy and swipe interaction', () => {
     expect(Clipboard.setStringAsync).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('copy, swipe and attachment integration', () => {
+  let renderer;
+  const attachments = [
+    { type: 'photo', name: 'receipt.png', uri: 'data:image/png;base64,AA==' },
+    { type: 'document', name: 'receipt.pdf', size: '142.5 KB' },
+  ];
+
+  beforeEach(() => Clipboard.setStringAsync.mockClear());
+  afterEach(() => act(() => renderer?.unmount()));
+
+  function nodesMatching(node, predicate) {
+    if (Array.isArray(node)) return node.flatMap((child) => nodesMatching(child, predicate));
+    if (!node || typeof node !== 'object') return [];
+    return [
+      ...(predicate(node) ? [node] : []),
+      ...(node.children ?? []).flatMap((child) => nodesMatching(child, predicate)),
+    ];
+  }
+
+  it.each(attachments)('renders one $type bubble and copies only its exact caption', async (attachment) => {
+    const message = {
+      id: `caption-${attachment.type}`,
+      sender: attachment.type === 'photo' ? 'user' : 'bot',
+      text: 'My receipt\nReference: 你好 💸  ',
+      attachment,
+      replyTo: { id: 'original', text: 'Please upload your receipt', sender: 'bot' },
+    };
+    const onReply = jest.fn();
+    await act(async () => {
+      renderer = create(<MessageList messages={[message]} onReply={onReply} />);
+    });
+
+    const tree = renderer.toJSON();
+    expect(nodesMatching(tree, (node) => node.props?.testID === `bubble-${message.sender}`)).toHaveLength(1);
+    expect(nodesMatching(tree, (node) => node.type === 'Text' && node.children?.[0] === message.text)).toHaveLength(1);
+    const row = findByTestID(tree, `swipe-row-${message.id}`);
+    expect(findByTestID(row, 'media-card')).not.toBeNull();
+    expect(findByTestID(row, attachment.type === 'photo' ? 'media-photo-container' : 'media-doc-container')).not.toBeNull();
+    if (attachment.type === 'photo') {
+      const image = renderer.root.findByType('img');
+      expect(image.props.src).toBe(attachment.uri);
+      expect(image.props.alt).toBe(attachment.name);
+      expect(image.props.draggable).toBe(false);
+    } else {
+      expect(nodesMatching(row, (node) => node.type === 'Text' && node.children?.[0] === attachment.name)).toHaveLength(1);
+      expect(nodesMatching(row, (node) => node.type === 'Text' && node.children?.[0] === attachment.size)).toHaveLength(1);
+    }
+
+    const copy = renderer.root.findByType(MessageCopyButton);
+    const button = copy.findAll((node) => node.props.accessibilityRole === 'button' && typeof node.props.onPress === 'function')[0];
+    await act(async () => { await button.props.onPress(); });
+    expect(Clipboard.setStringAsync).toHaveBeenCalledTimes(1);
+    expect(Clipboard.setStringAsync).toHaveBeenCalledWith(message.text);
+    expect(onReply).not.toHaveBeenCalled();
+
+    await act(async () => {
+      row.props.onTouchStart(touchAt(100, 80));
+      row.props.onResponderMove(touchAt(180, 80));
+      row.props.onResponderRelease();
+    });
+    expect(onReply).toHaveBeenCalledTimes(1);
+    expect(onReply).toHaveBeenCalledWith(message);
+    expect(Clipboard.setStringAsync).toHaveBeenCalledTimes(1);
+    expect(findByTestID(renderer.toJSON(), 'media-card')).not.toBeNull();
+  });
+
+  it.each(attachments)('keeps captionless $type messages swipeable without an empty copy action', async (attachment) => {
+    const message = { id: `no-caption-${attachment.type}`, sender: 'user', text: '', attachment };
+    const onReply = jest.fn();
+    await act(async () => {
+      renderer = create(<MessageList messages={[message]} onReply={onReply} />);
+    });
+    expect(renderer.root.findAllByType(MessageCopyButton)).toHaveLength(0);
+    expect(nodesMatching(renderer.toJSON(), (node) => node.props?.testID === 'bubble-user')).toHaveLength(1);
+    const row = findByTestID(renderer.toJSON(), `swipe-row-${message.id}`);
+    expect(findByTestID(row, 'media-card')).not.toBeNull();
+
+    await act(async () => {
+      row.props.onTouchStart(touchAt(100, 80));
+      row.props.onResponderMove(touchAt(180, 80));
+      row.props.onResponderRelease();
+    });
+    expect(onReply).toHaveBeenCalledTimes(1);
+    expect(onReply).toHaveBeenCalledWith(message);
+    expect(Clipboard.setStringAsync).not.toHaveBeenCalled();
+  });
+});

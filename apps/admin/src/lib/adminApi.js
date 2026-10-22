@@ -115,6 +115,13 @@ export const getAdminAuditLogs = async (params = {}) => {
   return data;
 };
 
+// Reveals sensitive fields for one record. The server records every call in
+// the audit log (admin.sensitive.revealed), so call this on each reveal.
+export const revealAdminFields = async (resource, id) => {
+  const { data } = await api.post(`/admin/reveal/${resource}/${id}`);
+  return data;
+};
+
 // Sensitive exports are authorized server-side and recorded to the audit log.
 // We stream the CSV response to a browser download.
 const triggerDownload = (blob, filename) => {
