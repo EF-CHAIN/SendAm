@@ -7,9 +7,14 @@ export default function Login() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
+  const [capsLockOn, setCapsLockOn] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
+
+  const handleCapsLock = (event) => {
+    setCapsLockOn(event.getModifierState('CapsLock'));
+  };
 
   const handleLogin = async (e) => {
     e.preventDefault();
@@ -64,7 +69,14 @@ export default function Login() {
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 aria-invalid={error ? 'true' : undefined}
-                aria-describedby={error ? 'login-error' : undefined}
+                onFocus={() => setCapsLockOn(false)}
+                onBlur={() => setCapsLockOn(false)}
+                onKeyDown={handleCapsLock}
+                onKeyUp={handleCapsLock}
+                aria-describedby={[
+                  error && 'login-error',
+                  capsLockOn && 'login-caps-lock-warning',
+                ].filter(Boolean).join(' ') || undefined}
                 className="w-full px-4 py-3 pr-12 rounded-lg border border-gray-200 focus:ring-2 focus:ring-primary outline-none transition-all"
                 placeholder="Enter password"
               />
@@ -77,6 +89,11 @@ export default function Login() {
                 {showPassword ? <EyeOff size={20} aria-hidden="true" /> : <Eye size={20} aria-hidden="true" />}
               </button>
             </div>
+            {capsLockOn && (
+              <p id="login-caps-lock-warning" role="status" className="mt-2 inline-flex rounded-md border border-amber-200 bg-amber-50 px-3 py-1 text-sm font-medium text-amber-800">
+                Caps Lock is on
+              </p>
+            )}
           </div>
           {error && (
             <p id="login-error" role="alert" className="text-sm text-red-600 text-center">{error}</p>

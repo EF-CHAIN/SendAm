@@ -7,6 +7,7 @@ import Navbar from './components/Navbar.jsx';
 import Footer from './components/Footer.jsx';
 import PWABanner from './components/PWABanner.jsx';
 import UpdatePrompt from './components/UpdatePrompt.jsx';
+import CookieConsentBanner from './components/CookieConsentBanner.jsx';
 import Home from './pages/Home.jsx';
 import NotFound from './pages/NotFound.jsx';
 
@@ -31,6 +32,7 @@ export default function App() {
         <Footer />
         <PWABanner />
         <UpdatePrompt />
+        <CookieConsentBanner />
       </div>
       </I18nProvider>
     </ErrorBoundary>
