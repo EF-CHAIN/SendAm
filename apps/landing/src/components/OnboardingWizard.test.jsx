@@ -1,4 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
+vi.mock('@/lib/imageCompression.js', () => ({ compressImageForUpload: vi.fn() }));
+import { compressImageForUpload } from '@/lib/imageCompression.js';
 import { render, screen, fireEvent, act } from '@testing-library/react';
 import OnboardingWizard from './OnboardingWizard.jsx';
 
@@ -184,5 +186,56 @@ describe('OnboardingWizard Component', () => {
     expect(screen.queryByTestId('resume-draft-banner')).not.toBeInTheDocument();
     expect(screen.getByLabelText(/WhatsApp Phone Number/i)).toHaveValue('+234 801 234 5678');
     localStorage.clear();
+  });
+});
+
+describe('OnboardingWizard identity photo upload', () => {
+  it('compresses a chosen photo, shows progress, then reports it is ready', async () => {
+    compressImageForUpload.mockImplementation(async (_file, { onProgress }) => {
+      onProgress(40);
+      return new Blob([new Uint8Array(512 * 1024)], { type: 'image/jpeg' });
+    });
+    render(<OnboardingWizard />);
+
+    const input = screen.getByLabelText(/Identity Document Photo/i);
+    const photo = new File(['x'], 'id.jpg', { type: 'image/jpeg' });
+    fireEvent.change(input, { target: { files: [photo] } });
+
+    expect(compressImageForUpload).toHaveBeenCalledWith(photo, expect.objectContaining({ onProgress: expect.any(Function) }));
+    expect(await screen.findByRole('status')).toHaveTextContent('Photo ready to upload (512 KB)');
+    expect(screen.queryByRole('progressbar')).not.toBeInTheDocument();
+  });
+
+  it('shows the compression progress bar while the photo is being processed', async () => {
+    let finish;
+    compressImageForUpload.mockImplementation(
+      (_file, { onProgress }) =>
+        new Promise((resolve) => {
+          onProgress(35);
+          finish = () => resolve(new Blob([new Uint8Array(1024)]));
+        }),
+    );
+    render(<OnboardingWizard />);
+
+    fireEvent.change(screen.getByLabelText(/Identity Document Photo/i), {
+      target: { files: [new File(['x'], 'id.jpg', { type: 'image/jpeg' })] },
+    });
+
+    const bar = await screen.findByRole('progressbar', { name: /compressing identity photo/i });
+    expect(bar).toHaveAttribute('aria-valuenow', '35');
+
+    await act(async () => finish());
+    expect(await screen.findByRole('status')).toHaveTextContent('Photo ready to upload');
+  });
+
+  it('surfaces a compression failure to the visitor', async () => {
+    compressImageForUpload.mockRejectedValue(new Error('Please choose a photo file.'));
+    render(<OnboardingWizard />);
+
+    fireEvent.change(screen.getByLabelText(/Identity Document Photo/i), {
+      target: { files: [new File(['x'], 'notes.txt', { type: 'text/plain' })] },
+    });
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Please choose a photo file.');
   });
 });

@@ -1,7 +1,7 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, Routes, Route } from "react-router-dom";
 import ProtectedRoute from "./ProtectedRoute";
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { setToken, removeToken } from "../lib/auth";
 import { adminLogin } from "../lib/adminApi"; // Ensures interceptor is attached
 import { server } from "../mocks/server";
@@ -44,6 +44,22 @@ describe("ProtectedRoute & Session Expiry", () => {
     renderApp();
     expect(screen.getByTestId("dashboard")).toBeInTheDocument();
     expect(screen.queryByTestId("login-page")).not.toBeInTheDocument();
+  });
+
+  it("shows an idle-session warning after 15 minutes of inactivity", async () => {
+    setToken("valid_token");
+    vi.useFakeTimers();
+    try {
+      renderApp();
+      await act(async () => {
+        vi.advanceTimersByTime(15 * 60 * 1000);
+      });
+      expect(screen.getByRole("dialog")).toBeInTheDocument();
+      expect(screen.getByText(/logged out in/i)).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Stay Logged In" })).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("handles session expiry (401 from API) via adminApi interceptor", async () => {
