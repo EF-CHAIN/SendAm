@@ -135,6 +135,7 @@ export default function ChatScreen() {
   const [voiceSynthesizeEnabled, setVoiceSynthesizeEnabled] = useState(true);
   const [devModeOpen, setDevModeOpen] = useState(false);
   const [disabledReplies, setDisabledReplies] = useState({});
+  const [replyTo, setReplyTo] = useState(null);
 
   // Initialize deterministic Payment State Machine engine
   const stateMachine = useMemo(() => new PaymentStateMachine(), []);
@@ -205,6 +206,7 @@ export default function ChatScreen() {
     setSending(false);
     setIsListening(false);
     setDisabledReplies({});
+    setReplyTo(null);
   }
 
   function handleQuickReply(payload, messageId) {
@@ -279,13 +281,24 @@ export default function ChatScreen() {
     const text = (customText !== undefined ? customText : inputText).trim();
     if (!text || sending) return;
 
+    const quotedReply = replyTo
+      ? { id: replyTo.id, text: replyTo.text, sender: replyTo.sender }
+      : null;
+
     setMessages((prev) => [
       ...prev,
-      { id: `u-${Date.now()}`, text, sender: 'user', timestamp: new Date().toISOString() },
+      {
+        id: `u-${Date.now()}`,
+        text,
+        sender: 'user',
+        timestamp: new Date().toISOString(),
+        ...(quotedReply ? { replyTo: quotedReply } : {}),
+      },
     ]);
     setInputText('');
     setInputSelection({ start: 0, end: 0 });
     setEmojiPickerOpen(false);
+    setReplyTo(null);
     setSending(true);
 
     // If current state machine is awaiting PIN and user enters a 4-6 digit PIN
@@ -489,6 +502,7 @@ export default function ChatScreen() {
           onQuickReply={handleQuickReply}
           disabledReplies={disabledReplies}
           sending={sending}
+          onReply={setReplyTo}
         />
       </View>
       {sending ? <TypingIndicator /> : null}
@@ -512,6 +526,32 @@ export default function ChatScreen() {
               </Text>
             </Pressable>
           ))}
+        </View>
+      )}
+
+      {replyTo && (
+        <View
+          testID="reply-banner"
+          className="flex-row items-center gap-2 px-3 py-2 bg-gray-50 border-t border-gray-200"
+        >
+          <View className="h-8 w-1 rounded bg-green-500" />
+          <View className="flex-1">
+            <Text className="text-xs font-semibold text-green-600">
+              Replying to {replyTo.sender === 'user' ? 'yourself' : 'SendAm'}
+            </Text>
+            <Text className="text-sm text-gray-700" numberOfLines={1}>
+              {replyTo.text}
+            </Text>
+          </View>
+          <Pressable
+            testID="cancel-reply"
+            accessibilityRole="button"
+            accessibilityLabel="Cancel reply"
+            onPress={() => setReplyTo(null)}
+            className="p-2"
+          >
+            <Text className="text-base font-bold text-gray-500">✕</Text>
+          </Pressable>
         </View>
       )}
 
