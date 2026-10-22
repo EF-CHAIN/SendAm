@@ -1,5 +1,9 @@
-import { cleanup, render, screen, within } from '@testing-library/react';
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { describe, it, expect, vi } from 'vitest';
+import FilterBar from './FilterBar';
+
+const fields = [
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, describe, it, expect, vi } from 'vitest';
 import FilterBar from './FilterBar';
@@ -17,6 +21,7 @@ const renderFilterBar = () => {
   const onReset = vi.fn();
   const utils = render(
     <FilterBar
+      fields={fields}
       fields={testFields}
       getFilter={(key) => values[key]}
       setFilter={setFilter}
@@ -26,6 +31,7 @@ const renderFilterBar = () => {
   return { ...utils, setFilter, onReset };
 };
 
+describe('FilterBar', () => {
 describe('FilterBar accessibility and interactions', () => {
   it('exposes a search landmark with an accessible label for assistive tech', () => {
     renderFilterBar();
@@ -51,6 +57,11 @@ describe('FilterBar accessibility and interactions', () => {
     const { container } = renderFilterBar();
     const controls = container.querySelectorAll('input, select, button');
     // One control per field, plus the Reset button.
+    expect(controls).toHaveLength(fields.length + 1);
+    controls.forEach((control) => {
+      expect(control).toHaveAccessibleName();
+    });
+    fields.forEach((field) => {
     expect(controls).toHaveLength(testFields.length + 1);
     controls.forEach((control) => {
       expect(control).toHaveAccessibleName();
@@ -79,7 +90,8 @@ describe('FilterBar accessibility and interactions', () => {
     expect(setFilter).toHaveBeenCalledWith('status', 'failed');
 
     await user.type(screen.getByRole('textbox', { name: 'Phone' }), '1');
-    expect(setFilter).toHaveBeenCalledWith('phone', '1');
+    // Typed filters commit on the debounce, not per keystroke (#750).
+    await waitFor(() => expect(setFilter).toHaveBeenCalledWith('phone', '1'));
 
     await user.click(screen.getByRole('button', { name: 'Reset' }));
     expect(onReset).toHaveBeenCalledTimes(1);
@@ -101,6 +113,36 @@ const renderAt = (url) => render(
     <Harness />
   </MemoryRouter>
 );
+
+describe('FilterBar debounced search (#750)', () => {
+  it('holds the query back until typing pauses for 300ms', async () => {
+    const { setFilter } = renderFilterBar();
+    const user = userEvent.setup();
+
+    await user.type(screen.getByRole('textbox', { name: 'Phone' }), '12', { delay: 40 });
+    // Still inside the quiet window — nothing has reached the query yet.
+    expect(setFilter).not.toHaveBeenCalled();
+
+    // One commit for the whole burst, carrying only the final value.
+    await waitFor(() => expect(setFilter).toHaveBeenCalledWith('phone', '12'));
+    expect(setFilter).toHaveBeenCalledTimes(1);
+  });
+
+  it('cancels a pending keystroke when the filter is cleared externally', async () => {
+    renderAt('/?asset=XLM');
+    const user = userEvent.setup();
+    const input = screen.getByRole('textbox', { name: 'Asset' });
+
+    await user.type(input, '999', { delay: 40 }); // commit timer still pending
+    await user.click(screen.getByRole('button', { name: 'Clear Asset filter' }));
+    expect(input).toHaveValue('');
+
+    // If the pending timer still fired, the URL would regain the keystrokes
+    // and the draft would re-sync to them a moment later.
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    expect(input).toHaveValue('');
+  });
+});
 
 describe('FilterBar active filter chips', () => {
   it('renders no chips when nothing is filtered', () => {

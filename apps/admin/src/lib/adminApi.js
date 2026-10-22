@@ -45,6 +45,21 @@ export const getAdminMe = async () => {
   return data?.data || null;
 };
 
+// Rotate the current session token after an explicit idle-warning confirmation.
+export const renewAdminSession = async () => {
+  const { data } = await api.post('/admin/session/renew');
+  const token = data?.data?.token;
+  if (!token) throw new Error('Session renewal did not return a token');
+  setToken(token);
+  return data?.data;
+};
+
+export const adminLogout = async () => {
+  const { data } = await api.post('/admin/logout');
+  removeToken();
+  return data;
+};
+
 // Self-serve password rotation. Required first step after a bootstrap/temporary
 // credential; also revokes all other active sessions for the operator.
 export const changeAdminPassword = async ({ currentPassword, newPassword }) => {
@@ -97,6 +112,13 @@ export const getAdminKyc = async (params = {}) => {
 
 export const getAdminAuditLogs = async (params = {}) => {
   const { data } = await api.get('/admin/audit-logs', { params });
+  return data;
+};
+
+// Reveals sensitive fields for one record. The server records every call in
+// the audit log (admin.sensitive.revealed), so call this on each reveal.
+export const revealAdminFields = async (resource, id) => {
+  const { data } = await api.post(`/admin/reveal/${resource}/${id}`);
   return data;
 };
 

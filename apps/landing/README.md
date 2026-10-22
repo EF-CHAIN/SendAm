@@ -33,6 +33,31 @@ npm run dev:landing   # http://localhost:3000
 npm run build --workspace=apps/landing
 ```
 
+## PWA Manifest
+
+`public/manifest.json` is the single source of truth for the web app manifest:
+`vite.config.js` passes the same file to `vite-plugin-pwa`, so `/manifest.json`
+and the generated `/manifest.webmanifest` never drift. The theme and splash
+colour is the brand navy `#0f172a`, matching the `theme-color` meta tag in
+`index.html`.
+
+The 192x192 and 512x512 icons (`public/icons/maskable-*.png`) are declared with
+`"purpose": "any maskable"`. They are full-bleed navy squares with the SendAm
+mark kept inside the central 80% safe zone, so Android can crop them to a
+circle or any other adaptive shape without clipping the mark.
+`src/test/manifest.test.js` checks the colours, icon purposes, file sizes and
+the vite config wiring.
+
+## Currency Calculator
+
+`src/lib/currencyCalculator.js` holds the quote maths used by
+`CurrencyCalculator`. It works in BigInt fixed point with 7 decimals (Stellar
+stroop precision), so fees and conversions carry no floating-point error.
+Negative, malformed and over-precise amounts quote as zero with an error code,
+amounts above `MAX_TRANSFER_AMOUNT` (1,000, matching the API's default
+`MAX_SEND_AMOUNT`) are capped and flagged, and an unknown corridor is reported
+instead of assuming a 1:1 rate.
+
 ## Deployment
 
 The landing site builds to static assets, so it deploys to Vercel as a static
@@ -160,8 +185,8 @@ From the repository root:
 npm run test:landing
 ```
 
-Runs component/smoke tests (navigation, CTAs, FAQ) and `jest-axe` accessibility
-checks against the rendered home page with Vitest + Testing Library, in jsdom.
+Runs component/smoke tests (navigation, CTAs, FAQ), the currency calculation
+and manifest unit tests, and `jest-axe` accessibility checks against the rendered home page with Vitest + Testing Library, in jsdom.
 No live services or network access required. CI runs this on every PR via the
 `landing-tests` job in [`test.yml`](../../.github/workflows/test.yml).
 

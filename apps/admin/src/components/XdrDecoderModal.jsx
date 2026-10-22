@@ -17,6 +17,7 @@ import {
 } from 'lucide-react';
 import * as StellarSdk from '@stellar/stellar-sdk';
 import { decodeStellarXdr } from '@/lib/xdrDecoder';
+import JsonTreeView from './JsonTreeView';
 import { extractSimulationErrors } from '@/lib/stellarErrorCodes';
 
 /**
@@ -404,7 +405,10 @@ export default function XdrDecoderModal({
                 </div>
 
                 {activeTab === 'raw' && (
-                  <CopyButton text={JSON.stringify(decoded.rawJson, null, 2)} label="Copy JSON" />
+                  <CopyButton
+                    text={JSON.stringify(decoded.rawJson, null, 2)}
+                    label="Copy Formatted JSON"
+                  />
                 )}
               </div>
 
@@ -489,9 +493,9 @@ export default function XdrDecoderModal({
                                   <summary className="text-gray-500 hover:text-gray-700 cursor-pointer">
                                     View Raw Operation Object
                                   </summary>
-                                  <pre className="mt-2 p-2 bg-gray-900 text-gray-100 rounded text-[11px] font-mono overflow-x-auto">
-                                    {JSON.stringify(op.raw, null, 2)}
-                                  </pre>
+                                  <div className="mt-2 p-2 bg-gray-900 rounded overflow-auto">
+                                    <JsonTreeView data={op.raw} defaultExpandedDepth={2} />
+                                  </div>
                                 </details>
                               </div>
                             </div>
@@ -534,12 +538,12 @@ export default function XdrDecoderModal({
                 </div>
               )}
 
-              {/* Tab 3: Raw JSON */}
+              {/* Tab 3: Raw JSON as a collapsible, highlighted tree */}
               {activeTab === 'raw' && (
                 <div className="relative">
-                  <pre className="p-4 bg-gray-900 text-green-400 rounded-xl text-xs font-mono overflow-x-auto max-h-96 whitespace-pre-wrap break-all">
-                    {JSON.stringify(decoded.rawJson, null, 2)}
-                  </pre>
+                  <div className="p-4 bg-gray-900 rounded-xl overflow-auto max-h-96">
+                    <JsonTreeView data={decoded.rawJson} defaultExpandedDepth={3} />
+                  </div>
                 </div>
               )}
             </div>
