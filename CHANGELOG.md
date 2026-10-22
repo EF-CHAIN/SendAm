@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `@sendam/shared` logger keeps the last 100 entries in an in-memory ring buffer, with `logger.getRecentLogs()`, `logger.downloadLogs()` and `logger.clearLogs()` for support tickets (#811).
+- `@sendam/shared` `StellarAddress` component renders `GABC...WXYZ` with a full-address tooltip and one-click copy (#808).
+- `@sendam/shared` `formatRelativeTime` ("Just now", "5m ago", "2h ago", absolute after 24 hours) with live `subscribeRelativeTime` ticks and a `useRelativeTime` hook (#805).
+- `@sendam/shared` `normalizeError` now returns `{ title, message, code }` and understands HTTP statuses, network failures, timeouts and Stellar Horizon result codes (#810).
 - `docs/SECRET-SCANNING.md` has a "Run It Locally" section with the exact gitleaks install, self-test and scan commands (#466).
 - Landing `Navbar`: below the `md` breakpoint a hamburger button (`aria-expanded`, `aria-controls`, `aria-label`) opens an accessible slide-out drawer with a backdrop, the section and onboarding links and the WhatsApp CTA. The drawer traps focus, closes on Escape, backdrop click or link click (smooth-scrolling to the section), locks page scroll while open and returns focus to the toggle (#493).
 - Automated accessibility coverage for the admin dashboard: jest-axe scans
