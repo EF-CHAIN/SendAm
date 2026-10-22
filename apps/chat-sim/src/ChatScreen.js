@@ -133,6 +133,7 @@ export default function ChatScreen() {
   const [captionText, setCaptionText] = useState('');
   const photoInputRef = useRef(null);
   const docInputRef = useRef(null);
+  const [replyTo, setReplyTo] = useState(null);
 
   // Initialize deterministic Payment State Machine engine
   const stateMachine = useMemo(() => new PaymentStateMachine(), []);
@@ -225,6 +226,7 @@ export default function ChatScreen() {
     setCaptionText('');
     if (photoInputRef.current) photoInputRef.current.value = '';
     if (docInputRef.current) docInputRef.current.value = '';
+    setReplyTo(null);
   }
 
   function handleQuickReply(payload, messageId) {
@@ -308,6 +310,10 @@ export default function ChatScreen() {
 
     const userMessageText = text || (attachment ? (attachment.type === 'photo' ? 'Photo' : attachment.name) : '');
 
+    const quotedReply = replyTo
+      ? { id: replyTo.id, text: replyTo.text, sender: replyTo.sender }
+      : null;
+
     setMessages((prev) => [
       ...prev,
       {
@@ -324,6 +330,14 @@ export default function ChatScreen() {
     } else {
       setInputText('');
     }
+        text,
+        sender: 'user',
+        timestamp: new Date().toISOString(),
+        ...(quotedReply ? { replyTo: quotedReply } : {}),
+      },
+    ]);
+    setInputText('');
+    setReplyTo(null);
     setSending(true);
 
     // If current state machine is awaiting PIN and user enters a 4-6 digit PIN
@@ -526,6 +540,7 @@ export default function ChatScreen() {
           onQuickReply={handleQuickReply}
           disabledReplies={disabledReplies}
           sending={sending}
+          onReply={setReplyTo}
         />
       </View>
       {sending ? <TypingIndicator /> : null}
@@ -671,6 +686,28 @@ export default function ChatScreen() {
           >
             <Text className="text-base">📄</Text>
             <Text className="text-xs font-semibold text-blue-800">Document</Text>
+      {replyTo && (
+        <View
+          testID="reply-banner"
+          className="flex-row items-center gap-2 px-3 py-2 bg-gray-50 border-t border-gray-200"
+        >
+          <View className="h-8 w-1 rounded bg-green-500" />
+          <View className="flex-1">
+            <Text className="text-xs font-semibold text-green-600">
+              Replying to {replyTo.sender === 'user' ? 'yourself' : 'SendAm'}
+            </Text>
+            <Text className="text-sm text-gray-700" numberOfLines={1}>
+              {replyTo.text}
+            </Text>
+          </View>
+          <Pressable
+            testID="cancel-reply"
+            accessibilityRole="button"
+            accessibilityLabel="Cancel reply"
+            onPress={() => setReplyTo(null)}
+            className="p-2"
+          >
+            <Text className="text-base font-bold text-gray-500">✕</Text>
           </Pressable>
         </View>
       )}
