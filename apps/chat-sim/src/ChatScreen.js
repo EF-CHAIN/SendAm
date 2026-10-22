@@ -9,7 +9,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import MessageList from './MessageList';
+import MessageList, { parseQuickReplies } from './MessageList';
 import usePolling from './usePolling';
 import {
   PaymentStateMachine,
@@ -18,6 +18,54 @@ import {
 } from './engine/paymentStateMachine';
 import { voiceService } from './engine/voiceService';
 import { API_BASE_URL } from './config';
+
+export function formatTranscriptText(messages, phoneNumber) {
+  const lines = [
+    '=== SendAm Chat Transcript ===',
+    `Phone Number: ${phoneNumber || 'Unknown'}`,
+    `Exported At: ${new Date().toISOString()}`,
+    `Total Messages: ${messages.length}`,
+    '==============================',
+    '',
+  ];
+  messages.forEach((msg) => {
+    const time = msg.timestamp || msg.createdAt || new Date().toISOString();
+    const sender = msg.sender === 'user' ? 'User' : 'SendAm';
+    lines.push(`[${time}] [${sender}]: ${msg.text}`);
+  });
+  return lines.join('\n');
+}
+
+export function formatTranscriptJson(messages, phoneNumber) {
+  const data = {
+    phoneNumber: phoneNumber || null,
+    exportedAt: new Date().toISOString(),
+    messageCount: messages.length,
+    messages: messages.map((m) => ({
+      id: m.id,
+      sender: m.sender,
+      text: m.text,
+      timestamp: m.timestamp || m.createdAt || new Date().toISOString(),
+    })),
+  };
+  return JSON.stringify(data, null, 2);
+}
+
+export function triggerDownload(content, filename, mimeType) {
+  if (typeof document !== 'undefined' && document.createElement) {
+    const blob = new Blob([content], { type: mimeType });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    return true;
+  }
+  return false;
+}
 
 function TypingIndicator() {
   const dot1 = useRef(new Animated.Value(0)).current;
@@ -82,6 +130,13 @@ export default function ChatScreen() {
   const [isRecording, setIsRecording] = useState(false);
   const [recordSeconds, setRecordSeconds] = useState(0);
   const recordTimerRef = useRef(null);
+  const [disabledReplies, setDisabledReplies] = useState({});
+  const [attachmentMenuOpen, setAttachmentMenuOpen] = useState(false);
+  const [previewAttachment, setPreviewAttachment] = useState(null);
+  const [captionText, setCaptionText] = useState('');
+  const photoInputRef = useRef(null);
+  const docInputRef = useRef(null);
+  const [replyTo, setReplyTo] = useState(null);
 
   // Initialize deterministic Payment State Machine engine
   const stateMachine = useMemo(() => new PaymentStateMachine(), []);
@@ -90,6 +145,17 @@ export default function ChatScreen() {
     context: stateMachine.getContext(),
     history: stateMachine.getHistory(),
   });
+
+  const latestBotMessage = useMemo(() => {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i].sender === 'bot') return messages[i];
+    }
+    return null;
+  }, [messages]);
+
+  const latestQuickReplies = useMemo(() => {
+    return latestBotMessage ? parseQuickReplies(latestBotMessage) : [];
+  }, [latestBotMessage]);
 
   useEffect(() => {
     const unsubscribe = stateMachine.subscribe(
@@ -115,13 +181,72 @@ export default function ChatScreen() {
     setInputText('');
     setSending(false);
     setIsListening(false);
+    setDisabledReplies({});
+    setAttachmentMenuOpen(false);
+    setPreviewAttachment(null);
+    setCaptionText('');
+  }
+
+  function handleFileSelect(event, type) {
+    const file = event.target?.files?.[0];
+    if (!file) return;
+
+    const attachmentObj = {
+      type, // 'photo' or 'document'
+      name: file.name || (type === 'photo' ? 'photo.jpg' : 'document.pdf'),
+      size: file.size ? `${(file.size / 1024).toFixed(1)} KB` : '',
+    };
+
+    if (type === 'photo') {
+      if (typeof FileReader !== 'undefined') {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          setPreviewAttachment({
+            ...attachmentObj,
+            uri: e.target?.result,
+          });
+          setAttachmentMenuOpen(false);
+        };
+        reader.readAsDataURL(file);
+      } else {
+        setPreviewAttachment({
+          ...attachmentObj,
+          uri: file.uri || 'data:image/jpeg;base64,mock',
+        });
+        setAttachmentMenuOpen(false);
+      }
+    } else {
+      setPreviewAttachment({
+        ...attachmentObj,
+        uri: null,
+      });
+      setAttachmentMenuOpen(false);
+    }
+  }
+
+  function handleClearAttachment() {
+    setPreviewAttachment(null);
+    setCaptionText('');
+    if (photoInputRef.current) photoInputRef.current.value = '';
+    if (docInputRef.current) docInputRef.current.value = '';
+    setReplyTo(null);
+  }
+
+  function handleQuickReply(payload, messageId) {
+    if (sending || (messageId && disabledReplies[messageId])) return;
+    if (messageId) {
+      setDisabledReplies((prev) => ({ ...prev, [messageId]: payload }));
+    }
+    handleSend(payload);
   }
 
   function appendBotReplies(replies) {
+    const now = new Date().toISOString();
     const newMsgs = replies.map((reply, index) => ({
       id: `b-${Date.now()}-${index}`,
       text: reply,
       sender: 'bot',
+      timestamp: now,
     }));
     setMessages((prev) => [...prev, ...newMsgs]);
 
@@ -230,7 +355,48 @@ export default function ChatScreen() {
         { id: `u-${Date.now()}`, text, sender: 'user' },
       ]);
     }
+  async function handleSend(customText) {
+    const attachment = previewAttachment;
+    const text = (
+      customText !== undefined
+        ? customText
+        : attachment
+        ? captionText
+        : inputText
+    ).trim();
+
+    if ((!text && !attachment) || sending) return;
+
+    const userMessageText = text || (attachment ? (attachment.type === 'photo' ? 'Photo' : attachment.name) : '');
+
+    const quotedReply = replyTo
+      ? { id: replyTo.id, text: replyTo.text, sender: replyTo.sender }
+      : null;
+
+    setMessages((prev) => [
+      ...prev,
+      {
+        id: `u-${Date.now()}`,
+        text: text,
+        attachment: attachment || undefined,
+        sender: 'user',
+        timestamp: new Date().toISOString(),
+      },
+    ]);
+
+    if (attachment) {
+      handleClearAttachment();
+    } else {
+      setInputText('');
+    }
+        text,
+        sender: 'user',
+        timestamp: new Date().toISOString(),
+        ...(quotedReply ? { replyTo: quotedReply } : {}),
+      },
+    ]);
     setInputText('');
+    setReplyTo(null);
     setSending(true);
 
     // If current state machine is awaiting PIN and user enters a 4-6 digit PIN
@@ -259,7 +425,7 @@ export default function ChatScreen() {
       const response = await fetch(`${API_BASE_URL}/api/sim/message`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ phoneNumber, text }),
+        body: JSON.stringify({ phoneNumber, text: userMessageText }),
       });
       if (!response.ok) {
         throw new Error(`Request failed with status ${response.status}`);
@@ -271,7 +437,7 @@ export default function ChatScreen() {
       const errorReply = `Couldn't reach SendAm: ${error.message}`;
       setMessages((prev) => [
         ...prev,
-        { id: `err-${Date.now()}`, text: errorReply, sender: 'bot' },
+        { id: `err-${Date.now()}`, text: errorReply, sender: 'bot', timestamp: new Date().toISOString() },
       ]);
       if (voiceSynthesizeEnabled) {
         voiceService.speak(errorReply);
@@ -279,6 +445,20 @@ export default function ChatScreen() {
     } finally {
       setSending(false);
     }
+  }
+
+  function handleExportTxt() {
+    const content = formatTranscriptText(messages, phoneNumber);
+    const cleanPhone = (phoneNumber || 'session').replace(/[^a-zA-Z0-9]/g, '_');
+    const filename = `transcript_${cleanPhone}_${Date.now()}.txt`;
+    triggerDownload(content, filename, 'text/plain');
+  }
+
+  function handleExportJson() {
+    const content = formatTranscriptJson(messages, phoneNumber);
+    const cleanPhone = (phoneNumber || 'session').replace(/[^a-zA-Z0-9]/g, '_');
+    const filename = `transcript_${cleanPhone}_${Date.now()}.json`;
+    triggerDownload(content, filename, 'application/json');
   }
 
   function handleRollback(index) {
@@ -321,13 +501,29 @@ export default function ChatScreen() {
     >
       <View className="flex-row items-center justify-between px-3 py-2 border-b border-gray-200">
         <Text className="text-base font-semibold text-gray-900">{phoneNumber}</Text>
-        <Pressable
-          testID="reset-session-button"
-          className="border border-gray-300 rounded-lg px-3 py-1"
-          onPress={handleReset}
-        >
-          <Text className="text-sm font-semibold text-gray-700">Switch Account</Text>
-        </Pressable>
+        <View className="flex-row items-center gap-2">
+          <Pressable
+            testID="export-transcript-button"
+            className="border border-emerald-500 bg-emerald-50 rounded-lg px-2.5 py-1"
+            onPress={handleExportTxt}
+          >
+            <Text className="text-xs font-semibold text-emerald-700">Export .txt</Text>
+          </Pressable>
+          <Pressable
+            testID="export-transcript-json-button"
+            className="border border-emerald-500 bg-emerald-50 rounded-lg px-2.5 py-1"
+            onPress={handleExportJson}
+          >
+            <Text className="text-xs font-semibold text-emerald-700">Export .json</Text>
+          </Pressable>
+          <Pressable
+            testID="reset-session-button"
+            className="border border-gray-300 rounded-lg px-3 py-1"
+            onPress={handleReset}
+          >
+            <Text className="text-sm font-semibold text-gray-700">Switch Account</Text>
+          </Pressable>
+        </View>
       </View>
 
       {/* Dev Mode / State Machine Inspector Toolbar */}
@@ -398,9 +594,182 @@ export default function ChatScreen() {
       )}
 
       <View className="flex-1">
-        <MessageList messages={messages} />
+        <MessageList
+          messages={messages}
+          onQuickReply={handleQuickReply}
+          disabledReplies={disabledReplies}
+          sending={sending}
+          onReply={setReplyTo}
+        />
       </View>
       {sending ? <TypingIndicator /> : null}
+
+      {/* WhatsApp interactive quick-reply suggestions bar above input */}
+      {latestQuickReplies.length > 0 && !disabledReplies[latestBotMessage?.id] && (
+        <View
+          testID="quick-replies-bottom-bar"
+          className="flex-row flex-wrap gap-2 px-3 py-2 bg-emerald-50/70 border-t border-emerald-100"
+        >
+          {latestQuickReplies.map((reply, idx) => (
+            <Pressable
+              key={reply.id || idx}
+              testID={`bottom-quick-reply-${idx}`}
+              disabled={sending || Boolean(disabledReplies[latestBotMessage?.id])}
+              onPress={() => handleQuickReply(reply.payload, latestBotMessage?.id)}
+              className="bg-white border border-emerald-500 rounded-full px-3 py-1 shadow-sm active:bg-emerald-50"
+            >
+              <Text className="text-xs font-semibold text-emerald-700">
+                {reply.label}
+              </Text>
+            </Pressable>
+          ))}
+        </View>
+      )}
+
+      {/* Hidden file inputs for web/mobile browsers */}
+      {typeof document !== 'undefined' && (
+        <View style={{ display: 'none' }}>
+          <input
+            type="file"
+            ref={photoInputRef}
+            accept="image/*"
+            data-testid="photo-file-input"
+            onChange={(e) => handleFileSelect(e, 'photo')}
+          />
+          <input
+            type="file"
+            ref={docInputRef}
+            accept=".pdf,.doc,.docx,.txt"
+            data-testid="doc-file-input"
+            onChange={(e) => handleFileSelect(e, 'document')}
+          />
+        </View>
+      )}
+
+      {/* Inline Media Preview Bubble above input */}
+      {previewAttachment && (
+        <View
+          testID="attachment-preview-bubble"
+          className="mx-3 mb-2 p-3 bg-gray-50 border border-emerald-300 rounded-xl shadow-sm gap-2"
+        >
+          <View className="flex-row items-center justify-between">
+            <View className="flex-row items-center gap-2">
+              <Text className="text-sm font-bold text-gray-800">
+                {previewAttachment.type === 'photo' ? '📷 Photo Preview' : '📄 Document'}
+              </Text>
+              <Text className="text-xs text-gray-500">
+                {previewAttachment.name} {previewAttachment.size ? `(${previewAttachment.size})` : ''}
+              </Text>
+            </View>
+            <Pressable
+              testID="cancel-attachment-button"
+              onPress={handleClearAttachment}
+              className="p-1 rounded-full bg-gray-200"
+            >
+              <Text className="text-xs font-bold text-gray-600 px-1">✕</Text>
+            </Pressable>
+          </View>
+
+          {previewAttachment.type === 'photo' && previewAttachment.uri ? (
+            <View className="rounded-lg overflow-hidden border border-gray-200 max-h-48 bg-black/5 items-center justify-center">
+              <img
+                src={previewAttachment.uri}
+                alt="Selected preview"
+                data-testid="preview-thumbnail-img"
+                style={{ maxHeight: 180, maxWidth: '100%', objectFit: 'contain' }}
+              />
+            </View>
+          ) : (
+            <View className="p-3 bg-white rounded border border-gray-200 flex-row items-center gap-3">
+              <Text className="text-2xl">📄</Text>
+              <View>
+                <Text className="text-sm font-semibold text-gray-800">{previewAttachment.name}</Text>
+                {previewAttachment.size ? (
+                  <Text className="text-xs text-gray-500">{previewAttachment.size}</Text>
+                ) : null}
+              </View>
+            </View>
+          )}
+
+          {/* Caption input */}
+          <TextInput
+            testID="attachment-caption-input"
+            className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm bg-white"
+            placeholder="Add a caption..."
+            value={captionText}
+            onChangeText={setCaptionText}
+            editable={!sending}
+            onSubmitEditing={() => handleSend()}
+          />
+        </View>
+      )}
+
+      {/* Paperclip Attachment Popup Menu */}
+      {attachmentMenuOpen && (
+        <View
+          testID="attachment-menu"
+          className="mx-3 mb-2 p-2 bg-white rounded-xl border border-gray-200 shadow-md flex-row gap-3"
+        >
+          <Pressable
+            testID="attach-photo-button"
+            className="flex-row items-center gap-2 p-2 rounded-lg bg-emerald-50 active:bg-emerald-100 flex-1 justify-center"
+            onPress={() => {
+              if (photoInputRef.current) {
+                photoInputRef.current.click();
+              } else {
+                // Fallback for tests or non-DOM
+                handleFileSelect(
+                  { target: { files: [{ name: 'sample-id.jpg', size: 102400, type: 'image/jpeg' }] } },
+                  'photo'
+                );
+              }
+            }}
+          >
+            <Text className="text-base">📷</Text>
+            <Text className="text-xs font-semibold text-emerald-800">Photo</Text>
+          </Pressable>
+          <Pressable
+            testID="attach-doc-button"
+            className="flex-row items-center gap-2 p-2 rounded-lg bg-blue-50 active:bg-blue-100 flex-1 justify-center"
+            onPress={() => {
+              if (docInputRef.current) {
+                docInputRef.current.click();
+              } else {
+                // Fallback for tests or non-DOM
+                handleFileSelect(
+                  { target: { files: [{ name: 'receipt.pdf', size: 204800, type: 'application/pdf' }] } },
+                  'document'
+                );
+              }
+            }}
+          >
+            <Text className="text-base">📄</Text>
+            <Text className="text-xs font-semibold text-blue-800">Document</Text>
+      {replyTo && (
+        <View
+          testID="reply-banner"
+          className="flex-row items-center gap-2 px-3 py-2 bg-gray-50 border-t border-gray-200"
+        >
+          <View className="h-8 w-1 rounded bg-green-500" />
+          <View className="flex-1">
+            <Text className="text-xs font-semibold text-green-600">
+              Replying to {replyTo.sender === 'user' ? 'yourself' : 'SendAm'}
+            </Text>
+            <Text className="text-sm text-gray-700" numberOfLines={1}>
+              {replyTo.text}
+            </Text>
+          </View>
+          <Pressable
+            testID="cancel-reply"
+            accessibilityRole="button"
+            accessibilityLabel="Cancel reply"
+            onPress={() => setReplyTo(null)}
+            className="p-2"
+          >
+            <Text className="text-base font-bold text-gray-500">✕</Text>
+          </Pressable>
+        </View>
+      )}
 
       <View className="flex-row items-center gap-2 px-3 py-2 border-t border-gray-200">
         {isRecording ? (
@@ -455,6 +824,13 @@ export default function ChatScreen() {
         )}
 
         <Pressable
+          testID="paperclip-button"
+          className={`rounded-full p-2 items-center justify-center ${attachmentMenuOpen ? 'bg-emerald-200' : 'bg-gray-100'}`}
+          onPress={() => setAttachmentMenuOpen((prev) => !prev)}
+        >
+          <Text className="text-sm">📎</Text>
+        </Pressable>
+        <Pressable
           testID="mic-button"
           className={`rounded-full p-2.5 items-center justify-center ${
             isRecording
@@ -472,6 +848,24 @@ export default function ChatScreen() {
               startVoiceRecording();
             }
           }}
+          className={`rounded-full p-2 items-center justify-center ${isListening ? 'bg-red-500' : 'bg-gray-200'}`}
+          onPress={handleVoiceInput}
+        >
+          <Text className="text-xs font-bold">{isListening ? 'REC...' : 'MIC'}</Text>
+        </Pressable>
+        <TextInput
+          className="flex-1 border border-gray-300 rounded-full px-4 py-2 text-base"
+          placeholder={previewAttachment ? 'Caption or press Send...' : 'Type a message or use speech'}
+          value={previewAttachment ? captionText : inputText}
+          onChangeText={previewAttachment ? setCaptionText : setInputText}
+          onSubmitEditing={() => handleSend()}
+          editable={!sending}
+        />
+        <Pressable
+          testID="send-button"
+          className="bg-green-500 rounded-full px-4 py-2 items-center justify-center"
+          onPress={() => handleSend()}
+          disabled={sending || (!inputText.trim() && !previewAttachment && !captionText.trim())}
         >
           <Text className="text-xs font-bold text-white">
             {isRecording ? 'REC' : 'MIC'}

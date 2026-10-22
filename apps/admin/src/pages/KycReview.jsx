@@ -13,6 +13,7 @@ import Loader from '@shared/Loader';
 import Pagination from '@/components/Pagination';
 import FilterBar from '@/components/FilterBar';
 import KycExportModal from '@/components/KycExportModal';
+import KycImageCompareModal from '@/components/KycImageCompareModal';
 import { encryptData, downloadEncryptedFile } from '@/lib/clientCrypto';
 import { REJECTION_REASONS } from '@/lib/rejectionReasons';
 import PasskeyPromptModal, { usePasskeyStepUp } from '@/components/PasskeyPromptModal';
@@ -34,6 +35,9 @@ export default function KycReview() {
   const [error, setError] = useState('');
   const [refreshKey, setRefreshKey] = useState(0);
   const [mutatingId, setMutatingId] = useState(null);
+
+  // Side-by-side comparison modal state
+  const [compareTarget, setCompareTarget] = useState(null);
 
   // Confirmation modal state. `confirmTarget` holds the row awaiting an
   // explicit operator confirmation; `confirmAction` is 'approve' | 'reject'.
@@ -177,25 +181,37 @@ export default function KycReview() {
     },
     {
       header: 'Actions',
-      render: (row) =>
-        ['pending', 'review'].includes(row.status) && (
-          <div className="flex gap-2">
-            <button
-              onClick={() => openConfirm(row, 'approve')}
-              disabled={mutatingId === row._id}
-              className="px-3 py-1 text-xs bg-green-600 text-white rounded hover:bg-green-700 disabled:opacity-50"
-            >
-              Approve
-            </button>
-            <button
-              onClick={() => openConfirm(row, 'reject')}
-              disabled={mutatingId === row._id}
-              className="px-3 py-1 text-xs bg-red-600 text-white rounded hover:bg-red-700 disabled:opacity-50"
-            >
-              Reject
-            </button>
-          </div>
-        ),
+      render: (row) => (
+        <div className="flex gap-2">
+          <button
+            type="button"
+            onClick={() => setCompareTarget(row)}
+            className="px-2.5 py-1 text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 dark:bg-slate-800 dark:hover:bg-slate-700 dark:text-slate-200 rounded border border-slate-300 dark:border-slate-700 font-medium transition"
+            data-testid={`compare-btn-${row._id}`}
+            aria-label={`Compare documents for ${row.userId?.phoneNumber || row._id}`}
+          >
+            Compare
+          </button>
+          {['pending', 'review'].includes(row.status) && (
+            <>
+              <button
+                onClick={() => openConfirm(row, 'approve')}
+                disabled={mutatingId === row._id}
+                className="px-3 py-1 text-xs bg-green-600 text-white rounded hover:bg-green-700 disabled:opacity-50"
+              >
+                Approve
+              </button>
+              <button
+                onClick={() => openConfirm(row, 'reject')}
+                disabled={mutatingId === row._id}
+                className="px-3 py-1 text-xs bg-red-600 text-white rounded hover:bg-red-700 disabled:opacity-50"
+              >
+                Reject
+              </button>
+            </>
+          )}
+        </div>
+      ),
     },
   ];
 
@@ -367,6 +383,16 @@ export default function KycReview() {
         onClose={() => setExportModalOpen(false)}
         onExport={handleExportSubmit}
         exporting={exporting}
+      />
+
+      {/* Side-by-side Document vs Selfie Liveness Comparison Modal */}
+      <KycImageCompareModal
+        key={compareTarget?._id || 'none'}
+        isOpen={Boolean(compareTarget)}
+        onClose={() => setCompareTarget(null)}
+        record={compareTarget}
+        onApprove={(row) => openConfirm(row, 'approve')}
+        onReject={(row) => openConfirm(row, 'reject')}
       />
     </div>
   );

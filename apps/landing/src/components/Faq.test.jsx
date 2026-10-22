@@ -74,4 +74,21 @@ describe('Faq', () => {
     expect(document.getElementById('faq-panel-1')).not.toHaveAttribute('inert');
     expect(document.getElementById('faq-panel-0')).toHaveAttribute('inert');
   });
+
+  it('moves focus with arrow keys, wrapping, and Home/End', async () => {
+    const user = userEvent.setup();
+    render(<Faq />);
+    const buttons = screen.getAllByRole('button');
+    buttons[0].focus();
+    await user.keyboard('{ArrowDown}');
+    expect(buttons[1]).toHaveFocus();
+    await user.keyboard('{End}');
+    expect(buttons[buttons.length - 1]).toHaveFocus();
+    await user.keyboard('{ArrowDown}');
+    expect(buttons[0]).toHaveFocus();
+    await user.keyboard('{ArrowUp}');
+    expect(buttons[buttons.length - 1]).toHaveFocus();
+    await user.keyboard('{Home}');
+    expect(buttons[0]).toHaveFocus();
+  });
 });

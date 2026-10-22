@@ -1,7 +1,37 @@
 import { MessageCircle } from 'lucide-react';
 import { whatsappUrl } from '@/lib/links.js';
+import { CORRIDORS } from '@/lib/corridors.js';
 
-export default function CtaBand() {
+function getCorridorGreeting(corridor) {
+  if (!corridor) return 'create wallet';
+
+  if (typeof corridor === 'string') {
+    const trimmed = corridor.trim();
+    if (!trimmed) return 'create wallet';
+
+    const match = CORRIDORS.find(
+      (c) =>
+        c.id.toLowerCase() === trimmed.toLowerCase() ||
+        c.to.country.toLowerCase() === trimmed.toLowerCase() ||
+        c.to.name.toLowerCase().includes(trimmed.toLowerCase()) ||
+        c.to.id.toLowerCase() === trimmed.toLowerCase()
+    );
+    const destination = match ? match.to.country : trimmed;
+    return `Hello SendAm, I want to send money to ${destination}`;
+  }
+
+  const destination =
+    corridor.to?.country || corridor.country || corridor.destination || corridor.name;
+  if (destination) {
+    return `Hello SendAm, I want to send money to ${destination}`;
+  }
+
+  return 'create wallet';
+}
+
+export default function CtaBand({ corridor }) {
+  const greeting = getCorridorGreeting(corridor);
+
   return (
     <section className="container mx-auto px-4 pb-16 sm:px-6 lg:pb-24">
       <div className="relative overflow-hidden rounded-3xl bg-dark px-6 py-14 text-center sm:px-12">
@@ -17,7 +47,7 @@ export default function CtaBand() {
           settle in seconds.
         </p>
         <a
-          href={whatsappUrl('create wallet')}
+          href={whatsappUrl(greeting)}
           target="_blank"
           rel="noopener noreferrer"
           className="relative mt-8 inline-flex items-center justify-center gap-2 rounded-xl bg-primary px-8 py-4 font-semibold text-white shadow-lg shadow-primary/30 transition-all hover:-translate-y-0.5 hover:bg-whatsapp focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white"
