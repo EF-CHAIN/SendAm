@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+// Jest provides describe, it, expect, beforeEach, and jest globally
 import {
   PaymentStateMachine,
   PaymentState,

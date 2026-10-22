@@ -104,6 +104,8 @@ describe('KycReview Component', () => {
       within(dialog).getByLabelText(/rejection reason/i),
       'document_expired'
     );
+    // A preset tag populates the customer-facing explanation (#760).
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Expired ID' }));
     await userEvent.click(within(dialog).getByRole('button', { name: /confirm rejection/i }));
     await completeStepUp();
 
@@ -118,21 +120,33 @@ describe('KycReview Component', () => {
 
     await userEvent.click(screen.getByRole('button', { name: /reject/i }));
     const dialog = await screen.findByRole('dialog');
-
     const submit = within(dialog).getByRole('button', { name: /confirm rejection/i });
     expect(submit).toBeDisabled();
 
-    // Selecting a concrete reason code enables submission.
+    // A structured reason code alone is no longer enough — the rejection also
+    // needs a customer explanation: a preset tag or >= 20 characters (#760).
     await userEvent.selectOptions(
       within(dialog).getByLabelText(/rejection reason/i),
       'name_mismatch'
     );
+    expect(submit).toBeDisabled();
+
+    // Selecting a preset tag satisfies the requirement immediately.
+    const tag = within(dialog).getByRole('button', { name: 'Name Mismatch' });
+    await userEvent.click(tag);
+    expect(tag).toHaveAttribute('aria-pressed', 'true');
     expect(submit).toBeEnabled();
 
-    // "Other" requires free-text detail before it can be submitted.
-    await userEvent.selectOptions(within(dialog).getByLabelText(/rejection reason/i), 'other');
+    // Deselecting the tag removes its text from the explanation.
+    await userEvent.click(tag);
+    expect(tag).toHaveAttribute('aria-pressed', 'false');
     expect(submit).toBeDisabled();
-    await userEvent.type(within(dialog).getByLabelText(/reason detail/i), 'Blurry selfie');
+
+    // Free text must clear the 20-character floor: 19 characters is not enough.
+    const explanation = within(dialog).getByLabelText(/customer explanation/i);
+    await userEvent.type(explanation, '1234567890123456789');
+    expect(submit).toBeDisabled();
+    await userEvent.type(explanation, '0');
     expect(submit).toBeEnabled();
   });
 
@@ -154,11 +168,16 @@ describe('KycReview Component', () => {
       within(dialog).getByLabelText(/rejection reason/i),
       'sanctions_flag'
     );
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Blurry Document' }));
     await userEvent.click(within(dialog).getByRole('button', { name: /confirm rejection/i }));
     await completeStepUp();
 
     await waitFor(() => {
-      expect(body).toMatchObject({ status: 'rejected', reason: 'sanctions_flag' });
+      // The structured code rides first, the customer-facing tag text after it.
+      expect(body).toMatchObject({
+        status: 'rejected',
+        reason: 'sanctions_flag: Blurry Document.',
+      });
     });
     // The passkey assertion rides along with the review mutation.
     expect(body.passkeyAssertion.response.signature).toBeTruthy();

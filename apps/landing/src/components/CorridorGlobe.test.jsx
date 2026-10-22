@@ -138,4 +138,25 @@ describe('CorridorGlobe', () => {
 
     raf.mockRestore();
   });
+
+  it('catches webglcontextlost, gracefully falls back to interactive SVG projection, and restores WebGL on webglcontextrestored', () => {
+    render(<CorridorGlobe />);
+    const canvas = screen.getByRole('img', { name: /interactive 3d globe/i });
+    expect(canvas).toBeInTheDocument();
+
+    // Trigger webglcontextlost on the canvas
+    fireEvent(canvas, new Event('webglcontextlost', { bubbles: true, cancelable: true }));
+
+    // Now SVG fallback should be rendered
+    const fallback = screen.getByTestId('corridor-diagram-fallback');
+    expect(fallback).toBeInTheDocument();
+    expect(screen.getByText(/webgl fallback mode/i)).toBeInTheDocument();
+
+    // Trigger webglcontextrestored on canvas
+    fireEvent(canvas, new Event('webglcontextrestored', { bubbles: true, cancelable: true }));
+
+    // Canvas should be restored
+    expect(screen.queryByTestId('corridor-diagram-fallback')).not.toBeInTheDocument();
+    expect(screen.getByRole('img', { name: /interactive 3d globe/i })).toBeInTheDocument();
+  });
 });
