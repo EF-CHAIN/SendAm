@@ -1,4 +1,4 @@
-import { render, screen, within, renderHook, act } from '@testing-library/react';
+import { cleanup, render, screen, within, renderHook, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import PasskeyPromptModal, { usePasskeyStepUp } from './PasskeyPromptModal';
@@ -200,5 +200,95 @@ describe('usePasskeyStepUp', () => {
     });
     expect(result.current.isStepUpOpen).toBe(false);
     expect(result.current.stepUpModalProps.error).toBe('');
+  });
+});
+
+describe('passkey failure fallback tabs (#756)', () => {
+  const errorProps = {
+    status: 'error',
+    error: 'Passkey verification was cancelled or timed out.',
+    errorCode: 'cancelled',
+  };
+
+  it('offers the Authenticator code tab only for NotAllowedError/AbortError failures', () => {
+    renderModal(errorProps);
+    expect(screen.getByRole('tablist', { name: /verification method/i })).toBeInTheDocument();
+
+    cleanup();
+    renderModal({ status: 'error', error: 'No passkey is registered.', errorCode: 'no_credential' });
+    expect(screen.queryByRole('tablist')).not.toBeInTheDocument();
+
+    cleanup();
+    renderModal(); // idle: no tabs either
+    expect(screen.queryByRole('tablist')).not.toBeInTheDocument();
+  });
+
+  it('keeps the operator unlocked: retry and cancel both stay available', () => {
+    const onCancel = vi.fn();
+    const onVerify = vi.fn();
+    renderModal({ ...errorProps, onCancel, onVerify });
+
+    expect(screen.getByRole('button', { name: /verify with passkey/i })).toBeEnabled();
+    expect(screen.getByRole('button', { name: /cancel/i })).toBeEnabled();
+  });
+
+  it('accepts a 6-digit TOTP code through the secondary tab', async () => {
+    const onCodeFallback = vi.fn();
+    renderModal({ ...errorProps, onCodeFallback });
+
+    await userEvent.click(screen.getByRole('tab', { name: /authenticator code/i }));
+    const input = screen.getByLabelText(/6-digit code.*recovery key/i);
+    const submit = screen.getByRole('button', { name: /verify code/i });
+
+    expect(submit).toBeDisabled();
+    await userEvent.type(input, '12');
+    expect(submit).toBeDisabled();
+    await userEvent.clear(input);
+    await userEvent.type(input, '123456');
+    expect(submit).toBeEnabled();
+    await userEvent.click(submit);
+
+    expect(onCodeFallback).toHaveBeenCalledWith('totp_code', '123456');
+  });
+
+  it('classifies a longer code as a backup recovery key', async () => {
+    const onCodeFallback = vi.fn();
+    renderModal({ ...errorProps, onCodeFallback });
+
+    await userEvent.click(screen.getByRole('tab', { name: /authenticator code/i }));
+    await userEvent.type(screen.getByLabelText(/recovery key/i), 'ABCD-EFGH-IJKL');
+    await userEvent.click(screen.getByRole('button', { name: /verify code/i }));
+
+    expect(onCodeFallback).toHaveBeenCalledWith('recovery_code', 'ABCD-EFGH-IJKL');
+  });
+
+  it('wires the hook end to end: a failed prompt exposes the code path and the payload', async () => {
+    installWebAuthnMock({
+      getError: Object.assign(new Error('sensor failed'), { name: 'NotAllowedError' }),
+    });
+    const onVerified = vi.fn();
+    const { result } = await renderStepUp({ fetchChallenge: async () => ({ challenge: 'srv' }) });
+
+    act(() => {
+      result.current.startStepUp('user.deactivate', onVerified);
+    });
+    await act(async () => {
+      await result.current.stepUpModalProps.onVerify();
+    });
+
+    // The failed assertion reports its code, and the prompt stays open.
+    expect(result.current.stepUpModalProps.errorCode).toBe('cancelled');
+    expect(result.current.isStepUpOpen).toBe(true);
+    expect(onVerified).not.toHaveBeenCalled();
+
+    await act(async () => {
+      await result.current.stepUpModalProps.onCodeFallback('totp_code', '654321');
+    });
+    expect(onVerified).toHaveBeenCalledWith({
+      passkeyAssertion: null,
+      passkeyFallback: 'totp_code',
+      fallbackCode: '654321',
+    });
+    expect(result.current.isStepUpOpen).toBe(false);
   });
 });

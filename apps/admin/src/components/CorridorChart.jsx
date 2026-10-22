@@ -10,59 +10,77 @@ import {
   projectChartPoints,
 } from '../lib/corridorChartGeometry';
 
-/**
- * Default mock time-series data generator when API does not supply historical series.
- */
-// eslint-disable-next-line react-refresh/only-export-components -- sample-data helper shared with tests
-export function generateSampleCorridorData(interval = 'daily', corridor = 'ALL') {
-  const points = interval === 'hourly' ? 24 : interval === 'weekly' ? 12 : 30;
-  const now = Date.now();
-  const step =
-    interval === 'hourly'
-      ? 3600 * 1000
-      : interval === 'weekly'
-      ? 7 * 24 * 3600 * 1000
-      : 24 * 3600 * 1000;
+import './CorridorChart.css';
 
-  const data = [];
-  let baseVolume = corridor === 'NGN' ? 15000 : corridor === 'KES' ? 8000 : corridor === 'GHS' ? 5000 : 28000;
-  let baseTxCount = corridor === 'NGN' ? 120 : corridor === 'KES' ? 65 : corridor === 'GHS' ? 40 : 225;
+const RANGES = {
+  '24H': { points: 24, interval: 'hourly' },
+  '7D': { points: 7, interval: 'daily' },
+  '30D': { points: 30, interval: 'daily' },
+  '1Y': { points: 12, interval: 'monthly' },
+};
 
-  for (let i = points - 1; i >= 0; i--) {
-    const timestamp = new Date(now - i * step);
-    const variance = Math.sin(i / 3) * 0.3 + (Math.random() * 0.2 - 0.1);
-    const volume = Math.max(1000, Math.round(baseVolume * (1 + variance)));
-    const txCount = Math.max(10, Math.round(baseTxCount * (1 + variance * 0.8)));
-    const fees = +(volume * 0.0045).toFixed(2);
-
-    let label;
-    if (interval === 'hourly') {
-      label = timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    } else if (interval === 'weekly') {
-      label = `Wk ${Math.ceil(timestamp.getDate() / 7)} ${timestamp.toLocaleDateString([], { month: 'short' })}`;
-    } else {
-      label = timestamp.toLocaleDateString([], { month: 'short', day: 'numeric' });
-    }
-
-    data.push({
-      timestamp,
-      label,
-      volume,
-      txCount,
-      fees,
-      corridor,
-    });
+function bucketStart(value, interval) {
+  const date = new Date(value);
+  if (interval === 'hourly') date.setMinutes(0, 0, 0);
+  else {
+    date.setHours(0, 0, 0, 0);
+    if (interval === 'monthly') date.setDate(1);
   }
+  return date;
+}
 
-  return data;
+function buckets(range, now) {
+  const { points, interval } = RANGES[range];
+  return Array.from({ length: points }, (_, index) => {
+    const timestamp = bucketStart(now, interval);
+    const offset = points - 1 - index;
+    if (interval === 'hourly') timestamp.setTime(timestamp.getTime() - offset * 3600000);
+    else if (interval === 'monthly') timestamp.setMonth(timestamp.getMonth() - offset);
+    else timestamp.setDate(timestamp.getDate() - offset);
+    const label = interval === 'hourly'
+      ? timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+      : timestamp.toLocaleDateString([], interval === 'monthly' ? { month: 'short', year: 'numeric' } : { month: 'short', day: 'numeric' });
+    return { timestamp, label, volume: 0, txCount: 0, fees: 0 };
+  });
+}
+
+/** Sample fallback only; supplied empty datasets must never become mock payments. */
+// eslint-disable-next-line react-refresh/only-export-components -- helper shared with tests
+export function generateSampleCorridorData(range = '7D', corridor = 'ALL', now = Date.now()) {
+  const base = corridor === 'NGN' ? 15000 : corridor === 'KES' ? 8000 : corridor === 'GHS' ? 5000 : 28000;
+  return buckets(range, now).map((point, index) => {
+    const volume = Math.round(base * (1 + Math.sin(index / 3) * 0.3));
+    return { ...point, volume, txCount: Math.round(volume / 125), fees: +(volume * 0.0045).toFixed(2), corridor };
+  });
+}
+
+/** Group supplied history into local calendar buckets, excluding future records. */
+// eslint-disable-next-line react-refresh/only-export-components -- helper shared with tests
+export function prepareCorridorData(data, range, corridor, now = Date.now()) {
+  if (!Array.isArray(data)) return generateSampleCorridorData(range, corridor, now);
+  const result = buckets(range, now);
+  const byTime = new Map(result.map(point => [+point.timestamp, point]));
+  let matched = false;
+  for (const point of data) {
+    const timestamp = new Date(point.timestamp);
+    if (!Number.isFinite(+timestamp) || +timestamp > +now || (corridor !== 'ALL' && point.corridor !== corridor)) continue;
+    const bucket = byTime.get(+bucketStart(timestamp, RANGES[range].interval));
+    if (!bucket) continue;
+    matched = true;
+    for (const key of ['volume', 'txCount', 'fees']) {
+      const value = Number(point[key]);
+      if (Number.isFinite(value)) bucket[key] += value;
+    }
+  }
+  return matched ? result : [];
 }
 
 /**
  * High-performance Financial Canvas Chart Suite for Volume, Fees, and Corridor Analytics.
  * Closes #586.
  */
-export default function CorridorChart({ data: propData, title = 'Corridor Volume & Fee Analytics' }) {
-  const [interval, setInterval] = useState('daily'); // 'hourly' | 'daily' | 'weekly'
+export default function CorridorChart({ data: propData, loading = false, title = 'Corridor Volume & Fee Analytics' }) {
+  const [range, setRange] = useState('7D');
   const [selectedCorridor, setSelectedCorridor] = useState('ALL'); // 'ALL' | 'NGN' | 'KES' | 'GHS'
   const [hoveredPoint, setHoveredPoint] = useState(null);
   const [mousePos, setMousePos] = useState({ x: 0, y: 0, active: false });
@@ -81,6 +99,37 @@ export default function CorridorChart({ data: propData, title = 'Corridor Volume
     return normalizeCorridorData(generateSampleCorridorData(interval, selectedCorridor));
   }, [propData, interval, selectedCorridor]);
   const isEmpty = chartData.length === 0;
+  const [dataset, setDataset] = useState(() => ({
+    source: propData, range: '7D', corridor: 'ALL',
+    points: prepareCorridorData(propData, '7D', 'ALL'),
+  }));
+  const isLoading = loading || dataset.source !== propData || dataset.range !== range || dataset.corridor !== selectedCorridor;
+  const chartData = dataset.points;
+
+  // Give the skeleton a paint before preparing the next dataset. Cleanup prevents
+  // a superseded selection (or an unmounted chart) from committing stale results.
+  useEffect(() => {
+    if (!isLoading || loading) return;
+    let frame = requestAnimationFrame(() => {
+      frame = requestAnimationFrame(() => {
+        setHoveredPoint(null);
+        setMousePos({ x: 0, y: 0, active: false });
+        setDataset({ source: propData, range, corridor: selectedCorridor, points: prepareCorridorData(propData, range, selectedCorridor) });
+      });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [propData, range, selectedCorridor, isLoading, loading]);
+
+  const selectRange = (next) => {
+    setHoveredPoint(null);
+    setMousePos({ x: 0, y: 0, active: false });
+    setRange(next);
+  };
+  const selectCorridor = (next) => {
+    setHoveredPoint(null);
+    setMousePos({ x: 0, y: 0, active: false });
+    setSelectedCorridor(next);
+  };
 
   // Aggregate metrics
   const totals = useMemo(() => computeTotals(chartData), [chartData]);
@@ -244,6 +293,7 @@ export default function CorridorChart({ data: propData, title = 'Corridor Volume
 
   // Handle Mouse / Touch interactions
   const handleMouseMove = (e) => {
+    if (isLoading || chartData.length === 0) return;
     const canvas = canvasRef.current;
     if (!canvas) return;
     const rect = canvas.getBoundingClientRect();
@@ -324,7 +374,8 @@ export default function CorridorChart({ data: propData, title = 'Corridor Volume
               <button
                 key={corridor}
                 type="button"
-                onClick={() => setSelectedCorridor(corridor)}
+                onClick={() => selectCorridor(corridor)}
+                aria-pressed={selectedCorridor === corridor}
                 className={`px-3 py-1 rounded-lg transition-all ${
                   selectedCorridor === corridor
                     ? 'bg-white text-gray-900 shadow-sm'
@@ -338,20 +389,21 @@ export default function CorridorChart({ data: propData, title = 'Corridor Volume
           </div>
 
           {/* Timeframe selector */}
-          <div className="flex items-center bg-gray-100 p-1 rounded-xl text-xs font-semibold">
-            {['hourly', 'daily', 'weekly'].map((int) => (
+          <div role="group" aria-label="Chart time range" className="flex items-center bg-gray-100 p-1 rounded-xl text-xs font-semibold">
+            {Object.keys(RANGES).map((option) => (
               <button
-                key={int}
+                key={option}
                 type="button"
-                onClick={() => setInterval(int)}
+                onClick={() => selectRange(option)}
+                aria-pressed={range === option}
                 className={`px-2.5 py-1 capitalize rounded-lg transition-all ${
-                  interval === int
+                  range === option
                     ? 'bg-indigo-600 text-white shadow-sm'
                     : 'text-gray-500 hover:text-gray-700'
                 }`}
-                aria-label={`Select ${int} interval`}
+                aria-label={`Show ${option} time range`}
               >
-                {int}
+                {option}
               </button>
             ))}
           </div>
@@ -359,29 +411,29 @@ export default function CorridorChart({ data: propData, title = 'Corridor Volume
       </div>
 
       {/* Aggregate KPI Strip */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 bg-gray-50/80 p-3.5 rounded-xl border border-gray-100 text-xs">
+      <div aria-busy={isLoading} className="grid grid-cols-2 sm:grid-cols-4 gap-3 bg-gray-50/80 p-3.5 rounded-xl border border-gray-100 text-xs">
         <div>
           <span className="text-gray-500 font-medium block">Total Volume</span>
           <span className="text-sm sm:text-base font-bold text-gray-900">
-            ${totals.totalVolume.toLocaleString()}
+            {isLoading ? '\u2014' : `$${totals.totalVolume.toLocaleString()}`}
           </span>
         </div>
         <div>
           <span className="text-gray-500 font-medium block">Total Transactions</span>
           <span className="text-sm sm:text-base font-bold text-purple-700">
-            {totals.totalTxs.toLocaleString()} txs
+            {isLoading ? '\u2014' : `${totals.totalTxs.toLocaleString()} txs`}
           </span>
         </div>
         <div>
           <span className="text-gray-500 font-medium block">Est. Revenue / Fees</span>
           <span className="text-sm sm:text-base font-bold text-emerald-600">
-            ${totals.totalFees.toLocaleString()}
+            {isLoading ? '\u2014' : `$${totals.totalFees.toLocaleString()}`}
           </span>
         </div>
         <div>
           <span className="text-gray-500 font-medium block">Average Ticket Size</span>
           <span className="text-sm sm:text-base font-bold text-indigo-600">
-            ${totals.avgTxSize.toLocaleString()}
+            {isLoading ? '\u2014' : `$${totals.avgTxSize.toLocaleString()}`}
           </span>
         </div>
       </div>
@@ -396,6 +448,7 @@ export default function CorridorChart({ data: propData, title = 'Corridor Volume
             No corridor activity for this period.
           </p>
         )}
+      <div className="relative w-full h-[320px] select-none" aria-busy={isLoading} aria-label="Corridor chart">
         <canvas
           ref={canvasRef}
           role="img"
@@ -404,12 +457,22 @@ export default function CorridorChart({ data: propData, title = 'Corridor Volume
           onMouseLeave={handleMouseLeave}
           onTouchMove={handleMouseMove}
           onTouchEnd={handleMouseLeave}
-          className="w-full h-full cursor-crosshair block"
+          className={`w-full h-full cursor-crosshair block ${isLoading ? 'invisible' : ''}`}
+          aria-hidden={isLoading}
           aria-label="Interactive Canvas Financial Chart"
         />
 
+        {isLoading && (
+          <div role="status" className="absolute inset-0 overflow-hidden rounded-xl bg-slate-50 corridor-chart-skeleton">
+            <span className="sr-only">Loading {range} corridor chart</span>
+            <div aria-hidden="true" className="absolute inset-x-8 inset-y-8 flex items-end gap-3 border-b border-l border-slate-200 p-4">
+              {[35, 55, 45, 75, 60, 85, 65].map((height, index) => <div key={index} className="flex-1 rounded-t bg-slate-200/70" style={{ height: `${height}%` }} />)}
+            </div>
+          </div>
+        )}
+        {!isLoading && chartData.length === 0 && <p className="absolute inset-0 flex items-center justify-center text-sm text-gray-500" role="status">No payments in this time range.</p>}
         {/* Floating Tooltip */}
-        {hoveredPoint && (
+        {!isLoading && hoveredPoint && (
           <div
             className="absolute z-10 pointer-events-none bg-gray-900/90 backdrop-blur-md text-white px-3 py-2.5 rounded-xl text-xs shadow-xl border border-gray-800 transition-transform duration-75 min-w-[160px]"
             style={{

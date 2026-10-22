@@ -1,0 +1,14 @@
+.corridor-chart-skeleton::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(90deg, transparent, rgb(255 255 255 / 75%), transparent);
+  animation: corridor-chart-shimmer 1.4s ease-in-out infinite;
+}
+@keyframes corridor-chart-shimmer {
+  to { transform: translateX(100%); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .corridor-chart-skeleton::after { animation: none; }
+}
