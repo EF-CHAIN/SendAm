@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { Smartphone, Lock, Send, CheckCircle2, ArrowRight, ArrowLeft, RefreshCw, Sparkles, ChevronDown } from 'lucide-react';
+import { Smartphone, Lock, Send, CheckCircle2, ArrowRight, ArrowLeft, RefreshCw, Sparkles, ChevronDown, Camera, FileText, Trash2, UploadCloud } from 'lucide-react';
 import { whatsappUrl } from '@/lib/links.js';
 
 const STORAGE_KEY = 'sendam_onboarding_draft_v1';
@@ -224,6 +224,15 @@ function clearDraft() {
   }
 }
 
+const ACCEPTED_DOC_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'application/pdf'];
+const MAX_DOCS = 3;
+
+function formatFileSize(bytes) {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 const STEPS = [
   {
     id: 1,
@@ -257,6 +266,55 @@ export default function OnboardingWizard() {
   const [recipient, setRecipient] = useState(initialDraft?.recipient ?? DEFAULT_RECIPIENT);
   const [simulating, setSimulating] = useState(false);
   const [completed, setCompleted] = useState(false);
+  const [idDocs, setIdDocs] = useState([]);
+  const [dragActive, setDragActive] = useState(false);
+  const browseInputRef = useRef(null);
+  const cameraInputRef = useRef(null);
+  const nextDocIdRef = useRef(1);
+
+  // Preview URLs are browser resources; release whatever is left on unmount.
+  const idDocsRef = useRef(idDocs);
+  useEffect(() => {
+    idDocsRef.current = idDocs;
+  }, [idDocs]);
+  useEffect(
+    () => () => {
+      for (const doc of idDocsRef.current) {
+        if (doc.previewUrl) URL.revokeObjectURL(doc.previewUrl);
+      }
+    },
+    []
+  );
+
+  const addIdDocs = (fileList) => {
+    const incoming = Array.from(fileList || []).filter((file) => ACCEPTED_DOC_TYPES.includes(file.type));
+    if (incoming.length === 0) return;
+    setIdDocs((docs) => {
+      const room = Math.max(0, MAX_DOCS - docs.length);
+      const added = incoming.slice(0, room).map((file) => ({
+        id: nextDocIdRef.current++,
+        name: file.name,
+        size: file.size,
+        type: file.type,
+        previewUrl: file.type.startsWith('image/') ? URL.createObjectURL(file) : null,
+      }));
+      return [...docs, ...added];
+    });
+  };
+
+  const removeIdDoc = (id) => {
+    setIdDocs((docs) => {
+      const doc = docs.find((d) => d.id === id);
+      if (doc?.previewUrl) URL.revokeObjectURL(doc.previewUrl);
+      return docs.filter((d) => d.id !== id);
+    });
+  };
+
+  const handleDrop = (event) => {
+    event.preventDefault();
+    setDragActive(false);
+    addIdDocs(event.dataTransfer?.files);
+  };
   const [showDraftBanner, setShowDraftBanner] = useState(Boolean(initialDraft));
 
   useEffect(() => {
@@ -430,6 +488,116 @@ export default function OnboardingWizard() {
                         onPhoneChange={setPhone}
                       />
                     </div>
+                    {/* Identity document upload */}
+                    <div>
+                      <span
+                        id="wizard-id-docs-label"
+                        className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-2"
+                      >
+                        Identity Document ({idDocs.length}/{MAX_DOCS})
+                      </span>
+                      <div
+                        data-testid="id-doc-dropzone"
+                        aria-labelledby="wizard-id-docs-label"
+                        onDragOver={(event) => {
+                          event.preventDefault();
+                          setDragActive(true);
+                        }}
+                        onDragLeave={() => setDragActive(false)}
+                        onDrop={handleDrop}
+                        className={`rounded-xl border-2 border-dashed p-5 text-center transition-colors ${
+                          dragActive ? 'border-primary bg-primary/5' : 'border-slate-200 bg-slate-50/60'
+                        }`}
+                      >
+                        <UploadCloud className="w-7 h-7 mx-auto text-slate-400" aria-hidden="true" />
+                        <p className="mt-2 text-sm text-slate-600">
+                          Drag and drop a photo or PDF of your ID here, or
+                        </p>
+                        <div className="mt-3 flex flex-wrap items-center justify-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => browseInputRef.current?.click()}
+                            disabled={idDocs.length >= MAX_DOCS}
+                            className="inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-slate-200 bg-white text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 transition"
+                          >
+                            <FileText className="w-4 h-4" aria-hidden="true" />
+                            Browse Files
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => cameraInputRef.current?.click()}
+                            disabled={idDocs.length >= MAX_DOCS}
+                            className="inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-slate-200 bg-white text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 transition"
+                          >
+                            <Camera className="w-4 h-4" aria-hidden="true" />
+                            Take Photo
+                          </button>
+                        </div>
+                        <p className="mt-2 text-[11px] text-slate-400">
+                          JPEG, PNG, WebP, GIF or PDF. Nothing is uploaded in this demo — previews stay on your device.
+                        </p>
+                        <input
+                          ref={browseInputRef}
+                          type="file"
+                          accept="image/jpeg,image/png,image/webp,image/gif,application/pdf"
+                          multiple
+                          onChange={(event) => {
+                            addIdDocs(event.target.files);
+                            event.target.value = '';
+                          }}
+                          className="sr-only"
+                          aria-label="Browse identity document files"
+                        />
+                        <input
+                          ref={cameraInputRef}
+                          type="file"
+                          accept="image/*"
+                          capture="environment"
+                          onChange={(event) => {
+                            addIdDocs(event.target.files);
+                            event.target.value = '';
+                          }}
+                          className="sr-only"
+                          aria-label="Take a photo of your identity document"
+                        />
+                      </div>
+
+                      {idDocs.length > 0 && (
+                        <ul className="mt-3 space-y-2" aria-label="Uploaded identity documents">
+                          {idDocs.map((doc) => (
+                            <li
+                              key={doc.id}
+                              className="flex items-center gap-3 rounded-xl border border-slate-200 bg-white p-2.5"
+                            >
+                              {doc.previewUrl ? (
+                                <img
+                                  src={doc.previewUrl}
+                                  alt={`Preview of ${doc.name}`}
+                                  className="h-12 w-12 shrink-0 rounded-lg object-cover border border-slate-100"
+                                />
+                              ) : (
+                                <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-slate-500">
+                                  <FileText className="w-6 h-6" aria-hidden="true" />
+                                </span>
+                              )}
+                              <span className="min-w-0 flex-1">
+                                <span className="block truncate text-sm font-medium text-slate-800">{doc.name}</span>
+                                <span className="block text-xs text-slate-400">{formatFileSize(doc.size)}</span>
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => removeIdDoc(doc.id)}
+                                aria-label={`Remove ${doc.name}`}
+                                className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-slate-500 hover:bg-red-50 hover:text-red-600 transition"
+                              >
+                                <Trash2 className="w-4 h-4" aria-hidden="true" />
+                              </button>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+
                     <div className="p-4 bg-emerald-50/70 border border-emerald-200/60 rounded-xl flex items-start gap-3">
                       <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0 mt-0.5" />
                       <div className="text-xs text-emerald-800">
