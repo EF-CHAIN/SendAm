@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, within } from '@testing-library/react';
 import * as StellarSdk from '@stellar/stellar-sdk';
 import XdrDecoderModal from './XdrDecoderModal';
 
@@ -134,6 +134,40 @@ describe('XdrDecoderModal Component', () => {
     const closeBtn = screen.getByRole('button', { name: 'Close modal' });
     fireEvent.click(closeBtn);
     expect(handleClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('displays a simulation error alert box translating Stellar result codes into clear operator instructions', () => {
+    render(
+      <XdrDecoderModal
+        isOpen={true}
+        onClose={vi.fn()}
+        initialXdr='{"status": 400, "extras": {"result_codes": {"transaction": "tx_failed", "operations": ["op_underfunded"]}}}'
+      />
+    );
+
+    expect(screen.getByTestId('simulation-error-alert')).toBeInTheDocument();
+    expect(screen.getByText('Stellar Transaction Simulation Failed')).toBeInTheDocument();
+    expect(screen.getByText('Insufficient Account Balance')).toBeInTheDocument();
+    expect(screen.getByText('op_underfunded')).toBeInTheDocument();
+    expect(screen.getByText(/Source wallet does not have enough XLM reserve/i)).toBeInTheDocument();
+    expect(screen.getByText(/Top up the source account with additional XLM/i)).toBeInTheDocument();
+  });
+
+  it('translates op_no_trust error code into missing trustline remediation steps', () => {
+    render(
+      <XdrDecoderModal
+        isOpen={true}
+        onClose={vi.fn()}
+        initialXdr="op_no_trust"
+      />
+    );
+
+    const alert = screen.getByTestId('simulation-error-alert');
+    expect(alert).toBeInTheDocument();
+    expect(within(alert).getByText('Missing Trustline')).toBeInTheDocument();
+    expect(within(alert).getByText('op_no_trust')).toBeInTheDocument();
+    expect(within(alert).getByText(/The destination account does not have a trustline established/i)).toBeInTheDocument();
+    expect(within(alert).getByText(/changeTrust operation/i)).toBeInTheDocument();
   });
 });
 
