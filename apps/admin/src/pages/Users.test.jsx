@@ -1,3 +1,4 @@
+import { maskPhoneNumber } from '@shared/maskPhoneNumber.js';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
@@ -40,7 +41,7 @@ describe('Users Component', () => {
 
     await waitForTable();
 
-    expect(screen.getByText('+1234567890')).toBeInTheDocument();
+    expect(screen.getByText(maskPhoneNumber('+1234567890'))).toBeInTheDocument();
     expect(screen.getAllByText(/Total: 1/).length).toBeGreaterThan(0);
   });
 

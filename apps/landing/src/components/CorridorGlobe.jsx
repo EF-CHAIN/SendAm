@@ -65,6 +65,7 @@ export default function CorridorGlobe() {
   const canvasRef = useRef(null);
   const [selectedCorridor, setSelectedCorridor] = useState(CORRIDORS[0]);
   const [isInteracting, setIsInteracting] = useState(false);
+  const [webglLost, setWebglLost] = useState(false);
   const [prefersReducedMotion, setPrefersReducedMotion] = useState(() =>
     typeof window !== 'undefined' && window.matchMedia
       ? window.matchMedia('(prefers-reduced-motion: reduce)').matches
@@ -104,6 +105,32 @@ export default function CorridorGlobe() {
     const handleChange = (e) => setPrefersReducedMotion(e.matches);
     mediaQuery.addEventListener('change', handleChange);
     return () => mediaQuery.removeEventListener('change', handleChange);
+  }, []);
+
+  // WebGL context loss and restoration listeners
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    const handleContextLost = (e) => {
+      if (e && e.preventDefault) {
+        e.preventDefault();
+      }
+      setWebglLost(true);
+    };
+
+    const handleContextRestored = () => {
+      setWebglLost(false);
+      kickRenderRef.current();
+    };
+
+    canvas.addEventListener('webglcontextlost', handleContextLost);
+    canvas.addEventListener('webglcontextrestored', handleContextRestored);
+
+    return () => {
+      canvas.removeEventListener('webglcontextlost', handleContextLost);
+      canvas.removeEventListener('webglcontextrestored', handleContextRestored);
+    };
   }, []);
 
   // Center globe on selected corridor
@@ -511,18 +538,114 @@ export default function CorridorGlobe() {
           {/* Globe Canvas Container */}
           <div className="relative flex flex-col items-center justify-center lg:col-span-7">
             <div className="relative aspect-square w-full max-w-[500px] overflow-hidden rounded-3xl border border-slate-800 bg-gradient-to-b from-slate-900/80 to-slate-950/90 p-2 shadow-2xl backdrop-blur-xl">
-              <canvas
-                ref={canvasRef}
-                width={600}
-                height={600}
-                aria-label="Interactive 3D globe illustrating SendAm remittance corridors connecting UK, USA, EU to Nigeria, Ghana, and Kenya"
-                role="img"
-                onPointerDown={handlePointerDown}
-                onPointerMove={handlePointerMove}
-                onPointerUp={handlePointerUp}
-                onPointerLeave={handlePointerUp}
-                className="h-full w-full cursor-grab touch-none active:cursor-grabbing"
-              />
+              {webglLost ? (
+                <div
+                  data-testid="corridor-diagram-fallback"
+                  className="relative h-full w-full flex flex-col items-center justify-center p-4 bg-slate-950"
+                  aria-label="Interactive 2D corridor projection diagram"
+                  role="img"
+                >
+                  <div className="absolute top-3 left-4 inline-flex items-center gap-1.5 rounded-full bg-amber-500/10 border border-amber-500/30 px-2.5 py-1 text-[11px] font-semibold text-amber-300">
+                    <span className="h-1.5 w-1.5 rounded-full bg-amber-400" />
+                    WebGL fallback mode • 2D Interactive Projection
+                  </div>
+
+                  <svg
+                    viewBox="0 0 500 500"
+                    className="w-full h-full"
+                    aria-label="2D Map Diagram of Remittance Corridors"
+                  >
+                    <defs>
+                      <radialGradient id="fallbackSphere" cx="50%" cy="50%" r="50%">
+                        <stop offset="0%" stopColor="#0f172a" />
+                        <stop offset="70%" stopColor="#020617" />
+                        <stop offset="100%" stopColor="#020617" />
+                      </radialGradient>
+                      <linearGradient id="activeArc" x1="0%" y1="0%" x2="100%" y2="100%">
+                        <stop offset="0%" stopColor="#38bdf8" />
+                        <stop offset="100%" stopColor="#34d399" />
+                      </linearGradient>
+                    </defs>
+
+                    {/* Planet disc */}
+                    <circle cx="250" cy="250" r="190" fill="url(#fallbackSphere)" stroke="rgba(20, 184, 166, 0.4)" strokeWidth="1.5" />
+
+                    {/* Lat/Long Grid Rings */}
+                    <ellipse cx="250" cy="250" rx="190" ry="90" fill="none" stroke="rgba(45, 212, 191, 0.15)" strokeWidth="1" />
+                    <ellipse cx="250" cy="250" rx="190" ry="150" fill="none" stroke="rgba(45, 212, 191, 0.15)" strokeWidth="1" />
+                    <line x1="250" y1="60" x2="250" y2="440" stroke="rgba(45, 212, 191, 0.15)" strokeWidth="1" />
+
+                    {/* World Map Continent Dots in Equirectangular projection mapping to disc */}
+                    {CONTINENT_DOTS.map(([lat, lng], i) => {
+                      // Project to circle coordinates
+                      const x = 250 + (lng / 180) * 160;
+                      const y = 250 - (lat / 90) * 160;
+                      const distFromCenter = Math.hypot(x - 250, y - 250);
+                      if (distFromCenter > 185) return null;
+                      return (
+                        <circle
+                          key={i}
+                          cx={x}
+                          cy={y}
+                          r="2.5"
+                          fill="rgba(148, 163, 184, 0.4)"
+                        />
+                      );
+                    })}
+
+                    {/* Corridors as Bezier Curves */}
+                    {CORRIDORS.map((c) => {
+                      const x1 = 250 + (c.from.lng / 180) * 160;
+                      const y1 = 250 - (c.from.lat / 90) * 160;
+                      const x2 = 250 + (c.to.lng / 180) * 160;
+                      const y2 = 250 - (c.to.lat / 90) * 160;
+                      const isSel = c.id === selectedCorridor.id;
+
+                      // Midpoint arc
+                      const mx = (x1 + x2) / 2;
+                      const my = (y1 + y2) / 2 - 40;
+
+                      return (
+                        <g key={c.id}>
+                          <path
+                            d={`M ${x1} ${y1} Q ${mx} ${my} ${x2} ${y2}`}
+                            fill="none"
+                            stroke={isSel ? 'url(#activeArc)' : 'rgba(20, 184, 166, 0.35)'}
+                            strokeWidth={isSel ? 3.5 : 1.5}
+                            strokeDasharray={isSel ? 'none' : '4 3'}
+                          />
+                          {/* Hub circles */}
+                          <circle cx={x1} cy={y1} r={isSel ? 6 : 4} fill={isSel ? '#38bdf8' : '#14b8a6'} stroke="#fff" strokeWidth="1.5" />
+                          <circle cx={x2} cy={y2} r={isSel ? 6 : 4} fill={isSel ? '#34d399' : '#14b8a6'} stroke="#fff" strokeWidth="1.5" />
+                          {isSel && (
+                            <>
+                              <text x={x1 + 8} y={y1 - 6} fill="#f8fafc" fontSize="11" fontWeight="bold">
+                                {c.from.flag} {c.from.name}
+                              </text>
+                              <text x={x2 + 8} y={y2 + 14} fill="#f8fafc" fontSize="11" fontWeight="bold">
+                                {c.to.flag} {c.to.name}
+                              </text>
+                            </>
+                          )}
+                        </g>
+                      );
+                    })}
+                  </svg>
+                </div>
+              ) : (
+                <canvas
+                  ref={canvasRef}
+                  width={600}
+                  height={600}
+                  aria-label="Interactive 3D globe illustrating SendAm remittance corridors connecting UK, USA, EU to Nigeria, Ghana, and Kenya"
+                  role="img"
+                  onPointerDown={handlePointerDown}
+                  onPointerMove={handlePointerMove}
+                  onPointerUp={handlePointerUp}
+                  onPointerLeave={handlePointerUp}
+                  className="h-full w-full cursor-grab touch-none active:cursor-grabbing"
+                />
+              )}
 
               {/* Interaction Hint Overlay */}
               <div
@@ -530,7 +653,7 @@ export default function CorridorGlobe() {
                   isInteracting ? 'opacity-0' : 'opacity-100'
                 }`}
               >
-                Drag to rotate globe • Click a route below
+                {webglLost ? 'Interactive 2D projection • Click a route below' : 'Drag to rotate globe • Click a route below'}
               </div>
             </div>
 

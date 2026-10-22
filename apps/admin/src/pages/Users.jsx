@@ -4,12 +4,14 @@ import {
   getUserOnboardingStatus, 
   deactivateUserAccount, 
   reactivateUserAccount, 
-  downloadUserEvidencePackage 
+  downloadUserEvidencePackage,
+  revealAdminFields
 } from '@/lib/adminApi';
 import { useListQuery } from '@/lib/useListQuery';
 import { formatDate } from '@shared/formatDate';
 import DataTable from '@/components/DataTable';
 import Loader from '@shared/Loader';
+import MaskedPhone from '@shared/MaskedPhone';
 import StatusBadge from '@/components/StatusBadge';
 import Pagination from '@/components/Pagination';
 import FilterBar from '@/components/FilterBar';
@@ -315,7 +317,12 @@ export default function Users() {
   };
 
   const columns = [
-    { header: 'Phone Number', accessor: 'phoneNumber' },
+    {
+      header: 'Phone Number',
+      render: (row) => (
+        <MaskedPhone phone={row.phoneNumber} onReveal={() => revealAdminFields('user', row.id)} />
+      ),
+    },
     { header: 'WhatsApp Name', render: (row) => row.whatsappName || <span className="text-gray-400 italic">Unknown</span> },
     { 
       header: 'Status', 
