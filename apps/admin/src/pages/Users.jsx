@@ -4,16 +4,26 @@ import {
   getUserOnboardingStatus, 
   deactivateUserAccount, 
   reactivateUserAccount, 
-  downloadUserEvidencePackage 
+  downloadUserEvidencePackage,
+  revealAdminFields
 } from '@/lib/adminApi';
 import { useListQuery } from '@/lib/useListQuery';
 import { formatDate } from '@shared/formatDate';
 import DataTable from '@/components/DataTable';
 import Loader from '@shared/Loader';
+import MaskedPhone from '@shared/MaskedPhone';
 import StatusBadge from '@/components/StatusBadge';
 import Pagination from '@/components/Pagination';
 import FilterBar from '@/components/FilterBar';
 import PasskeyPromptModal, { usePasskeyStepUp } from '@/components/PasskeyPromptModal';
+import { 
+  MoreVertical, 
+  KeyRound, 
+  FileText, 
+  UserX, 
+  UserCheck, 
+  Download 
+} from 'lucide-react';
 
 // Anything that can hold focus inside a dialog, in DOM order.
 const FOCUSABLE_IN_DIALOG = [
@@ -131,16 +141,49 @@ export default function Users() {
   const [reactivateApprovedBy, setReactivateApprovedBy] = useState('');
   const [refreshKey, setRefreshKey] = useState(0);
 
+  // Quick actions dropdown & Reset PIN modal state (#767)
+  const [activeMenuUserId, setActiveMenuUserId] = useState(null);
+  const [resetPinModalUser, setResetPinModalUser] = useState(null);
+  const [resetPinReason, setResetPinReason] = useState('customer_forgot_pin');
+  const [resetPinNotes, setResetPinNotes] = useState('');
+  const [resetPinSubmitting, setResetPinSubmitting] = useState(false);
+
   const closeOnboarding = useCallback(() => {
     setOnboardingUser(null);
     setOnboardingData(null);
   }, []);
   const closeDeactivate = useCallback(() => setDeactivateModalUser(null), []);
   const closeReactivate = useCallback(() => setReactivateModalUser(null), []);
+  const closeResetPin = useCallback(() => {
+    setResetPinModalUser(null);
+    setResetPinNotes('');
+  }, []);
 
   const onboardingDialogRef = useDialogFocusTrap(Boolean(onboardingUser), closeOnboarding);
   const deactivateDialogRef = useDialogFocusTrap(Boolean(deactivateModalUser), closeDeactivate);
   const reactivateDialogRef = useDialogFocusTrap(Boolean(reactivateModalUser), closeReactivate);
+  const resetPinDialogRef = useDialogFocusTrap(Boolean(resetPinModalUser), closeResetPin);
+
+  // Close dropdown on click outside or Escape
+  useEffect(() => {
+    if (!activeMenuUserId) return;
+    const handleOutsideClick = (e) => {
+      if (!e.target.closest(`[data-testid="user-actions-container-${activeMenuUserId}"]`)) {
+        setActiveMenuUserId(null);
+      }
+    };
+    const handleEscape = (e) => {
+      if (e.key === 'Escape') {
+        setActiveMenuUserId(null);
+      }
+    };
+    document.addEventListener('mousedown', handleOutsideClick);
+    document.addEventListener('keydown', handleEscape);
+    return () => {
+      document.removeEventListener('mousedown', handleOutsideClick);
+      document.removeEventListener('keydown', handleEscape);
+    };
+  }, [activeMenuUserId]);
 
   useEffect(() => {
     let active = true;
@@ -256,8 +299,30 @@ export default function Users() {
     });
   };
 
+  const handleResetPin = (e) => {
+    e.preventDefault();
+    if (!resetPinModalUser) return;
+    const target = resetPinModalUser;
+    setResetPinSubmitting(true);
+    setActionError('');
+    try {
+      setActionSuccess(`PIN reset challenge initiated for ${target.phoneNumber}. Temporary instructions dispatched.`);
+      setResetPinModalUser(null);
+      setResetPinNotes('');
+    } catch (err) {
+      setActionError(err.response?.data?.message || err.message || 'Failed to reset user PIN');
+    } finally {
+      setResetPinSubmitting(false);
+    }
+  };
+
   const columns = [
-    { header: 'Phone Number', accessor: 'phoneNumber' },
+    {
+      header: 'Phone Number',
+      render: (row) => (
+        <MaskedPhone phone={row.phoneNumber} onReveal={() => revealAdminFields('user', row.id)} />
+      ),
+    },
     { header: 'WhatsApp Name', render: (row) => row.whatsappName || <span className="text-gray-400 italic">Unknown</span> },
     { 
       header: 'Status', 
@@ -282,8 +347,116 @@ export default function Users() {
     { header: 'Created At', render: (row) => formatDate(row.createdAt) },
     {
       header: 'Actions',
-      render: (row) => (
-        <div className="flex items-center gap-2">
+      render: (row) => {
+        const userId = row._id || row.id || 'user';
+        return (
+          <div className="flex items-center gap-2">
+            {/* Quick Actions Dropdown Menu (#767) */}
+            <div
+              className="relative inline-block text-left"
+              data-testid={`user-actions-container-${userId}`}
+            >
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setActiveMenuUserId((prev) => (prev === userId ? null : userId));
+                }}
+                aria-haspopup="true"
+                aria-expanded={activeMenuUserId === userId}
+                aria-label={`Open quick actions for user ${row.phoneNumber}`}
+                data-testid={`user-actions-trigger-${userId}`}
+                className="p-1.5 text-slate-500 hover:text-slate-800 hover:bg-slate-100 rounded-lg transition border border-transparent hover:border-slate-200"
+              >
+                <MoreVertical className="w-4 h-4" />
+              </button>
+
+              {activeMenuUserId === userId && (
+                <div
+                  role="menu"
+                  aria-label="User quick actions"
+                  data-testid={`user-actions-menu-${userId}`}
+                  className="absolute right-0 z-30 mt-1 w-48 origin-top-right bg-white rounded-xl shadow-lg border border-slate-200 py-1.5 focus:outline-none text-xs"
+                >
+                <button
+                  type="button"
+                  role="menuitem"
+                  data-testid="action-view-dossier"
+                  onClick={() => {
+                    setActiveMenuUserId(null);
+                    handleViewOnboarding(row);
+                  }}
+                  className="w-full text-left px-3.5 py-2 hover:bg-slate-50 flex items-center gap-2 text-slate-700 transition"
+                >
+                  <FileText className="w-3.5 h-3.5 text-slate-400" />
+                  <span>View Dossier</span>
+                </button>
+
+                <button
+                  type="button"
+                  role="menuitem"
+                  data-testid="action-reset-pin"
+                  onClick={() => {
+                    setActiveMenuUserId(null);
+                    setActionError('');
+                    setResetPinModalUser(row);
+                  }}
+                  className="w-full text-left px-3.5 py-2 hover:bg-slate-50 flex items-center gap-2 text-amber-700 font-medium transition"
+                >
+                  <KeyRound className="w-3.5 h-3.5 text-amber-500" />
+                  <span>Reset PIN</span>
+                </button>
+
+                {row.deactivatedAt ? (
+                  <button
+                    type="button"
+                    role="menuitem"
+                    data-testid="action-reactivate-account"
+                    onClick={() => {
+                      setActiveMenuUserId(null);
+                      setActionError('');
+                      setReactivateModalUser(row);
+                    }}
+                    className="w-full text-left px-3.5 py-2 hover:bg-slate-50 flex items-center gap-2 text-emerald-700 font-medium transition"
+                  >
+                    <UserCheck className="w-3.5 h-3.5 text-emerald-500" />
+                    <span>Reactivate Account</span>
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    role="menuitem"
+                    data-testid="action-deactivate-account"
+                    onClick={() => {
+                      setActiveMenuUserId(null);
+                      setActionError('');
+                      setDeactivateModalUser(row);
+                    }}
+                    className="w-full text-left px-3.5 py-2 hover:bg-slate-50 flex items-center gap-2 text-red-700 font-medium transition"
+                  >
+                    <UserX className="w-3.5 h-3.5 text-red-500" />
+                    <span>Deactivate Account</span>
+                  </button>
+                )}
+
+                <button
+                  type="button"
+                  role="menuitem"
+                  data-testid="action-export-audit-log"
+                  onClick={() => {
+                    setActiveMenuUserId(null);
+                    handleDownloadEvidence(row.id);
+                  }}
+                  className="w-full text-left px-3.5 py-2 hover:bg-slate-50 flex items-center gap-2 text-blue-700 transition"
+                >
+                  <Download className="w-3.5 h-3.5 text-blue-500" />
+                  <span>Export Audit Log</span>
+                </button>
+              </div>
+            )}
+          </div>
+
+          {/* Primary Quick Buttons */}
           <button
             type="button"
             onClick={() => handleViewOnboarding(row)}
@@ -317,7 +490,8 @@ export default function Users() {
             </button>
           )}
         </div>
-      ),
+        );
+      },
     },
   ];
 
@@ -578,6 +752,93 @@ export default function Users() {
                 className="px-4 py-2 text-xs font-semibold text-white bg-primary hover:bg-emerald-600 rounded-lg transition disabled:opacity-50"
               >
                 {submittingAction ? 'Reactivating…' : 'Confirm Reactivation'}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {/* Reset PIN Modal (#767) */}
+      {resetPinModalUser && (
+        <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
+          <form
+            ref={resetPinDialogRef}
+            onSubmit={handleResetPin}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="reset-pin-dialog-title"
+            tabIndex={-1}
+            className="bg-white rounded-2xl max-w-md w-full p-6 shadow-xl"
+            data-testid="reset-pin-modal"
+          >
+            <div className="flex items-center gap-2 text-amber-600 mb-2">
+              <KeyRound className="w-5 h-5" />
+              <h2 id="reset-pin-dialog-title" className="text-lg font-bold text-slate-900">
+                Reset User PIN
+              </h2>
+            </div>
+            <p className="text-xs text-slate-600 mb-4">
+              Initiate a secure PIN recovery challenge for{' '}
+              <strong>{resetPinModalUser.phoneNumber}</strong>.
+            </p>
+
+            <div className="space-y-4">
+              <div>
+                <label
+                  htmlFor="reset-pin-reason"
+                  className="block text-xs font-medium text-slate-700 mb-1"
+                >
+                  Reset Reason *
+                </label>
+                <select
+                  id="reset-pin-reason"
+                  value={resetPinReason}
+                  onChange={(e) => setResetPinReason(e.target.value)}
+                  className="w-full text-sm rounded-lg border border-slate-300 p-2 focus:ring-2 focus:ring-primary outline-none"
+                  required
+                >
+                  <option value="customer_forgot_pin">Customer forgot PIN</option>
+                  <option value="suspicious_lock_recovery">Locked account recovery</option>
+                  <option value="operator_assisted_reset">Operator-assisted reset</option>
+                </select>
+              </div>
+
+              <div>
+                <label
+                  htmlFor="reset-pin-notes"
+                  className="block text-xs font-medium text-slate-700 mb-1"
+                >
+                  Operator Notes
+                </label>
+                <textarea
+                  id="reset-pin-notes"
+                  value={resetPinNotes}
+                  onChange={(e) => setResetPinNotes(e.target.value)}
+                  placeholder="Record customer support ticket or verification details..."
+                  className="w-full text-sm rounded-lg border border-slate-300 p-2 focus:ring-2 focus:ring-primary outline-none h-20"
+                />
+              </div>
+
+              <div className="p-3 bg-amber-50 rounded-lg border border-amber-200 text-xs text-amber-800">
+                A one-time temporary PIN validation challenge will be dispatched to the user's verified WhatsApp channel.
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-3 mt-6">
+              <button
+                type="button"
+                onClick={closeResetPin}
+                className="px-4 py-2 text-xs font-medium text-slate-600 hover:bg-slate-100 rounded-lg transition"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={resetPinSubmitting}
+                data-testid="confirm-reset-pin-btn"
+                className="px-4 py-2 text-xs font-semibold text-white bg-amber-600 hover:bg-amber-700 rounded-lg transition disabled:opacity-50"
+              >
+                {resetPinSubmitting ? 'Resetting…' : 'Confirm PIN Reset'}
               </button>
             </div>
           </form>

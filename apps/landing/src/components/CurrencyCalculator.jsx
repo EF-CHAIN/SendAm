@@ -1,18 +1,25 @@
 import { useState, useId } from 'react';
-import { ArrowRight, CheckCircle2, ChevronDown, TrendingDown, RefreshCw, Zap } from 'lucide-react';
+import { ArrowRight, ArrowLeftRight, CheckCircle2, ChevronDown, TrendingDown, RefreshCw, Zap } from 'lucide-react';
 import { whatsappUrl } from '@/lib/links.js';
 import {
-  EXCHANGE_RATES,
   SOURCE_CURRENCIES,
   TARGET_CURRENCIES,
   PRESET_AMOUNTS,
+  getExchangeRate,
 } from '@/lib/currencyConstants.js';
+
+// Every currency the calculator can display, so a swapped corridor can resolve
+// its flags and symbols even when a code leaves its original list.
+const ALL_CURRENCIES = [...SOURCE_CURRENCIES, ...TARGET_CURRENCIES];
+
+const currencyFor = (code) => ALL_CURRENCIES.find((c) => c.code === code) || null;
 
 export default function CurrencyCalculator() {
   const [amount, setAmount] = useState('100');
   const [sourceCurrency, setSourceCurrency] = useState('USD');
   const [targetCurrency, setTargetCurrency] = useState('NGN');
   const [breakdownOpen, setBreakdownOpen] = useState(false);
+  const [spinDegrees, setSpinDegrees] = useState(0);
 
   const inputId = useId();
   const sourceSelectId = useId();
@@ -30,16 +37,30 @@ export default function CurrencyCalculator() {
   const traditionalFeePercent = 7;
   const traditionalFee = parsedAmount * 0.07;
 
-  // Rate lookup
-  const currentRate = EXCHANGE_RATES[sourceCurrency]?.[targetCurrency] || 1;
+  // Rate lookup, with the reverse direction derived for swapped corridors
+  const currentRate = getExchangeRate(sourceCurrency, targetCurrency);
   const receivedAmount = netSendAmount * currentRate;
 
   // Estimated savings
   const estimatedSavings = Math.max(0, traditionalFee - sendAmFee);
   const estimatedSavingsInTarget = estimatedSavings * currentRate;
 
-  const currentSource = SOURCE_CURRENCIES.find((c) => c.code === sourceCurrency) || SOURCE_CURRENCIES[0];
-  const currentTarget = TARGET_CURRENCIES.find((c) => c.code === targetCurrency) || TARGET_CURRENCIES[0];
+  const currentSource = currencyFor(sourceCurrency) || SOURCE_CURRENCIES[0];
+  const currentTarget = currencyFor(targetCurrency) || TARGET_CURRENCIES[0];
+
+  // Keep a swapped-in code selectable even when it left its original list.
+  const sourceOptions = SOURCE_CURRENCIES.some((c) => c.code === sourceCurrency)
+    ? SOURCE_CURRENCIES
+    : [...SOURCE_CURRENCIES, currentSource];
+  const targetOptions = TARGET_CURRENCIES.some((c) => c.code === targetCurrency)
+    ? TARGET_CURRENCIES
+    : [...TARGET_CURRENCIES, currentTarget];
+
+  // Compact rate label: keep small reciprocal rates readable, group large rates.
+  const rateLabel =
+    currentRate >= 1
+      ? currentRate.toLocaleString()
+      : currentRate.toLocaleString(undefined, { maximumFractionDigits: 6 });
 
   const handleAmountChange = (e) => {
     const val = e.target.value;
@@ -51,6 +72,19 @@ export default function CurrencyCalculator() {
   const handleCorridorSwitch = (src, tgt) => {
     setSourceCurrency(src);
     setTargetCurrency(tgt);
+  };
+
+  const handleSwap = () => {
+    // Exchange the two currencies and carry the amount the user was receiving
+    // over as the new send amount, then let the fee and rate recalculate.
+    const nextSource = targetCurrency;
+    const nextTarget = sourceCurrency;
+    const carriedAmount = Math.round(receivedAmount * 100) / 100;
+
+    setSpinDegrees((degrees) => degrees + 180);
+    setSourceCurrency(nextSource);
+    setTargetCurrency(nextTarget);
+    setAmount(carriedAmount === 0 ? '' : String(carriedAmount));
   };
 
   return (
@@ -72,12 +106,14 @@ export default function CurrencyCalculator() {
       <div className="mx-auto max-w-3xl mb-6 flex flex-wrap justify-center gap-2">
         {TARGET_CURRENCIES.map((tgt) => {
           const isActive = targetCurrency === tgt.code;
+          const isDisabled = sourceCurrency === tgt.code;
           return (
             <button
               key={tgt.code}
               type="button"
               onClick={() => handleCorridorSwitch(sourceCurrency, tgt.code)}
-              className={`inline-flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium transition-all ${
+              disabled={isDisabled}
+              className={`inline-flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium transition-all disabled:cursor-not-allowed disabled:opacity-40 ${
                 isActive
                   ? 'bg-primary text-white shadow-md shadow-primary/20'
                   : 'bg-white border border-slate-200 text-slate-700 hover:border-slate-300 hover:bg-slate-50'
@@ -92,7 +128,7 @@ export default function CurrencyCalculator() {
 
       {/* Main Card */}
       <div className="mx-auto max-w-3xl rounded-3xl border border-slate-200 bg-white p-6 shadow-xl sm:p-8 md:p-10">
-        <div className="grid gap-6 md:grid-cols-2 md:gap-8 items-center">
+        <div className="grid gap-6 md:grid-cols-[1fr_auto_1fr] md:gap-8 items-center">
           {/* Source Input Column */}
           <div className="space-y-4">
             <div>
@@ -112,13 +148,20 @@ export default function CurrencyCalculator() {
                 />
                 <div className="flex items-center gap-1 border-l border-slate-200 pl-3 pr-2">
                   <label htmlFor={sourceSelectId} className="sr-only">Source Currency</label>
+                  <span
+                    key={sourceCurrency}
+                    aria-hidden="true"
+                    className="inline-block animate-fade-up [animation-duration:300ms]"
+                  >
+                    {currentSource.flag}
+                  </span>
                   <select
                     id={sourceSelectId}
                     value={sourceCurrency}
                     onChange={(e) => setSourceCurrency(e.target.value)}
                     className="bg-transparent text-sm font-semibold text-dark outline-none cursor-pointer focus-visible:ring-2 focus-visible:ring-primary rounded"
                   >
-                    {SOURCE_CURRENCIES.map((c) => (
+                    {sourceOptions.map((c) => (
                       <option key={c.code} value={c.code}>
                         {c.code}
                       </option>
@@ -156,9 +199,23 @@ export default function CurrencyCalculator() {
             <div className="flex items-center gap-2 text-xs font-medium text-slate-500 bg-slate-50 rounded-xl p-3 border border-slate-100">
               <RefreshCw size={14} className="text-primary shrink-0" aria-hidden="true" />
               <span>
-                1 {sourceCurrency} = {currentRate.toLocaleString()} {targetCurrency}
+                1 {sourceCurrency} = {rateLabel} {targetCurrency}
               </span>
             </div>
+          </div>
+
+          {/* Swap currencies */}
+          <div className="flex justify-center">
+            <button
+              type="button"
+              onClick={handleSwap}
+              aria-label="Swap currencies"
+              title="Swap currencies"
+              className="inline-flex h-11 w-11 items-center justify-center rounded-full border border-slate-200 bg-white text-primary shadow-md transition duration-300 hover:border-primary hover:bg-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+              style={{ transform: `rotate(${spinDegrees}deg)` }}
+            >
+              <ArrowLeftRight size={18} aria-hidden="true" />
+            </button>
           </div>
 
           {/* Target Column */}
@@ -172,13 +229,20 @@ export default function CurrencyCalculator() {
                   {currentTarget.symbol} {receivedAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                 </div>
                 <div className="flex items-center gap-1 border-l border-emerald-200 pl-3 pr-2">
+                  <span
+                    key={targetCurrency}
+                    aria-hidden="true"
+                    className="inline-block animate-fade-up [animation-duration:300ms]"
+                  >
+                    {currentTarget.flag}
+                  </span>
                   <select
                     id={targetSelectId}
                     value={targetCurrency}
                     onChange={(e) => setTargetCurrency(e.target.value)}
                     className="bg-transparent text-sm font-semibold text-emerald-900 outline-none cursor-pointer focus-visible:ring-2 focus-visible:ring-emerald-500 rounded"
                   >
-                    {TARGET_CURRENCIES.map((c) => (
+                    {targetOptions.map((c) => (
                       <option key={c.code} value={c.code}>
                         {c.code}
                       </option>

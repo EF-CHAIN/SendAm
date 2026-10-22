@@ -130,4 +130,53 @@ describe('CurrencyCalculator Component', () => {
     expect(screen.getByText(/sendam service fee \(1%\)/i).nextSibling).toHaveTextContent('−$2.50');
     expect(screen.getByText('Net send amount').nextSibling).toHaveTextContent('$247.50');
   });
+
+  it('swaps currencies and carries the received amount over on swap', () => {
+    render(<CurrencyCalculator />);
+
+    const swapButton = screen.getByRole('button', { name: /swap currencies/i });
+    fireEvent.click(swapButton);
+
+    // Corridor reverses from USD -> NGN to NGN -> USD.
+    expect(screen.getByRole('combobox', { name: /source currency/i })).toHaveValue('NGN');
+    expect(screen.getByRole('combobox', { name: /recipient gets/i })).toHaveValue('USD');
+
+    // 100 - 1% = 99 USD * 1550 = 153,450 NGN becomes the new send amount.
+    const input = screen.getByRole('textbox', { name: /send amount in ngn/i });
+    expect(input).toHaveValue('153450');
+
+    // 153,450 - 1% = 151,915.5 NGN at 1/1550 = 98.01 USD
+    expect(screen.getByText(/1 NGN = 0\.000645 USD/i)).toBeInTheDocument();
+    expect(screen.getByText(/98\.01/)).toBeInTheDocument();
+  });
+
+  it('round-trips the corridor back to the original direction', () => {
+    render(<CurrencyCalculator />);
+
+    const swapButton = screen.getByRole('button', { name: /swap currencies/i });
+    fireEvent.click(swapButton);
+    fireEvent.click(swapButton);
+
+    expect(screen.getByRole('combobox', { name: /source currency/i })).toHaveValue('USD');
+    expect(screen.getByRole('combobox', { name: /recipient gets/i })).toHaveValue('NGN');
+
+    // 153,450 NGN -> 98.01 USD on the way, and back to a USD send amount.
+    const input = screen.getByRole('textbox', { name: /send amount in usd/i });
+    expect(input).toHaveValue('98.01');
+  });
+
+  it('rotates the swap button in 300ms steps and exposes the transition', () => {
+    render(<CurrencyCalculator />);
+
+    const swapButton = screen.getByRole('button', { name: /swap currencies/i });
+    expect(swapButton.getAttribute('style')).toContain('rotate(0deg)');
+
+    fireEvent.click(swapButton);
+    expect(swapButton.getAttribute('style')).toContain('rotate(180deg)');
+
+    fireEvent.click(swapButton);
+    expect(swapButton.getAttribute('style')).toContain('rotate(360deg)');
+
+    expect(swapButton.getAttribute('class')).toContain('duration-300');
+  });
 });

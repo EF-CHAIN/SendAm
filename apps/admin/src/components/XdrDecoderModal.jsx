@@ -10,11 +10,14 @@ import {
   Layers,
   FileCode,
   AlertCircle,
+  AlertTriangle,
+  Wrench,
   ChevronDown,
   ChevronUp,
 } from 'lucide-react';
 import * as StellarSdk from '@stellar/stellar-sdk';
 import { decodeStellarXdr } from '@/lib/xdrDecoder';
+import { extractSimulationErrors } from '@/lib/stellarErrorCodes';
 
 /**
  * Copy to clipboard button with temporary feedback.
@@ -99,6 +102,11 @@ export default function XdrDecoderModal({
       return { decoded: null, error: err.message || 'Invalid or malformed Stellar XDR envelope' };
     }
   }, [rawXdr, network, customNetwork]);
+
+  // Decode Stellar simulation error codes and remediation tips (#755)
+  const simulationErrors = useMemo(() => {
+    return extractSimulationErrors(rawXdr, decoded);
+  }, [rawXdr, decoded]);
 
   // Filter operations based on searchQuery
   const filteredOperations = useMemo(() => {
@@ -218,7 +226,7 @@ export default function XdrDecoderModal({
           </div>
 
           {/* Error State */}
-          {error && (
+          {error && !simulationErrors && (
             <div
               className="p-4 bg-red-50 border border-red-200 rounded-xl flex items-start gap-3 text-red-700 text-sm"
               role="alert"
@@ -226,6 +234,59 @@ export default function XdrDecoderModal({
               <AlertCircle className="w-5 h-5 flex-shrink-0 text-red-500 mt-0.5" />
               <div>
                 <span className="font-semibold">Decoding Error:</span> {error}
+              </div>
+            </div>
+          )}
+
+          {/* Stellar Simulation & Result Code Remediation Alert Box (#755) */}
+          {simulationErrors && simulationErrors.length > 0 && (
+            <div
+              className="p-5 bg-amber-50 border border-amber-300 rounded-xl space-y-4 text-amber-900 shadow-sm"
+              role="alert"
+              data-testid="simulation-error-alert"
+            >
+              <div className="flex items-start gap-3">
+                <AlertTriangle className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
+                <div className="flex-1">
+                  <h3 className="text-sm font-bold text-amber-950">
+                    Stellar Transaction Simulation Failed
+                  </h3>
+                  <p className="text-xs text-amber-800 mt-0.5">
+                    Simulation result codes translated into plain-language explanations and actionable operator remediation tips:
+                  </p>
+                </div>
+              </div>
+
+              <div className="space-y-3 pt-1">
+                {simulationErrors.map((err, idx) => (
+                  <div
+                    key={err.code || idx}
+                    className="p-3.5 bg-white rounded-lg border border-amber-200/90 space-y-2 text-xs shadow-xs"
+                    data-testid={`simulation-error-item-${err.code}`}
+                  >
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <span className="font-bold text-gray-900 text-sm">
+                        {err.title}
+                      </span>
+                      <span className="font-mono text-[11px] font-bold px-2 py-0.5 rounded bg-red-100 text-red-800 border border-red-200">
+                        {err.code}
+                      </span>
+                    </div>
+
+                    <p className="text-gray-700 leading-relaxed">
+                      <strong className="text-gray-900 font-semibold">Explanation: </strong>
+                      {err.explanation}
+                    </p>
+
+                    <div className="flex items-start gap-2 text-amber-900 bg-amber-50/70 p-2.5 rounded border border-amber-200/60">
+                      <Wrench className="w-4 h-4 text-amber-700 flex-shrink-0 mt-0.5" />
+                      <div>
+                        <strong className="font-semibold text-amber-950">Operator Remediation: </strong>
+                        <span>{err.remediation}</span>
+                      </div>
+                    </div>
+                  </div>
+                ))}
               </div>
             </div>
           )}
