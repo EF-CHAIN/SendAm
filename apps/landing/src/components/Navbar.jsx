@@ -1,8 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Link } from 'react-router-dom';
-import { Menu, Moon, MessageCircle, Sun, X } from 'lucide-react';
-import { Globe, Menu, MessageCircle, X } from 'lucide-react';
+import { Globe, Menu, MessageCircle, Moon, Sun, X } from 'lucide-react';
 import { whatsappUrl } from '@/lib/links.js';
 import { LANGUAGES, useI18n } from '@/lib/i18n.js';
 

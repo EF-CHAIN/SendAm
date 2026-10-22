@@ -1,14 +1,5 @@
 import { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import { BarChart3 } from 'lucide-react';
-import {
-  CHART_PADDING,
-  buildAreaPath,
-  buildLinePath,
-  computeTotals,
-  nearestPointIndex,
-  normalizeCorridorData,
-  projectChartPoints,
-} from '../lib/corridorChartGeometry';
 
 import './CorridorChart.css';
 
@@ -89,16 +80,6 @@ export default function CorridorChart({ data: propData, loading = false, title =
   const containerRef = useRef(null);
   const animationFrameRef = useRef(null);
 
-  // Derive active dataset. A supplied array is always used as-is (an empty
-  // one renders the empty state); sample data only fills in when the API
-  // supplies no series at all.
-  const chartData = useMemo(() => {
-    if (Array.isArray(propData)) {
-      return normalizeCorridorData(propData);
-    }
-    return normalizeCorridorData(generateSampleCorridorData(interval, selectedCorridor));
-  }, [propData, interval, selectedCorridor]);
-  const isEmpty = chartData.length === 0;
   const [dataset, setDataset] = useState(() => ({
     source: propData, range: '7D', corridor: 'ALL',
     points: prepareCorridorData(propData, '7D', 'ALL'),
@@ -132,7 +113,13 @@ export default function CorridorChart({ data: propData, loading = false, title =
   };
 
   // Aggregate metrics
-  const totals = useMemo(() => computeTotals(chartData), [chartData]);
+  const totals = useMemo(() => {
+    const totalVolume = chartData.reduce((sum, d) => sum + (d.volume || 0), 0);
+    const totalTxs = chartData.reduce((sum, d) => sum + (d.txCount || 0), 0);
+    const totalFees = chartData.reduce((sum, d) => sum + (d.fees || 0), 0);
+    const avgTxSize = totalTxs > 0 ? Math.round(totalVolume / totalTxs) : 0;
+    return { totalVolume, totalTxs, totalFees, avgTxSize };
+  }, [chartData]);
 
   // Canvas drawing routine
   const drawChart = useCallback(() => {
@@ -155,14 +142,18 @@ export default function CorridorChart({ data: propData, loading = false, title =
     ctx.scale(dpr, dpr);
     ctx.clearRect(0, 0, width, height);
 
-    const padding = CHART_PADDING;
-    const layout = projectChartPoints(chartData, width, height, padding);
-    if (!layout) {
+    const padding = { top: 30, right: 60, bottom: 40, left: 65 };
+    const chartWidth = width - padding.left - padding.right;
+    const chartHeight = height - padding.top - padding.bottom;
+
+    if (chartWidth <= 0 || chartHeight <= 0 || chartData.length === 0) {
       ctx.restore();
       return;
     }
-    const { chartHeight, scales } = layout;
-    const { maxVolume, maxTxs } = scales;
+
+    // Min & Max calculations
+    const maxVolume = Math.max(...chartData.map((d) => d.volume), 1000) * 1.15;
+    const maxTxs = Math.max(...chartData.map((d) => d.txCount), 10) * 1.15;
 
     // Draw Grid Lines (Horizontal)
     const gridLines = 5;
@@ -194,32 +185,27 @@ export default function CorridorChart({ data: propData, loading = false, title =
       ctx.fillText(`${Math.round(txVal)} txs`, width - padding.right + 10, y + 4);
     }
 
-    // Every coordinate below is finite: geometry normalises missing values.
-    const { points, baselineY } = layout;
-    const canUsePath2D = typeof Path2D !== 'undefined';
-    const trace = (key) => {
-      points.forEach((p, idx) => {
-        if (idx === 0) ctx.moveTo(p.x, p[key]);
-        else ctx.lineTo(p.x, p[key]);
-      });
-    };
+    // Calculate X coordinate for each data point
+    const stepX = chartWidth / (chartData.length - 1 || 1);
+    const points = chartData.map((d, index) => {
+      const x = padding.left + index * stepX;
+      const volY = padding.top + chartHeight - (d.volume / maxVolume) * chartHeight;
+      const txY = padding.top + chartHeight - (d.txCount / maxTxs) * chartHeight;
+      return { ...d, x, volY, txY, index };
+    });
 
     // 1. Draw Volume Area Gradient
     const gradient = ctx.createLinearGradient(0, padding.top, 0, height - padding.bottom);
     gradient.addColorStop(0, 'rgba(59, 130, 246, 0.25)');
     gradient.addColorStop(1, 'rgba(59, 130, 246, 0.00)');
 
+    ctx.beginPath();
+    ctx.moveTo(points[0].x, height - padding.bottom);
+    points.forEach((p) => ctx.lineTo(p.x, p.volY));
+    ctx.lineTo(points[points.length - 1].x, height - padding.bottom);
+    ctx.closePath();
     ctx.fillStyle = gradient;
-    if (canUsePath2D) {
-      ctx.fill(new Path2D(buildAreaPath(points, baselineY)));
-    } else {
-      ctx.beginPath();
-      ctx.moveTo(points[0].x, baselineY);
-      points.forEach((p) => ctx.lineTo(p.x, p.volY));
-      ctx.lineTo(points[points.length - 1].x, baselineY);
-      ctx.closePath();
-      ctx.fill();
-    }
+    ctx.fill();
 
     // 2. Draw Volume Line (Blue)
     ctx.beginPath();
@@ -227,24 +213,22 @@ export default function CorridorChart({ data: propData, loading = false, title =
     ctx.lineWidth = 2.5;
     ctx.lineJoin = 'round';
     ctx.lineCap = 'round';
-    if (canUsePath2D) {
-      ctx.stroke(new Path2D(buildLinePath(points, 'volY')));
-    } else {
-      trace('volY');
-      ctx.stroke();
-    }
+    points.forEach((p, idx) => {
+      if (idx === 0) ctx.moveTo(p.x, p.volY);
+      else ctx.lineTo(p.x, p.volY);
+    });
+    ctx.stroke();
 
     // 3. Draw Tx Count Line (Purple Dashed)
     ctx.beginPath();
     ctx.strokeStyle = '#8b5cf6';
     ctx.lineWidth = 2;
     ctx.setLineDash([4, 4]);
-    if (canUsePath2D) {
-      ctx.stroke(new Path2D(buildLinePath(points, 'txY')));
-    } else {
-      trace('txY');
-      ctx.stroke();
-    }
+    points.forEach((p, idx) => {
+      if (idx === 0) ctx.moveTo(p.x, p.txY);
+      else ctx.lineTo(p.x, p.txY);
+    });
+    ctx.stroke();
     ctx.setLineDash([]); // Reset dash
 
     // 4. Draw X-Axis Labels (every Nth point to prevent overlap)
@@ -305,13 +289,20 @@ export default function CorridorChart({ data: propData, loading = false, title =
     const x = clientX - rect.left;
     const y = clientY - rect.top;
 
-    const index = nearestPointIndex(x, chartData.length, canvas.clientWidth);
-    const layout = projectChartPoints(chartData, canvas.clientWidth, canvas.clientHeight);
+    const paddingLeft = 65;
+    const paddingRight = 60;
+    const chartWidth = canvas.clientWidth - paddingLeft - paddingRight;
 
-    if (index >= 0 && layout) {
-      const point = layout.points[index];
+    if (x >= paddingLeft && x <= canvas.clientWidth - paddingRight) {
+      const stepX = chartWidth / (chartData.length - 1 || 1);
+      const index = Math.min(
+        Math.max(0, Math.round((x - paddingLeft) / stepX)),
+        chartData.length - 1
+      );
+      const point = chartData[index];
       setHoveredPoint({
         ...point,
+        x: paddingLeft + index * stepX,
         screenX: x,
         screenY: y,
         canvasWidth: canvas.clientWidth,
@@ -439,20 +430,9 @@ export default function CorridorChart({ data: propData, loading = false, title =
       </div>
 
       {/* Canvas Area Container */}
-      <div className="relative w-full h-[320px] select-none">
-        {isEmpty && (
-          <p
-            role="status"
-            className="absolute inset-0 flex items-center justify-center text-sm text-gray-500"
-          >
-            No corridor activity for this period.
-          </p>
-        )}
       <div className="relative w-full h-[320px] select-none" aria-busy={isLoading} aria-label="Corridor chart">
         <canvas
           ref={canvasRef}
-          role="img"
-          hidden={isEmpty}
           onMouseMove={handleMouseMove}
           onMouseLeave={handleMouseLeave}
           onTouchMove={handleMouseMove}

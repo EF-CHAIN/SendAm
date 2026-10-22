@@ -1,9 +1,5 @@
 import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { describe, it, expect, vi } from 'vitest';
-import FilterBar from './FilterBar';
-
-const fields = [
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, describe, it, expect, vi } from 'vitest';
 import FilterBar from './FilterBar';
@@ -21,7 +17,6 @@ const renderFilterBar = () => {
   const onReset = vi.fn();
   const utils = render(
     <FilterBar
-      fields={fields}
       fields={testFields}
       getFilter={(key) => values[key]}
       setFilter={setFilter}
@@ -31,7 +26,6 @@ const renderFilterBar = () => {
   return { ...utils, setFilter, onReset };
 };
 
-describe('FilterBar', () => {
 describe('FilterBar accessibility and interactions', () => {
   it('exposes a search landmark with an accessible label for assistive tech', () => {
     renderFilterBar();
@@ -57,11 +51,6 @@ describe('FilterBar accessibility and interactions', () => {
     const { container } = renderFilterBar();
     const controls = container.querySelectorAll('input, select, button');
     // One control per field, plus the Reset button.
-    expect(controls).toHaveLength(fields.length + 1);
-    controls.forEach((control) => {
-      expect(control).toHaveAccessibleName();
-    });
-    fields.forEach((field) => {
     expect(controls).toHaveLength(testFields.length + 1);
     controls.forEach((control) => {
       expect(control).toHaveAccessibleName();

@@ -2,24 +2,24 @@
   "apps": {
     "landing": {
       "distDir": "apps/landing/dist",
-      "comment": "Re-measured on PR builds after #884 (i18n switcher): JS 418.4 KB (gzip 131.5), largest chunk 396.3 KB, CSS 48.8 KB. Budgets raised with ~8% headroom because main CI skips the budget job and drifted over; follow up with code-splitting to bring them back down.",
+      "comment": "Re-measured on PR builds after #884 (i18n switcher): JS 418.4 KB (gzip 131.5), largest chunk 396.3 KB, CSS 48.8 KB. Budgets raised with ~8% headroom because main CI skips the budget job and drifted over; follow up with code-splitting to bring them back down. CSS raised to 60 KB after main measured 55.3 KB (9.7 KB gzip) once the onboarding, calculator and navbar features landed.",
       "budgets": {
         "totalJsKb": 460,
-        "totalCssKb": 55,
+        "totalCssKb": 60,
         "maxImageKb": 100,
         "maxChunkKb": 430,
         "gzip": {
           "totalJsKb": 145,
-          "totalCssKb": 10
+          "totalCssKb": 11
         }
       }
     },
     "admin": {
       "distDir": "apps/admin/dist",
-      "comment": "Measured for #779: total JS 2141.83 KB (gzip 762.76), including the route-lazy SetPassword chunk with local zxcvbn dictionaries (805.92 KB raw). The initial shell remains 324.56 KB; password scoring adds no remote service. Total JS budgets allow about 5% headroom for this explicit dependency addition; existing per-chunk, CSS and image limits are unchanged. Admin CSS budget raised to 46 KB after main measured 41.9 KB.",
+      "comment": "Measured for #779: total JS 2141.83 KB (gzip 762.76), including the route-lazy SetPassword chunk with local zxcvbn dictionaries (805.92 KB raw). The initial shell remains 324.56 KB; password scoring adds no remote service. Total JS budgets allow about 5% headroom for this explicit dependency addition; existing per-chunk, CSS and image limits are unchanged. Admin CSS budget raised to 53 KB after main measured 48.9 KB (8.5 KB gzip) once the DataTable, wallet, KYC and user-management features landed. Total JS raised to 2300 KB after main measured 2250.3 KB.",
       "budgets": {
-        "totalJsKb": 2250,
-        "totalCssKb": 46,
+        "totalJsKb": 2300,
+        "totalCssKb": 53,
         "maxImageKb": 100,
         "maxChunkKb": 950,
         "gzip": {
