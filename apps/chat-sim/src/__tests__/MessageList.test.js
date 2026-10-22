@@ -9,6 +9,14 @@ const fixedMessages = [
   { id: '1', text: 'balance', sender: 'user' },
   { id: '2', text: 'Your SendAm balances: 10 XLM', sender: 'bot' },
   { id: '3', text: 'send 5 xlm +2348000000002', sender: 'user' },
+  {
+    id: '4',
+    sender: 'user',
+    type: 'voice',
+    isVoice: true,
+    duration: 5,
+    text: '🎤 Voice note (0:05)',
+  },
 ];
 
 describe('MessageList', () => {
@@ -30,7 +38,59 @@ describe('MessageList', () => {
     }
     walk(flatList);
 
-    expect(bubbleTestIds).toEqual(['bubble-user', 'bubble-bot', 'bubble-user']);
+    expect(bubbleTestIds).toEqual([
+      'bubble-user',
+      'bubble-bot',
+      'bubble-user',
+      'bubble-user',
+    ]);
+  });
+
+  it('renders interactive voice note bubble with play button, waveform scrubber, and speed pill', async () => {
+    let renderer;
+    await act(async () => {
+      renderer = create(<MessageList messages={[fixedMessages[3]]} />);
+    });
+    const root = renderer.root;
+
+    // Verify play button exists
+    const playBtn = root.findByProps({ testID: 'voice-play-button' });
+    expect(playBtn).toBeTruthy();
+
+    // Verify waveform scrubber exists and has scrubber bars
+    const scrubber = root.findByProps({ testID: 'waveform-scrubber' });
+    expect(scrubber).toBeTruthy();
+
+    // Verify speed toggle pill exists and cycles 1x -> 1.5x -> 2x -> 1x
+    const speedPill = root.findByProps({ testID: 'voice-speed-pill' });
+    expect(speedPill).toBeTruthy();
+    const speedLabel = () => findByTestID(renderer.toJSON(), 'voice-speed-pill').children[0].children.join('');
+
+    await act(async () => {
+      speedPill.props.onPress();
+    });
+    const speedPill15 = root.findByProps({ testID: 'voice-speed-pill' });
+    expect(speedLabel()).toBe('1.5x');
+
+    await act(async () => {
+      speedPill15.props.onPress();
+    });
+    const speedPill20 = root.findByProps({ testID: 'voice-speed-pill' });
+    expect(speedLabel()).toBe('2x');
+
+    await act(async () => {
+      speedPill20.props.onPress();
+    });
+    expect(speedLabel()).toBe('1x');
+
+    // Test scrubbing on a waveform bar
+    const bar = root.findByProps({ testID: 'waveform-bar-5' });
+    await act(async () => {
+      bar.props.onPress();
+    });
+    const timeDisplay = root.findByProps({ testID: 'voice-time-display' });
+    expect(timeDisplay).toBeTruthy();
+    act(() => renderer.unmount());
   });
 
   it('parses quick-reply options from bot message text', () => {
@@ -83,7 +143,7 @@ it('provides independent copy actions for both user and bot messages', async () 
   let renderer;
   await act(async () => { renderer = create(<MessageList messages={fixedMessages} />); });
   const copies = renderer.root.findAllByType(MessageCopyButton);
-  expect(copies.map((copy) => copy.props.text)).toEqual(fixedMessages.map((message) => message.text));
+  expect(copies.map((copy) => copy.props.text)).toEqual(fixedMessages.filter((message) => !message.isVoice).map((message) => message.text));
   const buttons = copies.map((copy) => copy.findAll((node) => node.props.accessibilityRole === 'button' && typeof node.props.onPress === 'function')[0]);
   await act(async () => { await buttons[0].props.onPress(); });
   expect(Clipboard.setStringAsync).toHaveBeenLastCalledWith(fixedMessages[0].text);
@@ -424,6 +484,58 @@ describe('copy, swipe and attachment integration', () => {
     });
     expect(onReply).toHaveBeenCalledTimes(1);
     expect(onReply).toHaveBeenCalledWith(message);
+    expect(Clipboard.setStringAsync).not.toHaveBeenCalled();
+  });
+});
+
+describe('voice controls and swipe integration', () => {
+  let renderer;
+
+  beforeEach(() => {
+    jest.useFakeTimers();
+    Clipboard.setStringAsync.mockClear();
+  });
+  afterEach(() => {
+    act(() => renderer?.unmount());
+    jest.useRealTimers();
+  });
+
+  it.each([{ type: 'voice' }, { isVoice: true }])('keeps voice playback controls independent of copying and replying: %j', async (voiceFlag) => {
+    const message = { id: 'voice', sender: 'user', duration: 5, text: '🎤 Voice note (0:05)', ...voiceFlag };
+    const onReply = jest.fn();
+    await act(async () => {
+      renderer = create(<MessageList messages={[message]} onReply={onReply} />);
+    });
+
+    const row = findByTestID(renderer.toJSON(), 'swipe-row-voice');
+    expect(findByTestID(row, 'voice-note-voice')).not.toBeNull();
+    expect(renderer.root.findAllByProps({ className: 'relative self-end max-w-[85%]' }).length).toBeGreaterThan(0);
+    expect(renderer.root.findAllByType(MessageCopyButton)).toHaveLength(0);
+    const timeDisplay = () => findByTestID(renderer.toJSON(), 'voice-time-display').children.join('');
+    expect(timeDisplay()).toBe('0:00 / 0:05');
+
+    expect(row.props.onStartShouldSetResponderCapture({ nativeEvent: { pageX: 100, pageY: 80 } })).toBe(false);
+    expect(row.props.onMoveShouldSetResponder({ nativeEvent: { pageX: 101, pageY: 80 } })).toBe(false);
+    await act(async () => renderer.root.findByProps({ testID: 'voice-play-button' }).props.onPress());
+    await act(async () => jest.advanceTimersByTime(1100));
+    expect(timeDisplay()).toBe('0:01 / 0:05');
+
+    await act(async () => renderer.root.findByProps({ testID: 'voice-play-button' }).props.onPress());
+    await act(async () => jest.advanceTimersByTime(1100));
+    expect(timeDisplay()).toBe('0:01 / 0:05');
+    await act(async () => renderer.root.findByProps({ testID: 'waveform-bar-9' }).props.onPress());
+    expect(timeDisplay()).toBe('0:02 / 0:05');
+    expect(onReply).not.toHaveBeenCalled();
+    expect(Clipboard.setStringAsync).not.toHaveBeenCalled();
+
+    await act(async () => {
+      row.props.onTouchStart(touchAt(100, 80));
+      row.props.onResponderMove(touchAt(180, 80));
+      row.props.onResponderRelease();
+    });
+    expect(onReply).toHaveBeenCalledTimes(1);
+    expect(onReply).toHaveBeenCalledWith(message);
+    expect(timeDisplay()).toBe('0:02 / 0:05');
     expect(Clipboard.setStringAsync).not.toHaveBeenCalled();
   });
 });

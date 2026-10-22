@@ -1,7 +1,7 @@
 import { render, screen, fireEvent, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, useLocation } from 'react-router-dom';
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import DataTable from './DataTable';
 
 const columns = [{ header: 'Name', accessor: 'name' }];
@@ -267,6 +267,98 @@ describe('DataTable Virtualization & Keyboard Navigation', () => {
   });
 });
 
+describe('DataTable column customization', () => {
+  const cols = [
+    { header: 'Name', accessor: 'name' },
+    { header: 'Role', accessor: 'role' },
+    { header: 'Status', accessor: 'status' },
+  ];
+  const rows = [
+    { id: 'a', name: 'Ada', role: 'admin', status: 'active' },
+    { id: 'b', name: 'Bo', role: 'viewer', status: 'idle' },
+  ];
+
+  const headerLabels = () =>
+    screen.getAllByRole('columnheader').map((th) => th.textContent);
+
+  const openCustomizer = () =>
+    userEvent.click(screen.getByRole('button', { name: /customize columns/i }));
+
+  beforeEach(() => {
+    window.localStorage.clear();
+  });
+
+  it('renders the Customize Columns trigger and shows every column by default', () => {
+    renderTable(<DataTable columns={cols} data={rows} storageKey="cols-default" />);
+
+    expect(screen.getByRole('button', { name: /customize columns/i })).toBeInTheDocument();
+    expect(headerLabels()).toEqual(['Name', 'Role', 'Status']);
+  });
+
+  it('hides a column immediately when its checkbox is unchecked', async () => {
+    renderTable(<DataTable columns={cols} data={rows} storageKey="cols-hide" />);
+    await openCustomizer();
+
+    await userEvent.click(screen.getByRole('checkbox', { name: 'Role' }));
+
+    expect(headerLabels()).toEqual(['Name', 'Status']);
+    expect(screen.queryByRole('cell', { name: 'viewer' })).not.toBeInTheDocument();
+  });
+
+  it('restores a hidden column when its checkbox is checked again', async () => {
+    renderTable(<DataTable columns={cols} data={rows} storageKey="cols-restore" />);
+    await openCustomizer();
+
+    const roleCheckbox = screen.getByRole('checkbox', { name: 'Role' });
+    await userEvent.click(roleCheckbox);
+    expect(headerLabels()).toEqual(['Name', 'Status']);
+
+    await userEvent.click(roleCheckbox);
+    expect(headerLabels()).toEqual(['Name', 'Role', 'Status']);
+  });
+
+  it('reorders columns with the move controls', async () => {
+    renderTable(<DataTable columns={cols} data={rows} storageKey="cols-order" />);
+    await openCustomizer();
+
+    await userEvent.click(screen.getByRole('button', { name: /move role up/i }));
+
+    expect(headerLabels()).toEqual(['Role', 'Name', 'Status']);
+  });
+
+  it('keeps at least one column visible', async () => {
+    renderTable(<DataTable columns={cols} data={rows} storageKey="cols-last" />);
+    await openCustomizer();
+
+    await userEvent.click(screen.getByRole('checkbox', { name: 'Role' }));
+    await userEvent.click(screen.getByRole('checkbox', { name: 'Status' }));
+
+    expect(screen.getByRole('checkbox', { name: 'Name' })).toBeDisabled();
+    expect(headerLabels()).toEqual(['Name']);
+  });
+
+  it('persists preferences and restores them on remount', async () => {
+    const { unmount } = renderTable(
+      <DataTable columns={cols} data={rows} storageKey="cols-persist" />
+    );
+    await openCustomizer();
+    await userEvent.click(screen.getByRole('checkbox', { name: 'Role' }));
+    expect(headerLabels()).toEqual(['Name', 'Status']);
+    unmount();
+
+    renderTable(<DataTable columns={cols} data={rows} storageKey="cols-persist" />);
+    expect(headerLabels()).toEqual(['Name', 'Status']);
+  });
+
+  it('restores the default layout with the reset control', async () => {
+    renderTable(<DataTable columns={cols} data={rows} storageKey="cols-reset" />);
+    await openCustomizer();
+
+    await userEvent.click(screen.getByRole('checkbox', { name: 'Role' }));
+    await userEvent.click(screen.getByRole('button', { name: /reset columns/i }));
+
+    expect(headerLabels()).toEqual(['Name', 'Role', 'Status']);
+    expect(screen.getByRole('checkbox', { name: 'Role' })).toBeChecked();
 describe('DataTable multi-column sorting', () => {
   const sortColumns = [
     { header: 'Status', accessor: 'status', sortable: true },

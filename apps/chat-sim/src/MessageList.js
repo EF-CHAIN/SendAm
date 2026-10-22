@@ -2,6 +2,125 @@ import { useEffect, useRef, useState } from 'react';
 import { Animated, Platform, Pressable, ScrollView, Text, View } from 'react-native';
 import MessageCopyButton from './MessageCopyButton';
 
+const WAVEFORM_BARS = [8, 14, 20, 12, 24, 18, 10, 22, 26, 16, 20, 14, 18, 10, 16, 12, 22, 14, 8];
+
+function VoiceBubble({ item, isUser }) {
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [currentTime, setCurrentTime] = useState(0);
+  const [speed, setSpeed] = useState(1);
+  const totalDuration = item.duration || 3;
+  const timerRef = useRef(null);
+
+  useEffect(() => {
+    if (isPlaying) {
+      const stepSeconds = 0.1 * speed;
+      timerRef.current = setInterval(() => {
+        setCurrentTime((prev) => {
+          const next = prev + stepSeconds;
+          if (next >= totalDuration) {
+            setIsPlaying(false);
+            return 0;
+          }
+          return next;
+        });
+      }, 100);
+    } else {
+      clearInterval(timerRef.current);
+    }
+    return () => clearInterval(timerRef.current);
+  }, [isPlaying, speed, totalDuration]);
+
+  function togglePlay() {
+    setIsPlaying((prev) => !prev);
+  }
+
+  function cycleSpeed() {
+    setSpeed((prev) => {
+      if (prev === 1) return 1.5;
+      if (prev === 1.5) return 2;
+      return 1;
+    });
+  }
+
+  function handleScrub(barIndex) {
+    const fraction = barIndex / (WAVEFORM_BARS.length - 1);
+    const newTime = Math.min(totalDuration, Math.max(0, fraction * totalDuration));
+    setCurrentTime(newTime);
+  }
+
+  const progressFraction = Math.min(1, currentTime / totalDuration);
+
+  function formatTime(sec) {
+    const s = Math.floor(sec);
+    const m = Math.floor(s / 60);
+    const rem = s % 60;
+    return `${m}:${rem < 10 ? '0' : ''}${rem}`;
+  }
+
+  return (
+    <View className="flex-col gap-1 w-64 py-1" testID={`voice-note-${item.id}`}>
+      <View className="flex-row items-center gap-2">
+        {/* Play/Pause Button */}
+        <Pressable
+          testID="voice-play-button"
+          onPress={togglePlay}
+          className={`w-9 h-9 rounded-full items-center justify-center ${isUser ? 'bg-white' : 'bg-green-600'}`}
+        >
+          <Text className={`text-xs font-bold ${isUser ? 'text-green-600' : 'text-white'}`}>
+            {isPlaying ? '⏸' : '▶'}
+          </Text>
+        </Pressable>
+
+        {/* Waveform Scrubber */}
+        <View className="flex-1 flex-row items-center justify-between h-8 px-1" testID="waveform-scrubber">
+          {WAVEFORM_BARS.map((height, idx) => {
+            const barFraction = idx / (WAVEFORM_BARS.length - 1);
+            const isPlayed = barFraction <= progressFraction;
+            return (
+              <Pressable
+                key={idx}
+                testID={`waveform-bar-${idx}`}
+                onPress={() => handleScrub(idx)}
+                className="py-1 px-0.5 justify-center"
+              >
+                <View
+                  style={{ height }}
+                  className={`w-1 rounded-full ${
+                    isPlayed
+                      ? isUser ? 'bg-white' : 'bg-green-600'
+                      : isUser ? 'bg-green-200' : 'bg-gray-400'
+                  }`}
+                />
+              </Pressable>
+            );
+          })}
+        </View>
+
+        {/* Playback Speed Pill */}
+        <Pressable
+          testID="voice-speed-pill"
+          onPress={cycleSpeed}
+          className={`px-2 py-1 rounded-full ${isUser ? 'bg-green-600 border border-white' : 'bg-gray-300'}`}
+        >
+          <Text className={`text-[10px] font-bold ${isUser ? 'text-white' : 'text-gray-800'}`}>
+            {speed}x
+          </Text>
+        </Pressable>
+      </View>
+
+      {/* Timestamp & Indicator */}
+      <View className="flex-row justify-between items-center px-1">
+        <Text className={`text-[10px] ${isUser ? 'text-green-100' : 'text-gray-600'}`} testID="voice-time-display">
+          {formatTime(currentTime)} / {formatTime(totalDuration)}
+        </Text>
+        <Text className={`text-[10px] font-medium ${isUser ? 'text-green-100' : 'text-gray-500'}`}>
+          WhatsApp Audio Note
+        </Text>
+      </View>
+    </View>
+  );
+}
+
 const SWIPE_REPLY_THRESHOLD = 56;
 const MAX_SWIPE_DISTANCE = 96;
 
@@ -69,6 +188,7 @@ function pointFromEvent(event) {
 // Swiping reveals a reply arrow; releasing past the threshold notifies the
 // parent and springs the bubble back into place.
 function SwipeableBubble({ item, isUser, onReply, hoverOnly }) {
+  const isVoice = item.type === 'voice' || item.isVoice;
   const [hovered, setHovered] = useState(false);
   const translateX = useRef(new Animated.Value(0)).current;
   const startX = useRef(0);
@@ -125,7 +245,7 @@ function SwipeableBubble({ item, isUser, onReply, hoverOnly }) {
   };
 
   return (
-    <View className={`relative ${isUser ? 'self-end' : 'self-start'} max-w-[80%]`}>
+    <View className={`relative ${isUser ? 'self-end' : 'self-start'} ${isVoice ? 'max-w-[85%]' : 'max-w-[80%]'}`}>
       <Animated.View
         testID={`swipe-row-${item.id}`}
         style={{ transform: [{ translateX }] }}
@@ -163,48 +283,54 @@ function SwipeableBubble({ item, isUser, onReply, hoverOnly }) {
               </Text>
             </View>
           )}
-          {item.attachment && (
-            <View testID="media-card" className="mb-2 rounded-lg overflow-hidden bg-black/10 p-1">
-              {item.attachment.type === 'photo' && item.attachment.uri ? (
-                <View testID="media-photo-container" className="rounded overflow-hidden">
-                  {/* Thumbnail preview */}
-                  <img
-                    src={item.attachment.uri}
-                    alt={item.attachment.name || 'Photo attachment'}
-                    draggable={false}
-                    style={{ width: '100%', maxHeight: 200, objectFit: 'cover', borderRadius: 8 }}
-                  />
-                </View>
-              ) : (
-                <View testID="media-doc-container" className="flex-row items-center gap-2 p-2 bg-white/20 rounded">
-                  <Text className="text-xl">📄</Text>
-                  <View className="flex-1">
-                    <Text
-                      numberOfLines={1}
-                      className={`text-xs font-semibold ${isUser ? 'text-white' : 'text-gray-900'}`}
-                    >
-                      {item.attachment.name || 'Document'}
-                    </Text>
-                    {item.attachment.size ? (
-                      <Text className={`text-[10px] ${isUser ? 'text-white/80' : 'text-gray-600'}`}>
-                        {item.attachment.size}
-                      </Text>
-                    ) : null}
-                  </View>
+          {isVoice ? (
+            <VoiceBubble item={item} isUser={isUser} />
+          ) : (
+            <>
+              {item.attachment && (
+                <View testID="media-card" className="mb-2 rounded-lg overflow-hidden bg-black/10 p-1">
+                  {item.attachment.type === 'photo' && item.attachment.uri ? (
+                    <View testID="media-photo-container" className="rounded overflow-hidden">
+                      {/* Thumbnail preview */}
+                      <img
+                        src={item.attachment.uri}
+                        alt={item.attachment.name || 'Photo attachment'}
+                        draggable={false}
+                        style={{ width: '100%', maxHeight: 200, objectFit: 'cover', borderRadius: 8 }}
+                      />
+                    </View>
+                  ) : (
+                    <View testID="media-doc-container" className="flex-row items-center gap-2 p-2 bg-white/20 rounded">
+                      <Text className="text-xl">📄</Text>
+                      <View className="flex-1">
+                        <Text
+                          numberOfLines={1}
+                          className={`text-xs font-semibold ${isUser ? 'text-white' : 'text-gray-900'}`}
+                        >
+                          {item.attachment.name || 'Document'}
+                        </Text>
+                        {item.attachment.size ? (
+                          <Text className={`text-[10px] ${isUser ? 'text-white/80' : 'text-gray-600'}`}>
+                            {item.attachment.size}
+                          </Text>
+                        ) : null}
+                      </View>
+                    </View>
+                  )}
                 </View>
               )}
-            </View>
-          )}
-          {Boolean(item.text) && (
-            <View className="flex-row items-start gap-2">
-              <Text
-                className={isUser ? 'text-white' : 'text-gray-900'}
-                style={{ flexShrink: 1, minWidth: 0, paddingTop: 12 }}
-              >
-                {item.text}
-              </Text>
-              <MessageCopyButton text={item.text} isUser={isUser} visible={!hoverOnly || hovered} />
-            </View>
+              {Boolean(item.text) && (
+                <View className="flex-row items-start gap-2">
+                  <Text
+                    className={isUser ? 'text-white' : 'text-gray-900'}
+                    style={{ flexShrink: 1, minWidth: 0, paddingTop: 12 }}
+                  >
+                    {item.text}
+                  </Text>
+                  <MessageCopyButton text={item.text} isUser={isUser} visible={!hoverOnly || hovered} />
+                </View>
+              )}
+            </>
           )}
         </View>
       </Animated.View>
