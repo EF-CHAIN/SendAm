@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import { Animated, Pressable, ScrollView, Text, View } from 'react-native';
+import { Animated, Platform, Pressable, ScrollView, Text, View } from 'react-native';
+import MessageCopyButton from './MessageCopyButton';
 
 const WAVEFORM_BARS = [8, 14, 20, 12, 24, 18, 10, 22, 26, 16, 20, 14, 18, 10, 16, 12, 22, 14, 8];
 
@@ -186,8 +187,9 @@ function pointFromEvent(event) {
 // A message bubble that can be dragged horizontally to the right to quote it.
 // Swiping reveals a reply arrow; releasing past the threshold notifies the
 // parent and springs the bubble back into place.
-function SwipeableBubble({ item, isUser, onReply }) {
+function SwipeableBubble({ item, isUser, onReply, hoverOnly }) {
   const isVoice = item.type === 'voice' || item.isVoice;
+  const [hovered, setHovered] = useState(false);
   const translateX = useRef(new Animated.Value(0)).current;
   const startX = useRef(0);
   const startY = useRef(0);
@@ -198,6 +200,8 @@ function SwipeableBubble({ item, isUser, onReply }) {
     outputRange: [0, 0.45, 1],
     extrapolate: 'clamp',
   });
+
+  useEffect(() => () => translateX.stopAnimation(), [translateX]);
 
   const resetBubble = () => {
     distance.current = 0;
@@ -241,11 +245,17 @@ function SwipeableBubble({ item, isUser, onReply }) {
   };
 
   return (
-    <View className={`relative ${isUser ? 'self-end' : 'self-start'} max-w-[80%]`}>
+    <View className={`relative ${isUser ? 'self-end' : 'self-start'} ${isVoice ? 'max-w-[85%]' : 'max-w-[80%]'}`}>
       <Animated.View
         testID={`swipe-row-${item.id}`}
         style={{ transform: [{ translateX }] }}
         onTouchStart={handleTouchStart}
+        onStartShouldSetResponderCapture={(event) => {
+          // Capture the origin for mouse as well as touch before a child copy
+          // button takes the responder. Recording it must not claim the press.
+          handleTouchStart(event);
+          return false;
+        }}
         onStartShouldSetResponder={() => false}
         onMoveShouldSetResponder={handleMoveShouldSetResponder}
         onResponderMove={handleResponderMove}
@@ -255,6 +265,8 @@ function SwipeableBubble({ item, isUser, onReply }) {
       >
         <View
           testID={`bubble-${item.sender}`}
+          onPointerEnter={() => setHovered(true)}
+          onPointerLeave={() => setHovered(false)}
           className={
             isUser
               ? 'bg-green-500 rounded-2xl px-3 py-2'
@@ -279,6 +291,7 @@ function SwipeableBubble({ item, isUser, onReply }) {
                   <img
                     src={item.attachment.uri}
                     alt={item.attachment.name || 'Photo attachment'}
+                    draggable={false}
                     style={{ width: '100%', maxHeight: 200, objectFit: 'cover', borderRadius: 8 }}
                   />
                 </View>
@@ -306,7 +319,15 @@ function SwipeableBubble({ item, isUser, onReply }) {
             <VoiceBubble item={item} isUser={isUser} />
           ) : (
             Boolean(item.text) && (
-              <Text className={isUser ? 'text-white' : 'text-gray-900'}>{item.text}</Text>
+              <View className="flex-row items-start gap-2">
+                <Text
+                  className={isUser ? 'text-white' : 'text-gray-900'}
+                  style={{ flexShrink: 1, minWidth: 0, paddingTop: 12 }}
+                >
+                  {item.text}
+                </Text>
+                <MessageCopyButton text={item.text} isUser={isUser} visible={!hoverOnly || hovered} />
+              </View>
             )
           )}
         </View>
@@ -338,6 +359,16 @@ export default function MessageList({
   sending = false,
   onReply,
 }) {
+  const [hoverOnly, setHoverOnly] = useState(false);
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined' || typeof window.matchMedia !== 'function') return;
+    const query = window.matchMedia('(hover: hover) and (pointer: fine)');
+    const update = () => setHoverOnly(query.matches);
+    update();
+    query.addEventListener('change', update);
+    return () => query.removeEventListener('change', update);
+  }, []);
+
   return (
     <ScrollView contentContainerClassName="px-3 py-2 gap-2">
       {messages.map((item) => {
@@ -347,7 +378,7 @@ export default function MessageList({
 
         return (
           <View key={item.id} className="gap-1.5">
-            <SwipeableBubble item={item} isUser={isUser} onReply={onReply} />
+            <SwipeableBubble item={item} isUser={isUser} onReply={onReply} hoverOnly={hoverOnly} />
 
             {/* WhatsApp interactive quick-reply pill buttons */}
             {quickReplies.length > 0 && (
