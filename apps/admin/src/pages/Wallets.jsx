@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { getAdminWallets } from '@/lib/adminApi';
 import { useListQuery } from '@/lib/useListQuery';
 import { formatDate } from '@shared/formatDate';
@@ -8,45 +8,129 @@ import Pagination from '@/components/Pagination';
 import FilterBar from '@/components/FilterBar';
 import { normalizeError } from '@shared/normalizeError.js';
 import { AlertTriangle, Copy, Check, X } from 'lucide-react';
+import { LOW_RESERVE_THRESHOLD_XLM, getWalletXlmBalance, calculateTxCapacity } from '@/lib/walletReserve';
 
-export const LOW_RESERVE_THRESHOLD_XLM = 20;
-// Stellar base fee per transaction is 100 stroops (0.00001 XLM)
-export const STELLAR_BASE_FEE_XLM = 0.00001;
-const STROOPS_PER_XLM = 10_000_000;
-const BASE_FEE_STROOPS = 100;
+// ---------------------------------------------------------------------------
+// ReserveAllocationGauge — stacked horizontal progress bar that shows the
+// treasury reserve ratio across three custody tiers.
+//
+// Tier definitions (derived from wallet.network + wallet.fundingState):
+//   Hot Reserve   – funded wallets on the stellar mainnet / testnet
+//   Channel Accts – pending wallets (payment channel pre-funding queue)
+//   Escrow Vaults – any non-stellar wallet or explicitly cold-custody entries
+// ---------------------------------------------------------------------------
+const TIERS = [
+  {
+    key: 'hot',
+    label: 'Hot Reserve',
+    color: 'bg-emerald-500',
+    legendColor: 'bg-emerald-500',
+    textColor: 'text-emerald-700',
+    match: (w) => (w.network === 'stellar' || w.network === 'stellar-testnet') && w.fundingState === 'funded',
+  },
+  {
+    key: 'channel',
+    label: 'Channel Accounts',
+    color: 'bg-blue-500',
+    legendColor: 'bg-blue-500',
+    textColor: 'text-blue-700',
+    match: (w) => w.fundingState === 'pending',
+  },
+  {
+    key: 'escrow',
+    label: 'Escrow Vaults',
+    color: 'bg-purple-500',
+    legendColor: 'bg-purple-500',
+    textColor: 'text-purple-700',
+    match: (w) => !TIERS[0].match(w) && !TIERS[1].match(w),
+  },
+];
 
-export function getWalletXlmBalance(wallet) {
-  if (!wallet) return null;
-  if (wallet.xlmBalance !== undefined && wallet.xlmBalance !== null) {
-    const val = Number(wallet.xlmBalance);
-    return isNaN(val) ? null : val;
-  }
-  if (wallet.balance !== undefined && wallet.balance !== null) {
-    const val = Number(wallet.balance);
-    return isNaN(val) ? null : val;
-  }
-  if (wallet.nativeBalance !== undefined && wallet.nativeBalance !== null) {
-    const val = Number(wallet.nativeBalance);
-    return isNaN(val) ? null : val;
-  }
-  if (Array.isArray(wallet.balances)) {
-    const native = wallet.balances.find((b) => b.asset_type === 'native' || b.asset === 'XLM');
-    if (native) {
-      const val = Number(native.balance || native.amount || 0);
-      return isNaN(val) ? null : val;
-    }
-  }
-  return null;
+function ReserveAllocationGauge({ wallets }) {
+  const counts = useMemo(() => {
+    const result = TIERS.map((tier) => ({
+      ...tier,
+      count: wallets.filter(tier.match).length,
+    }));
+    return result;
+  }, [wallets]);
+
+  const total = counts.reduce((s, t) => s + t.count, 0);
+  const isEmpty = total === 0;
+
+  return (
+    <section
+      aria-labelledby="reserve-gauge-heading"
+      className="bg-white border border-gray-200 rounded-xl p-4 sm:p-5 mb-6"
+    >
+      <h2 id="reserve-gauge-heading" className="text-sm font-semibold text-gray-700 mb-3">
+        Treasury Reserve Allocation
+      </h2>
+
+      {/* Stacked progress bar */}
+      <div
+        className="flex h-5 w-full rounded-full overflow-hidden bg-gray-100"
+        role="group"
+        aria-label="Reserve ratio across custody tiers"
+      >
+        {isEmpty ? (
+          <div className="flex-1 bg-gray-200 rounded-full" role="img" aria-label="No wallets loaded" />
+        ) : (
+          counts.map((tier) => {
+            const pct = total > 0 ? Math.round((tier.count / total) * 100) : 0;
+            if (pct === 0) return null;
+            return (
+              <div
+                key={tier.key}
+                className={`${tier.color} transition-all duration-500`}
+                style={{ width: `${pct}%` }}
+                role="progressbar"
+                aria-label={`${tier.label}: ${pct}% (${tier.count} wallet${tier.count !== 1 ? 's' : ''})`}
+                aria-valuenow={pct}
+                aria-valuemin={0}
+                aria-valuemax={100}
+              />
+            );
+          })
+        )}
+      </div>
+
+      {/* Legend + numerical totals */}
+      <dl className="mt-3 flex flex-wrap gap-x-6 gap-y-2">
+        {counts.map((tier) => {
+          const pct = total > 0 ? Math.round((tier.count / total) * 100) : 0;
+          return (
+            <div key={tier.key} className="flex items-center gap-2">
+              <span
+                className={`inline-block w-3 h-3 rounded-sm ${tier.legendColor} shrink-0`}
+                aria-hidden="true"
+              />
+              <dt className="sr-only">{tier.label}</dt>
+              <dd className="text-xs text-gray-600">
+                <span className={`font-semibold ${tier.textColor}`}>{tier.label}</span>
+                {' — '}
+                <span className="font-mono">{tier.count}</span>
+                {total > 0 && (
+                  <span className="text-gray-400"> ({pct}%)</span>
+                )}
+              </dd>
+            </div>
+          );
+        })}
+        {total > 0 && (
+          <div className="flex items-center gap-2 ml-auto">
+            <dt className="text-xs text-gray-500">Total</dt>
+            <dd className="text-xs font-semibold text-gray-700 font-mono">{total}</dd>
+          </div>
+        )}
+      </dl>
+    </section>
+  );
 }
 
-export function calculateTxCapacity(xlmBalance) {
-  if (xlmBalance === null || isNaN(xlmBalance)) return null;
-  // Available above 1 XLM minimum base reserve. Done in integer stroops because
-  // dividing XLM floats (e.g. 1 / 0.00001) lands just below the true integer.
-  const spendableStroops = Math.max(0, Math.round((xlmBalance - 1) * STROOPS_PER_XLM));
-  return Math.floor(spendableStroops / BASE_FEE_STROOPS);
-}
-
+// ---------------------------------------------------------------------------
+// Wallets page
+// ---------------------------------------------------------------------------
 export default function Wallets() {
   const { params, getFilter, setFilter, resetFilters, goNext, goPrev } = useListQuery(['phone', 'chain', 'fundingState']);
   const [wallets, setWallets] = useState([]);
@@ -189,6 +273,7 @@ export default function Wallets() {
         </div>
       ) : (
         <>
+          <ReserveAllocationGauge wallets={wallets} />
           {lowReserveWallets.length > 0 && (
             <div
               role="region"
@@ -322,3 +407,4 @@ export default function Wallets() {
     </div>
   );
 }
+

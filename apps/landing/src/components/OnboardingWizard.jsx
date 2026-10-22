@@ -1,81 +1,20 @@
 import { useState, useEffect, useRef } from 'react';
-import { Smartphone, Lock, Send, CheckCircle2, ArrowRight, ArrowLeft, RefreshCw, Sparkles, ChevronDown } from 'lucide-react';
+import { Smartphone, Lock, Send, CheckCircle2, ArrowRight, ArrowLeft, RefreshCw, Sparkles, Camera, ChevronDown } from 'lucide-react';
 import { whatsappUrl } from '@/lib/links.js';
+import { compressImageForUpload } from '@/lib/imageCompression.js';
+import { COUNTRY_PRESETS, formatE164 } from '@/lib/phoneFormat.js';
+
+const IDLE_DOCUMENT = { status: 'idle', progress: 0, sizeKb: 0, blob: null, message: '' };
 
 const STORAGE_KEY = 'sendam_onboarding_draft_v1';
 const DEFAULT_AMOUNT = '25.00';
 const DEFAULT_RECIPIENT = '+233 241 987 654';
-
-/** Supported country presets with flag emoji, dial code, and national formatting.
- *  Spaces are inserted according to each country's standard national pattern.
- */
-export const COUNTRY_PRESETS = [
-  {
-    code: 'NG',
-    flag: '🇳🇬',
-    name: 'Nigeria',
-    dialCode: '+234',
-    pattern: /^(\d{0,3})(\d{0,3})(\d{0,4})$/,
-    format: (d) => [d.slice(0,3), d.slice(3,6), d.slice(6,10)].filter(Boolean).join(' '),
-    regex: /^\+234\d{10}$/,
-    placeholder: '+234 801 234 5678',
-  },
-  {
-    code: 'GH',
-    flag: '🇬🇭',
-    name: 'Ghana',
-    dialCode: '+233',
-    format: (d) => [d.slice(0,2), d.slice(2,5), d.slice(5,9)].filter(Boolean).join(' '),
-    regex: /^\+233\d{9}$/,
-    placeholder: '+233 24 198 7654',
-  },
-  {
-    code: 'KE',
-    flag: '🇰🇪',
-    name: 'Kenya',
-    dialCode: '+254',
-    format: (d) => [d.slice(0,3), d.slice(3,6), d.slice(6,9)].filter(Boolean).join(' '),
-    regex: /^\+254\d{9}$/,
-    placeholder: '+254 712 345 678',
-  },
-  {
-    code: 'GB',
-    flag: '🇬🇧',
-    name: 'United Kingdom',
-    dialCode: '+44',
-    format: (d) => [d.slice(0,4), d.slice(4,7), d.slice(7,11)].filter(Boolean).join(' '),
-    regex: /^\+44\d{10}$/,
-    placeholder: '+44 7911 123 456',
-  },
-  {
-    code: 'US',
-    flag: '🇺🇸',
-    name: 'United States',
-    dialCode: '+1',
-    format: (d) => [d.slice(0,3), d.slice(3,6), d.slice(6,10)].filter(Boolean).join(' '),
-    regex: /^\+1\d{10}$/,
-    placeholder: '+1 202 555 0123',
-  },
-];
 
 const DEFAULT_COUNTRY = COUNTRY_PRESETS[0]; // Nigeria
 
 /** Strip non-digit characters from a phone string. */
 function digitsOnly(str) {
   return str.replace(/\D/g, '');
-}
-
-/** Auto-format digits into national spacing pattern, prefixed with dial code. */
-export function formatE164(rawDigits, country) {
-  let digits = rawDigits.replace(/\D/g, '');
-  const dialDigits = country.dialCode.replace(/\D/g, '');
-  if (digits.startsWith(dialDigits)) {
-    digits = digits.slice(dialDigits.length);
-  }
-  digits = digits.slice(0, 12);
-  if (!digits) return country.dialCode;
-  const formatted = country.format(digits);
-  return `${country.dialCode} ${formatted}`;
 }
 
 /** Compound phone picker: flag dropdown + auto-formatting number input. */
@@ -257,6 +196,21 @@ export default function OnboardingWizard() {
   const [recipient, setRecipient] = useState(initialDraft?.recipient ?? DEFAULT_RECIPIENT);
   const [simulating, setSimulating] = useState(false);
   const [completed, setCompleted] = useState(false);
+  const [idDocument, setIdDocument] = useState(IDLE_DOCUMENT);
+
+  const handleIdDocumentChange = async (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    setIdDocument({ ...IDLE_DOCUMENT, status: 'compressing' });
+    try {
+      const blob = await compressImageForUpload(file, {
+        onProgress: (progress) => setIdDocument((current) => ({ ...current, progress })),
+      });
+      setIdDocument({ status: 'ready', progress: 100, sizeKb: Math.round(blob.size / 1024), blob, message: '' });
+    } catch (err) {
+      setIdDocument({ ...IDLE_DOCUMENT, status: 'error', message: err.message });
+    }
+  };
   const [showDraftBanner, setShowDraftBanner] = useState(Boolean(initialDraft));
 
   useEffect(() => {
@@ -429,6 +383,50 @@ export default function OnboardingWizard() {
                         phone={phone}
                         onPhoneChange={setPhone}
                       />
+                    </div>
+                    <div>
+                      <label htmlFor="wizard-id-document" className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-2">
+                        Identity Document Photo (optional)
+                      </label>
+                      <input
+                        id="wizard-id-document"
+                        type="file"
+                        accept="image/*"
+                        onChange={handleIdDocumentChange}
+                        className="block w-full max-w-md text-sm text-slate-600 file:mr-3 file:rounded-lg file:border-0 file:bg-slate-100 file:px-3 file:py-2 file:font-semibold file:text-slate-700 hover:file:bg-slate-200"
+                      />
+                      <p className="mt-2 text-xs text-slate-500 max-w-md">
+                        Large camera photos are shrunk on your device to under 1 MB before upload.
+                      </p>
+                      {idDocument.status === 'compressing' && (
+                        <div className="mt-3 max-w-md">
+                          <div
+                            role="progressbar"
+                            aria-label="Compressing identity photo"
+                            aria-valuemin={0}
+                            aria-valuemax={100}
+                            aria-valuenow={idDocument.progress}
+                            className="h-2 w-full overflow-hidden rounded-full bg-slate-200"
+                          >
+                            <div
+                              className="h-full bg-primary transition-all duration-200"
+                              style={{ width: `${idDocument.progress}%` }}
+                            />
+                          </div>
+                          <p className="mt-1 text-xs text-slate-500">Compressing photo… {idDocument.progress}%</p>
+                        </div>
+                      )}
+                      {idDocument.status === 'ready' && (
+                        <p role="status" className="mt-3 inline-flex items-center gap-2 text-xs font-semibold text-emerald-700">
+                          <Camera className="w-4 h-4" aria-hidden="true" />
+                          Photo ready to upload ({idDocument.sizeKb} KB)
+                        </p>
+                      )}
+                      {idDocument.status === 'error' && (
+                        <p role="alert" className="mt-3 text-xs font-semibold text-red-700">
+                          {idDocument.message}
+                        </p>
+                      )}
                     </div>
                     <div className="p-4 bg-emerald-50/70 border border-emerald-200/60 rounded-xl flex items-start gap-3">
                       <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0 mt-0.5" />

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Link } from 'react-router-dom';
-import { Globe, Menu, MessageCircle, X } from 'lucide-react';
+import { Globe, Menu, MessageCircle, Moon, Sun, X } from 'lucide-react';
 import { whatsappUrl } from '@/lib/links.js';
 import { LANGUAGES, useI18n } from '@/lib/i18n.js';
 
@@ -39,7 +39,7 @@ const getDrawerLinkClass = (isActive) =>
       : 'border-transparent text-slate-700 hover:bg-slate-50 hover:text-primary'
   }`;
 
-export default function Navbar() {
+export default function Navbar({ theme = 'light', onToggleTheme } = {}) {
   const [open, setOpen] = useState(false);
   const [activeSection, setActiveSection] = useState('');
   const [shown, setShown] = useState(false);
@@ -221,6 +221,18 @@ export default function Navbar() {
             <span className="hidden sm:inline">{t('nav.openWhatsApp')}</span>
             <span className="sm:hidden">{t('nav.start')}</span>
           </a>
+
+          {onToggleTheme && (
+            <button
+              type="button"
+              onClick={onToggleTheme}
+              aria-label={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
+              title={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
+              className="inline-flex h-10 w-10 items-center justify-center rounded-lg text-slate-700 transition-colors hover:bg-slate-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
+            >
+              {theme === 'dark' ? <Sun size={18} aria-hidden="true" /> : <Moon size={18} aria-hidden="true" />}
+            </button>
+          )}
 
           <button
             ref={toggleRef}
