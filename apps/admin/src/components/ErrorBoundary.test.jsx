@@ -563,4 +563,39 @@ describe('SystemHealth — data fetch error', () => {
     expect(await screen.findByText('System Health')).toBeInTheDocument();
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
+
+  it('groups health metrics and exposes refresh controls', async () => {
+    server.use(
+      http.get('*/api/admin/system-health', () => {
+        return HttpResponse.json({
+          data: {
+            api: 'ok',
+            database: 'ok',
+            redis: 'degraded',
+            workers: 'ok',
+            stellarHorizon: 'ok',
+            ramps: 'down',
+            uptime: '99.98%',
+            memory: '71%',
+            timestamp: new Date().toISOString(),
+          },
+        });
+      })
+    );
+
+    render(
+      <MemoryRouter>
+        <SystemHealth />
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByText('System Health')).toBeInTheDocument();
+    expect(screen.getByText('Core Services')).toBeInTheDocument();
+    expect(screen.getByText('Payment Rails')).toBeInTheDocument();
+    expect(screen.getByText('Process Metrics')).toBeInTheDocument();
+    expect(screen.getByText('Database')).toBeInTheDocument();
+    expect(screen.getByText('Refresh')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /auto refresh/i })).toBeInTheDocument();
+    expect(screen.getByLabelText(/refresh interval/i)).toBeInTheDocument();
+  });
 });
