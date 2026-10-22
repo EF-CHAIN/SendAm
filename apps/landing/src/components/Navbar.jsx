@@ -1,13 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Link } from 'react-router-dom';
-import { Menu, MessageCircle, X } from 'lucide-react';
+import { Globe, Menu, MessageCircle, X } from 'lucide-react';
 import { whatsappUrl } from '@/lib/links.js';
+import { LANGUAGES, useI18n } from '@/lib/i18n.js';
 
 const SECTION_LINKS = [
-  { href: '#features', label: 'Features' },
-  { href: '#how-it-works', label: 'How it works' },
-  { href: '#faq', label: 'FAQ' },
+  { href: '#features', labelKey: 'nav.features' },
+  { href: '#how-it-works', labelKey: 'nav.howItWorks' },
+  { href: '#faq', labelKey: 'nav.faq' },
 ];
 
 const DRAWER_ID = 'mobile-nav-drawer';
@@ -26,8 +27,10 @@ const drawerLinkClass =
 
 export default function Navbar() {
   const [open, setOpen] = useState(false);
+  const [shown, setShown] = useState(false);
   const toggleRef = useRef(null);
   const drawerRef = useRef(null);
+  const { lang, setLang, t } = useI18n();
 
   const close = useCallback(() => setOpen(false), []);
 
@@ -70,6 +73,16 @@ export default function Navbar() {
     };
   }, [open]);
 
+  // Mount closed, then flip on the next frame so the backdrop fades in.
+  useEffect(() => {
+    if (!open) return undefined;
+    const frame = requestAnimationFrame(() => setShown(true));
+    return () => {
+      cancelAnimationFrame(frame);
+      setShown(false);
+    };
+  }, [open]);
+
   // Leaving the mobile layout (rotating a tablet, resizing) must not leave the
   // scroll lock behind a menu that is no longer visible.
   useEffect(() => {
@@ -102,17 +115,33 @@ export default function Navbar() {
         </Link>
 
         <div className="hidden items-center gap-7 md:flex">
-          {SECTION_LINKS.map(({ href, label }) => (
+          {SECTION_LINKS.map(({ href, labelKey }) => (
             <a key={href} href={href} className={desktopLinkClass}>
-              {label}
+              {t(labelKey)}
             </a>
           ))}
           <Link to="/onboarding" className={desktopLinkClass}>
-            Onboarding
+            {t('nav.onboarding')}
           </Link>
         </div>
 
         <div className="flex items-center gap-2">
+          <div className="hidden items-center gap-1 rounded-lg border border-slate-200 px-2 py-1.5 text-slate-600 transition-colors focus-within:border-primary hover:border-slate-300 sm:flex">
+            <Globe size={15} aria-hidden="true" className="shrink-0" />
+            <select
+              value={lang}
+              onChange={(event) => setLang(event.target.value)}
+              aria-label={t('nav.language')}
+              className="cursor-pointer rounded bg-transparent text-sm font-medium outline-none focus-visible:ring-2 focus-visible:ring-primary"
+            >
+              {LANGUAGES.map(({ code, nativeLabel }) => (
+                <option key={code} value={code}>
+                  {nativeLabel}
+                </option>
+              ))}
+            </select>
+          </div>
+
           <a
             href={whatsappUrl('create wallet')}
             target="_blank"
@@ -120,14 +149,14 @@ export default function Navbar() {
             className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-whatsapp focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-whatsapp"
           >
             <MessageCircle size={16} aria-hidden="true" />
-            <span className="hidden sm:inline">Open WhatsApp</span>
-            <span className="sm:hidden">Start</span>
+            <span className="hidden sm:inline">{t('nav.openWhatsApp')}</span>
+            <span className="sm:hidden">{t('nav.start')}</span>
           </a>
 
           <button
             ref={toggleRef}
             type="button"
-            aria-label={open ? 'Close menu' : 'Open menu'}
+            aria-label={open ? t('nav.closeMenu') : t('nav.openMenu')}
             aria-expanded={open}
             aria-controls={DRAWER_ID}
             onClick={() => setOpen((value) => !value)}
@@ -145,7 +174,7 @@ export default function Navbar() {
           <div className="fixed inset-0 z-50 md:hidden">
             <div
               data-testid="nav-backdrop"
-              className="absolute inset-0 bg-slate-900/40"
+              className={`absolute inset-0 bg-slate-900/40 backdrop-blur-md transition-opacity duration-300 motion-reduce:transition-none ${shown ? 'opacity-100' : 'opacity-0'}`}
               aria-hidden="true"
               onClick={close}
             />
@@ -154,14 +183,14 @@ export default function Navbar() {
               id={DRAWER_ID}
               role="dialog"
               aria-modal="true"
-              aria-label="Site navigation"
+              aria-label={t('nav.siteNavigation')}
               className="absolute inset-y-0 right-0 flex w-72 max-w-[85vw] flex-col gap-1 bg-white p-4 shadow-xl"
             >
               <div className="mb-2 flex items-center justify-between">
-                <span className="text-base font-bold text-primary">Menu</span>
+                <span className="text-base font-bold text-primary">{t('nav.menu')}</span>
                 <button
                   type="button"
-                  aria-label="Close menu"
+                  aria-label={t('nav.closeMenu')}
                   onClick={close}
                   className="inline-flex h-10 w-10 items-center justify-center rounded-lg text-slate-700 hover:bg-slate-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
                 >
@@ -169,19 +198,35 @@ export default function Navbar() {
                 </button>
               </div>
 
-              {SECTION_LINKS.map(({ href, label }) => (
+              {SECTION_LINKS.map(({ href, labelKey }) => (
                 <a
                   key={href}
                   href={href}
                   className={drawerLinkClass}
                   onClick={(event) => handleSectionClick(event, href)}
                 >
-                  {label}
+                  {t(labelKey)}
                 </a>
               ))}
               <Link to="/onboarding" className={drawerLinkClass} onClick={close}>
-                Onboarding
+                {t('nav.onboarding')}
               </Link>
+
+              <div className="mt-2 flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-slate-600">
+                <Globe size={15} aria-hidden="true" className="shrink-0" />
+                <select
+                  value={lang}
+                  onChange={(event) => setLang(event.target.value)}
+                  aria-label={t('nav.language')}
+                  className="w-full cursor-pointer rounded bg-transparent text-sm font-medium outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                >
+                  {LANGUAGES.map(({ code, nativeLabel }) => (
+                    <option key={code} value={code}>
+                      {nativeLabel}
+                    </option>
+                  ))}
+                </select>
+              </div>
 
               <a
                 href={whatsappUrl('create wallet')}
@@ -191,7 +236,7 @@ export default function Navbar() {
                 className="mt-4 inline-flex items-center justify-center gap-2 rounded-lg bg-primary px-4 py-3 text-sm font-semibold text-white transition-colors hover:bg-whatsapp focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-whatsapp"
               >
                 <MessageCircle size={16} aria-hidden="true" />
-                Open WhatsApp
+                {t('nav.openWhatsApp')}
               </a>
             </div>
           </div>,

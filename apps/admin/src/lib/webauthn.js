@@ -21,6 +21,13 @@ export const STEP_UP_TIMEOUT_MS = 60_000;
 // The API records this so the audit trail shows the operation was performed
 // without a biometric signature rather than silently treating it as verified.
 export const STEP_UP_FALLBACK_UNSUPPORTED = 'unsupported_device';
+// Secondary-factor fallbacks for when the device *does* expose WebAuthn but
+// the prompt itself failed (sensor fault, cancelled/timed-out assertion):
+// a TOTP code from the operator's authenticator app, or one of the backup
+// recovery keys issued at enrolment. The API treats either as a step-up with
+// no biometric signature, recorded with its own fallback reason.
+export const STEP_UP_FALLBACK_TOTP = 'totp_code';
+export const STEP_UP_FALLBACK_RECOVERY = 'recovery_code';
 
 const GENERIC_ACTION = {
   id: 'high-risk-action',

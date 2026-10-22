@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import Login from './Login';
@@ -19,6 +19,14 @@ const renderLogin = () => {
   );
 };
 
+const fireCapsLockEvent = (element, type, capsLockOn) => {
+  const event = new KeyboardEvent(type, { bubbles: true });
+  Object.defineProperty(event, 'getModifierState', {
+    value: (modifier) => modifier === 'CapsLock' && capsLockOn,
+  });
+  fireEvent(element, event);
+};
+
 describe('Login Component', () => {
   beforeEach(() => {
     localStorage.clear();
@@ -30,17 +38,26 @@ describe('Login Component', () => {
     expect(screen.getByRole('button', { name: /sign in/i })).toBeInTheDocument();
   });
 
-  it('toggles password visibility with an accessible control', async () => {
+  it('toggles password visibility without changing the entered password', async () => {
     const user = userEvent.setup();
     renderLogin();
     const passwordInput = screen.getByLabelText('Password');
+    const toggleButton = screen.getByRole('button', { name: 'Show password' });
 
+    await user.type(passwordInput, 'correct_password');
     expect(passwordInput).toHaveAttribute('type', 'password');
-    await user.click(screen.getByRole('button', { name: 'Show password' }));
+    expect(passwordInput).toHaveValue('correct_password');
+    expect(toggleButton).toHaveAttribute('type', 'button');
+
+    await user.click(toggleButton);
     expect(passwordInput).toHaveAttribute('type', 'text');
+    expect(passwordInput).toHaveValue('correct_password');
+    expect(screen.getByRole('button', { name: 'Hide password' })).toHaveFocus();
 
-    await user.click(screen.getByRole('button', { name: 'Hide password' }));
+    await user.keyboard('{Enter}');
     expect(passwordInput).toHaveAttribute('type', 'password');
+    expect(passwordInput).toHaveValue('correct_password');
+    expect(screen.getByRole('button', { name: 'Show password' })).toHaveFocus();
   });
 
   it('shows a spinner and disables submit while authenticating', async () => {
@@ -69,6 +86,29 @@ describe('Login Component', () => {
     await waitFor(() => {
       expect(screen.getByTestId('dashboard')).toBeInTheDocument();
     });
+  });
+
+  it('shows and clears the Caps Lock warning as the password field state changes', () => {
+    renderLogin();
+    const passwordInput = screen.getByLabelText('Password');
+
+    fireCapsLockEvent(passwordInput, 'keydown', true);
+    expect(screen.getByRole('status')).toHaveTextContent('Caps Lock is on');
+    expect(passwordInput).toHaveAttribute('aria-describedby', 'login-caps-lock-warning');
+
+    fireCapsLockEvent(passwordInput, 'keyup', false);
+    expect(screen.queryByRole('status')).not.toBeInTheDocument();
+    expect(passwordInput).not.toHaveAttribute('aria-describedby');
+
+    fireCapsLockEvent(passwordInput, 'keydown', true);
+    expect(screen.getByRole('status')).toBeInTheDocument();
+    fireEvent.focus(passwordInput);
+    expect(screen.queryByRole('status')).not.toBeInTheDocument();
+
+    fireCapsLockEvent(passwordInput, 'keydown', true);
+    expect(screen.getByRole('status')).toBeInTheDocument();
+    fireEvent.blur(passwordInput);
+    expect(screen.queryByRole('status')).not.toBeInTheDocument();
   });
 
   it('handles successful login and redirects to dashboard', async () => {

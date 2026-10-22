@@ -3,6 +3,37 @@ import { normalizeError } from './normalizeError.js';
 import { logger } from './logger.js';
 import ErrorFallback from './ErrorFallback.jsx';
 
+// Only these bounded, redacted strings may be shown or copied. Never serialize
+// the thrown object: request/response data can contain credentials and PII.
+function sanitizeDiagnostic(value, fallback = 'Not available') {
+  if (typeof value !== 'string' || !value.trim()) return fallback;
+  return value
+    .replace(/-----BEGIN [^-]*PRIVATE KEY-----[\s\S]*?-----END [^-]*PRIVATE KEY-----/g, '[REDACTED]')
+    .replace(/\b(?:authorization|set-cookie|cookie)\s*[:=][^\r\n]+/gi, '[REDACTED]')
+    .replace(/\bBearer\s+[^\s,;]+/gi, 'Bearer [REDACTED]')
+    .replace(/(["']?(?:password|access[_ -]?token|refresh[_ -]?token|token|api[_ -]?key|private[_ -]?key|secret|seed|pin)["']?\s*[:=]\s*)(?:"[^"]*"|'[^']*'|[^\s,;]+)/gi, '$1[REDACTED]')
+    .replace(/\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g, '[REDACTED]')
+    .replace(/\bS[A-Z2-7]{55}\b/g, '[REDACTED]')
+    .replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, '[REDACTED]')
+    .replace(/\b(?:https?|file|webpack(?:-internal)?):\/\/[^\s)]+/gi, '[URL]')
+    .replace(/\b[A-Z]:[\\/][^\r\n)]+|(?<![\w])(?:\/[^\s/()]+)+/gi, '[path]')
+    .slice(0, 6000);
+}
+
+function buildDiagnostics(error, componentStack) {
+  // Accessors on arbitrary thrown values may themselves throw.
+  const read = (key) => {
+    try { return error?.[key]; } catch { return undefined; }
+  };
+  return [
+    `Error name: ${sanitizeDiagnostic(read('name'), 'Error')}`,
+    `Message: ${sanitizeDiagnostic(typeof error === 'string' ? error : read('message'))}`,
+    `Stack:\n${sanitizeDiagnostic(read('stack'))}`,
+    `Component stack:\n${sanitizeDiagnostic(componentStack)}`,
+    `Browser user agent: ${sanitizeDiagnostic(typeof navigator === 'undefined' ? '' : navigator.userAgent)}`,
+  ].join('\n\n');
+}
+
 /**
  * ErrorBoundary — React class component error boundary.
  *
@@ -18,9 +49,10 @@ import ErrorFallback from './ErrorFallback.jsx';
  *
  * SECURITY:
  *  - Normalizes all thrown values before rendering
- *  - Only renders the sanitized userMessage in the UI
+ *  - Keeps the default recovery copy generic
+ *  - Exposes only redacted text diagnostics in the opt-in technical details
  *  - Logs internal diagnostics (correlation ID, error category, path) to
- *    console; never exposes stack traces, raw messages, or tokens to the user
+ *    console; never renders the internal diagnostic object or response payloads
  *  - In development React already logs full stack details to console
  *
  * @prop {'admin'|'landing'} [variant='landing'] - Controls fallback UI navigation
@@ -33,6 +65,8 @@ export default class ErrorBoundary extends Component {
     this.state = {
       hasError: false,
       normalized: null,
+      diagnostics: '',
+      retryCount: 0,
     };
     this.handleReset = this.handleReset.bind(this);
   }
@@ -46,15 +80,16 @@ export default class ErrorBoundary extends Component {
 
   componentDidCatch(error, errorInfo) {
     const normalized = normalizeError(error);
+    this.setState({ diagnostics: buildDiagnostics(error, errorInfo?.componentStack) });
 
-    // Internal logging — safe diagnostics only, no stack trace rendered to UI.
+    // Logging remains separate from the explicitly sanitized support report.
     logger.error('ErrorBoundary caught a render error', {
       category: normalized.category,
       correlationId: normalized.correlationId,
       internal: normalized.internal,
       // componentStack is available for dev tooling; it contains component
-      // names (which may include file paths in dev builds). We log it only
-      // to the console, never render it.
+      // names (which may include file paths in dev builds). The support report
+      // above strips those paths before it can be displayed or copied.
       componentStack: errorInfo?.componentStack
         ? errorInfo.componentStack.slice(0, 400)
         : undefined,
@@ -75,7 +110,9 @@ export default class ErrorBoundary extends Component {
     logger.info('ErrorBoundary reset — user triggered retry', {
       correlationId: this.state.normalized?.correlationId ?? null,
     });
-    this.setState({ hasError: false, normalized: null });
+    this.setState((state) => ({
+      hasError: false, normalized: null, diagnostics: '', retryCount: state.retryCount + 1,
+    }));
   }
 
   render() {
@@ -90,8 +127,10 @@ export default class ErrorBoundary extends Component {
 
       return (
         <ErrorFallback
+          key={this.state.retryCount}
           variant={this.props.variant ?? 'landing'}
           onReset={this.handleReset}
+          diagnostics={this.state.diagnostics}
         />
       );
     }
