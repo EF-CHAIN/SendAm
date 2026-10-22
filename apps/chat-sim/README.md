@@ -82,6 +82,7 @@ Equivalent commands from inside `apps/chat-sim`:
    machine: current state, context JSON, and a timeline you can click to roll back to an earlier
    snapshot.
 4. **Switch Account** clears the local session so you can start over as another number.
+5. **Attachments & Media Preview**: Use the paperclip (📎) menu to attach a **Photo** or **Document** (e.g. for identity verification or receipt submission). Selecting a file opens an inline media preview bubble with caption support before sending, rendering a photo thumbnail or document card into the chat thread.
 
 Voice input (**MIC**) and spoken replies (**Voice TTS**) use the Web Speech API, so they work in
 the browser build only; on native builds `MIC` reports that speech recognition is unavailable.

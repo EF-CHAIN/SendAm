@@ -1,5 +1,5 @@
 import { act, create } from 'react-test-renderer';
-import { BackHandler } from 'react-native';
+import { Alert, BackHandler } from 'react-native';
 import ChatScreen from '../ChatScreen';
 import EmojiPicker from '../EmojiPicker';
 
@@ -104,7 +104,9 @@ it('dismisses without changing the draft via close, outside press and Android ba
 it('clears the picker and selection when switching accounts', async () => {
   await draft('old draft');
   await press('Choose emoji');
+  const alert = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
   await act(async () => renderer.root.findByProps({ testID: 'reset-session-button' }).props.onPress());
+  await act(async () => alert.mock.calls.at(-1)[2].find(button => button.text === 'Reset').onPress());
   expect(pickerIsOpen()).toBe(false);
   await act(async () => renderer.root.findByProps({ placeholder: '+2348000000001' }).props.onChangeText('+2348000000002'));
   await act(async () => renderer.root.findByProps({ placeholder: '+2348000000001' }).props.onSubmitEditing());
@@ -149,4 +151,27 @@ it('keeps quick replies usable after emoji insertion and closes the picker on se
     expect(byLabel('Message').props.value).toBe('');
     expect(byLabel('Message').props.selection).toEqual({ start: 0, end: 0 });
   } finally { global.fetch = originalFetch; }
+});
+
+
+it('inserts into an attachment caption without changing the saved message draft', async () => {
+  await draft('saved draft');
+  await act(async () => renderer.root.findByProps({ testID: 'paperclip-button' }).props.onPress());
+  await act(async () => renderer.root.findByProps({ testID: 'attach-doc-button' }).props.onPress());
+  await draft('receipt ', 8);
+  await press('Choose emoji');
+  await press('Currency');
+  await press('Insert Naira symbol');
+  expect(byLabel('Message').props.value).toBe('receipt \u20a6');
+  await act(async () => renderer.root.findByProps({ testID: 'cancel-attachment-button' }).props.onPress());
+  expect(byLabel('Message').props.value).toBe('saved draft');
+});
+
+it('closes the picker when voice recording starts and cancels recording cleanly', async () => {
+  await press('Choose emoji');
+  await act(async () => renderer.root.findByProps({ testID: 'mic-button' }).props.onLongPress());
+  expect(pickerIsOpen()).toBe(false);
+  expect(renderer.root.findByProps({ testID: 'audio-recording-bar' })).toBeTruthy();
+  await act(async () => renderer.root.findByProps({ testID: 'cancel-recording-button' }).props.onPress());
+  expect(renderer.root.findAllByProps({ testID: 'audio-recording-bar' })).toHaveLength(0);
 });

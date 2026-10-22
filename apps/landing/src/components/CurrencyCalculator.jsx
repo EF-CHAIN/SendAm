@@ -1,5 +1,7 @@
+import { useEffect, useRef, useState, useId } from 'react';
+import { AlertTriangle, ArrowRight, CheckCircle2, TrendingDown, RefreshCw, Zap } from 'lucide-react';
 import { useState, useId } from 'react';
-import { ArrowRight, ArrowLeftRight, CheckCircle2, TrendingDown, RefreshCw, Zap } from 'lucide-react';
+import { ArrowRight, ArrowLeftRight, CheckCircle2, ChevronDown, TrendingDown, RefreshCw, Zap } from 'lucide-react';
 import { whatsappUrl } from '@/lib/links.js';
 import {
   SOURCE_CURRENCIES,
@@ -7,7 +9,34 @@ import {
   PRESET_AMOUNTS,
   getExchangeRate,
 } from '@/lib/currencyConstants.js';
+import { calculateQuote, SENDAM_FEE_BPS, TRADITIONAL_FEE_BPS } from '@/lib/currencyCalculator.js';
 
+// How long a quoted rate is shown before the calculator refreshes it, and how
+// old it may grow before users are warned instead of silently shown it.
+const RATE_REFRESH_INTERVAL_S = 30;
+const RATE_STALE_AFTER_MS = 60_000;
+
+/** The refresh seam. The landing page quotes from the bundled indicative
+ * table today, so refreshing resolves to a fresh read of it; a live rates
+ * endpoint slots in here without touching the countdown machinery. */
+async function defaultRefreshRates() {
+  return EXCHANGE_RATES;
+}
+
+export default function CurrencyCalculator({ refreshRates = defaultRefreshRates }) {
+  const [amount, setAmount] = useState('100');
+  const [sourceCurrency, setSourceCurrency] = useState('USD');
+  const [targetCurrency, setTargetCurrency] = useState('NGN');
+  // Freshness machinery (#716): when the current quote was obtained, the
+  // countdown to the next refresh, and whether the last refresh failed.
+  const [secondsToRefresh, setSecondsToRefresh] = useState(RATE_REFRESH_INTERVAL_S);
+  const [rateStatus, setRateStatus] = useState('live'); // 'live' | 'refreshing' | 'failed'
+  const [isPastStaleAge, setIsPastStaleAge] = useState(false);
+  const refreshingRef = useRef(false);
+  // Mirrors lastRefreshedAt for the interval callback: a state update only
+  // reaches the next effect run, so without the ref the tick right after a
+  // refresh still sees the old timestamp and fires a second refresh.
+  const lastRefreshedAtRef = useRef(null);
 // Every currency the calculator can display, so a swapped corridor can resolve
 // its flags and symbols even when a code leaves its original list.
 const ALL_CURRENCIES = [...SOURCE_CURRENCIES, ...TARGET_CURRENCIES];
@@ -18,23 +47,29 @@ export default function CurrencyCalculator() {
   const [amount, setAmount] = useState('100');
   const [sourceCurrency, setSourceCurrency] = useState('USD');
   const [targetCurrency, setTargetCurrency] = useState('NGN');
+  const [breakdownOpen, setBreakdownOpen] = useState(false);
   const [spinDegrees, setSpinDegrees] = useState(0);
 
   const inputId = useId();
   const sourceSelectId = useId();
   const targetSelectId = useId();
+  const breakdownId = useId();
 
-  const parsedAmount = Math.max(0, parseFloat(amount) || 0);
+  // Fixed-point quote (7 decimals); see src/lib/currencyCalculator.js.
+  const quote = calculateQuote({ amount, sourceCurrency, targetCurrency, rates: EXCHANGE_RATES });
+  const parsedAmount = Number(quote.amount);
 
-  // SendAm fee is flat 1%
-  const sendAmFeePercent = 1;
-  const sendAmFee = parsedAmount * 0.01;
-  const netSendAmount = Math.max(0, parsedAmount - sendAmFee);
+  // SendAm fee is flat 1%; traditional wires typically charge 6% to 8%.
+  const sendAmFeePercent = Number(SENDAM_FEE_BPS) / 100;
+  const sendAmFee = Number(quote.fee);
+  const traditionalFeePercent = Number(TRADITIONAL_FEE_BPS) / 100;
+  const traditionalFee = Number(quote.traditionalFee);
 
-  // Traditional bank wire / money transfer fees typically range from 6% to 8%
-  const traditionalFeePercent = 7;
-  const traditionalFee = parsedAmount * 0.07;
+  const currentRate = Number(quote.rate);
+  const receivedAmount = Number(quote.receivedAmount);
 
+  const estimatedSavings = Number(quote.savings);
+  const estimatedSavingsInTarget = Number(quote.savingsInTarget);
   // Rate lookup, with the reverse direction derived for swapped corridors
   const currentRate = getExchangeRate(sourceCurrency, targetCurrency);
   const receivedAmount = netSendAmount * currentRate;
@@ -59,6 +94,42 @@ export default function CurrencyCalculator() {
     currentRate >= 1
       ? currentRate.toLocaleString()
       : currentRate.toLocaleString(undefined, { maximumFractionDigits: 6 });
+
+  useEffect(() => {
+    // Stamp the initial quote on mount (render must stay pure, so not inline).
+    if (lastRefreshedAtRef.current === null) {
+      lastRefreshedAtRef.current = Date.now();
+    }
+    const tick = setInterval(() => {
+      const ageMs = Date.now() - lastRefreshedAtRef.current;
+      const remaining = RATE_REFRESH_INTERVAL_S - Math.floor(ageMs / 1000);
+      setSecondsToRefresh(Math.max(0, remaining));
+      setIsPastStaleAge(ageMs > RATE_STALE_AFTER_MS);
+      if (remaining <= 0 && !refreshingRef.current) {
+        refreshingRef.current = true;
+        setRateStatus('refreshing');
+        Promise.resolve()
+          .then(() => refreshRates())
+          .then(() => {
+            lastRefreshedAtRef.current = Date.now();
+            setSecondsToRefresh(RATE_REFRESH_INTERVAL_S);
+            setIsPastStaleAge(false);
+            setRateStatus('live');
+          })
+          .catch(() => {
+            // Keep the old timestamp: the quote really is this old, and the
+            // stale warning below must say so rather than pretend.
+            setRateStatus('failed');
+          })
+          .finally(() => {
+            refreshingRef.current = false;
+          });
+      }
+    }, 1000);
+    return () => clearInterval(tick);
+  }, [refreshRates]);
+
+  const ratesAreStale = rateStatus === 'failed' || isPastStaleAge;
 
   const handleAmountChange = (e) => {
     const val = e.target.value;
@@ -169,6 +240,13 @@ export default function CurrencyCalculator() {
               </div>
             </div>
 
+            {quote.exceedsLimit && (
+              <p role="alert" className="text-xs font-medium text-amber-700">
+                The maximum per transfer is {currentSource.symbol}
+                {Number(quote.maxAmount).toLocaleString()}. The quote below uses that amount.
+              </p>
+            )}
+
             {/* Presets */}
             <div>
               <span className="block text-xs text-slate-400 mb-2">Quick amounts:</span>
@@ -193,13 +271,48 @@ export default function CurrencyCalculator() {
               </div>
             </div>
 
-            {/* Exchange rate display */}
-            <div className="flex items-center gap-2 text-xs font-medium text-slate-500 bg-slate-50 rounded-xl p-3 border border-slate-100">
-              <RefreshCw size={14} className="text-primary shrink-0" aria-hidden="true" />
+            {/* Exchange rate display with live freshness */}
+            <div className="flex flex-wrap items-center gap-2 text-xs font-medium text-slate-500 bg-slate-50 rounded-xl p-3 border border-slate-100">
+              <RefreshCw
+                size={14}
+                className={`text-primary shrink-0 ${rateStatus === 'refreshing' ? 'animate-spin' : ''}`}
+                aria-hidden="true"
+              />
               <span>
                 1 {sourceCurrency} = {rateLabel} {targetCurrency}
               </span>
+              <span className="ml-auto inline-flex items-center gap-1.5" data-testid="rate-freshness">
+                <span
+                  aria-hidden="true"
+                  className={`h-2 w-2 shrink-0 rounded-full ${
+                    ratesAreStale
+                      ? 'bg-red-500'
+                      : 'bg-emerald-500 motion-safe:animate-pulse'
+                  }`}
+                />
+                <span className="text-slate-400">
+                  {rateStatus === 'refreshing'
+                    ? 'Refreshing rates…'
+                    : `Rates refresh in ${secondsToRefresh}s`}
+                </span>
+              </span>
             </div>
+
+            {ratesAreStale && (
+              <div
+                role="alert"
+                className="flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800"
+              >
+                <AlertTriangle size={14} className="mt-0.5 shrink-0" aria-hidden="true" />
+                <span>
+                  {rateStatus === 'failed'
+                    ? 'These rates could not be refreshed and may be out of date. '
+                    : 'These rates are more than a minute old. '}
+                  The amount your recipient gets may differ — the final rate is locked when you
+                  send.
+                </span>
+              </div>
+            )}
           </div>
 
           {/* Swap currencies */}
@@ -268,6 +381,77 @@ export default function CurrencyCalculator() {
                 <span className="text-sm">
                   {currentSource.symbol}{estimatedSavings.toFixed(2)} ({currentTarget.symbol}{Math.round(estimatedSavingsInTarget).toLocaleString()})
                 </span>
+              </div>
+
+              {/* Collapsible full fee transparency drawer */}
+              <div className="pt-2 border-t border-slate-200">
+                <button
+                  type="button"
+                  onClick={() => setBreakdownOpen((open) => !open)}
+                  aria-expanded={breakdownOpen}
+                  aria-controls={breakdownId}
+                  className="w-full flex items-center justify-between gap-2 py-1 text-slate-600 font-semibold hover:text-primary transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary rounded"
+                >
+                  <span>View fee breakdown</span>
+                  <ChevronDown
+                    size={14}
+                    aria-hidden="true"
+                    className={`transition-transform duration-300 ${breakdownOpen ? 'rotate-180' : ''}`}
+                  />
+                </button>
+                <div
+                  id={breakdownId}
+                  role="region"
+                  aria-label="Fee breakdown"
+                  aria-hidden={!breakdownOpen}
+                  className={`grid transition-[grid-template-rows] duration-300 ease-in-out motion-reduce:transition-none ${
+                    breakdownOpen ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]'
+                  }`}
+                >
+                  <div className="overflow-hidden">
+                    <dl className="pt-2 space-y-2">
+                      <div className="flex justify-between text-slate-600">
+                        <dt>You send</dt>
+                        <dd className="font-semibold text-slate-800">
+                          {currentSource.symbol}{parsedAmount.toFixed(2)}
+                        </dd>
+                      </div>
+                      <div className="flex justify-between text-slate-600">
+                        <dt>SendAm service fee ({sendAmFeePercent}%)</dt>
+                        <dd className="font-semibold text-slate-800">
+                          −{currentSource.symbol}{sendAmFee.toFixed(2)}
+                        </dd>
+                      </div>
+                      <div className="flex justify-between text-slate-600">
+                        <dt>Stellar network fee (covered by SendAm)</dt>
+                        <dd className="font-semibold text-slate-800">&lt;{currentSource.symbol}0.0001</dd>
+                      </div>
+                      <div className="flex justify-between pt-2 border-t border-slate-200 text-slate-700 font-semibold">
+                        <dt>Net send amount</dt>
+                        <dd className="text-slate-900">
+                          {currentSource.symbol}{netSendAmount.toFixed(2)}
+                        </dd>
+                      </div>
+                      <div className="flex justify-between text-slate-600">
+                        <dt>Guaranteed FX rate</dt>
+                        <dd className="font-semibold text-slate-800">
+                          1 {sourceCurrency} = {currentRate.toLocaleString()} {targetCurrency}
+                        </dd>
+                      </div>
+                      <div className="flex justify-between text-emerald-700 font-semibold">
+                        <dt>Recipient gets</dt>
+                        <dd>
+                          {currentTarget.symbol}{receivedAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </dd>
+                      </div>
+                    </dl>
+                    <p className="pt-2 text-[11px] leading-snug text-slate-400">
+                      The Stellar network base fee (under {currentSource.symbol}0.0001 per transaction) is paid
+                      by SendAm, so it is never deducted from your transfer. The FX rate is locked when you
+                      send — no recipient-side spread.
+                    </p>
+                  </div>
+                </div>
               </div>
             </div>
           </div>

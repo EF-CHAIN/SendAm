@@ -20,6 +20,15 @@ import PasskeyPromptModal, { usePasskeyStepUp } from '@/components/PasskeyPrompt
 
 export { REJECTION_REASONS };
 
+// Customer-facing preset rejection phrases (#760). Operators tap a tag to drop
+// it into the explanation textarea instead of typing the same wording by hand;
+// each tag toggles so a phrase can also be removed with one click.
+const REJECTION_TAGS = ['Blurry Document', 'Expired ID', 'Name Mismatch', 'Selfie Mismatch'];
+
+// A rejection needs a structured reason code *and* a customer explanation:
+// at least one preset tag or at least this many characters of free text.
+const MIN_EXPLANATION_LENGTH = 20;
+
 export default function KycReview() {
   const { params, getFilter, setFilter, resetFilters, goNext, goPrev } =
     useListQuery(['status', 'phone', 'country']);
@@ -113,9 +122,24 @@ export default function KycReview() {
     setRejectionNotes('');
   };
 
+  const rejectionExplanation = rejectionNotes.trim();
+  const hasPresetTag = REJECTION_TAGS.some((label) => rejectionExplanation.includes(label));
   const rejectionReasonValid =
     rejectionReason !== '' &&
-    (rejectionReason !== 'other' || rejectionNotes.trim().length > 0);
+    (hasPresetTag || rejectionExplanation.length >= MIN_EXPLANATION_LENGTH);
+
+  const toggleRejectionTag = (label) => {
+    setRejectionNotes((prev) => {
+      if (prev.includes(label)) {
+        return prev
+          .replace(new RegExp(`\\s*${label}\\.?`), '')
+          .replace(/\s{2,}/g, ' ')
+          .trim();
+      }
+      const base = prev.trim();
+      return base ? `${base} ${label}.` : `${label}.`;
+    });
+  };
 
   const handleConfirmSubmit = (event) => {
     event.preventDefault();
@@ -328,17 +352,57 @@ export default function KycReview() {
                 </div>
 
                 <div>
+                  <span
+                    id="kyc-rejection-tags-label"
+                    className="block text-xs font-medium text-slate-700 mb-1"
+                  >
+                    Common Reasons
+                  </span>
+                  <div
+                    role="group"
+                    aria-labelledby="kyc-rejection-tags-label"
+                    className="flex flex-wrap gap-2"
+                    data-testid="rejection-tags"
+                  >
+                    {REJECTION_TAGS.map((label) => {
+                      const active = rejectionNotes.includes(label);
+                      return (
+                        <button
+                          key={label}
+                          type="button"
+                          onClick={() => toggleRejectionTag(label)}
+                          aria-pressed={active}
+                          className={`rounded-full border px-3 py-1 text-xs font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-red-400 ${
+                            active
+                              ? 'border-red-500 bg-red-50 text-red-700'
+                              : 'border-slate-300 bg-white text-slate-600 hover:bg-slate-50'
+                          }`}
+                          data-testid={`rejection-tag-${label.toLowerCase().replace(/\s+/g, '-')}`}
+                        >
+                          {label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <div>
                   <label htmlFor="kycRejectionNotes" className="block text-xs font-medium text-slate-700 mb-1">
-                    {rejectionReason === 'other' ? 'Reason Detail *' : 'Additional Notes'}
+                    Customer Explanation *
                   </label>
                   <textarea
                     id="kycRejectionNotes"
                     value={rejectionNotes}
                     onChange={(e) => setRejectionNotes(e.target.value)}
-                    placeholder="Detail context for compliance audit..."
+                    placeholder="Why was this submission rejected? Preset tags fill this in for you."
+                    aria-describedby="kyc-explanation-hint"
                     className="w-full text-sm rounded-lg border border-slate-300 p-2 focus:ring-2 focus:ring-red-500 outline-none h-20"
-                    required={rejectionReason === 'other'}
+                    required
                   />
+                  <p id="kyc-explanation-hint" className="mt-1 text-xs text-slate-500">
+                    Select at least one preset tag or write at least {MIN_EXPLANATION_LENGTH}{' '}
+                    characters — this text is shown to the customer.
+                  </p>
                 </div>
               </div>
             )}

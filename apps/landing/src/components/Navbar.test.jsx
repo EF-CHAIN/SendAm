@@ -226,3 +226,36 @@ describe('Navbar', () => {
     });
   });
 });
+
+describe('Navbar theme toggle', () => {
+  function renderWithTheme(props) {
+    return render(
+      <MemoryRouter>
+        <Navbar {...props} />
+      </MemoryRouter>
+    );
+  }
+
+  it('is not rendered without a theme handler', () => {
+    renderWithTheme({});
+    expect(screen.queryByRole('button', { name: /theme/i })).not.toBeInTheDocument();
+  });
+
+  it('offers dark theme while in light mode and light theme while in dark mode', () => {
+    const { unmount } = renderWithTheme({ theme: 'light', onToggleTheme: () => {} });
+    expect(screen.getByRole('button', { name: 'Switch to dark theme' })).toBeInTheDocument();
+    unmount();
+
+    renderWithTheme({ theme: 'dark', onToggleTheme: () => {} });
+    expect(screen.getByRole('button', { name: 'Switch to light theme' })).toBeInTheDocument();
+  });
+
+  it('calls the handler when the toggle is pressed', async () => {
+    const onToggleTheme = vi.fn();
+    renderWithTheme({ theme: 'light', onToggleTheme });
+
+    await userEvent.click(screen.getByRole('button', { name: 'Switch to dark theme' }));
+
+    expect(onToggleTheme).toHaveBeenCalledTimes(1);
+  });
+});
