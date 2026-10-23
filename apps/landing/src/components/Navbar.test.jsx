@@ -35,6 +35,25 @@ describe('Navbar', () => {
     expect(screen.getByRole('link', { name: 'FAQ' })).toHaveAttribute('href', '#faq');
   });
 
+  it('highlights the active section nav link with primary color underline when clicked', async () => {
+    const user = userEvent.setup();
+    const section = document.createElement('section');
+    section.id = 'features';
+    section.scrollIntoView = vi.fn();
+    document.body.appendChild(section);
+
+    renderNavbar();
+    const desktopFeaturesLink = screen.getAllByRole('link', { name: 'Features' })[0];
+    expect(desktopFeaturesLink).not.toHaveClass('border-primary');
+
+    await user.click(desktopFeaturesLink);
+    expect(desktopFeaturesLink).toHaveClass('border-primary');
+    expect(desktopFeaturesLink).toHaveClass('text-primary');
+    expect(desktopFeaturesLink).toHaveAttribute('data-active', 'true');
+
+    section.remove();
+  });
+
   it('points the primary CTA at the configured WhatsApp destination', () => {
     renderNavbar();
     const cta = screen.getByRole('link', { name: /whatsapp|start/i });
@@ -224,5 +243,38 @@ describe('Navbar', () => {
       expect(window.localStorage.getItem('sendam.lang')).toBe('yo');
       expect(screen.getByRole('link', { name: 'Àwọn ẹ̀yà' })).toBeInTheDocument();
     });
+  });
+});
+
+describe('Navbar theme toggle', () => {
+  function renderWithTheme(props) {
+    return render(
+      <MemoryRouter>
+        <Navbar {...props} />
+      </MemoryRouter>
+    );
+  }
+
+  it('is not rendered without a theme handler', () => {
+    renderWithTheme({});
+    expect(screen.queryByRole('button', { name: /theme/i })).not.toBeInTheDocument();
+  });
+
+  it('offers dark theme while in light mode and light theme while in dark mode', () => {
+    const { unmount } = renderWithTheme({ theme: 'light', onToggleTheme: () => {} });
+    expect(screen.getByRole('button', { name: 'Switch to dark theme' })).toBeInTheDocument();
+    unmount();
+
+    renderWithTheme({ theme: 'dark', onToggleTheme: () => {} });
+    expect(screen.getByRole('button', { name: 'Switch to light theme' })).toBeInTheDocument();
+  });
+
+  it('calls the handler when the toggle is pressed', async () => {
+    const onToggleTheme = vi.fn();
+    renderWithTheme({ theme: 'light', onToggleTheme });
+
+    await userEvent.click(screen.getByRole('button', { name: 'Switch to dark theme' }));
+
+    expect(onToggleTheme).toHaveBeenCalledTimes(1);
   });
 });

@@ -96,6 +96,75 @@
         line-gap-override: 0%;
       }
     </style>
+    <!-- Structured data (schema.org JSON-LD): corporate identity, payment service, corridors, support -->
+    <script type="application/ld+json" id="sendam-structured-data">
+      {
+        "@context": "https://schema.org",
+        "@graph": [
+          {
+            "@type": "Organization",
+            "@id": "https://send-am-web.vercel.app/#organization",
+            "name": "SendAm",
+            "url": "https://send-am-web.vercel.app/",
+            "logo": "https://send-am-web.vercel.app/icons/icon-512x512.png",
+            "description": "SendAm turns WhatsApp into a Stellar wallet so people can send and receive money from a chat, with no app to install.",
+            "sameAs": ["https://github.com/Gozirimdev/SendAm"],
+            "contactPoint": [
+              {
+                "@type": "ContactPoint",
+                "contactType": "customer support",
+                "url": "https://send-am-web.vercel.app/#faq",
+                "availableLanguage": ["English"]
+              }
+            ]
+          },
+          {
+            "@type": "FinancialService",
+            "@id": "https://send-am-web.vercel.app/#service",
+            "name": "SendAm cross-border money transfer",
+            "serviceType": "Cross-border money transfer",
+            "description": "WhatsApp-first payments on the Stellar network with a flat 1% fee.",
+            "url": "https://send-am-web.vercel.app/",
+            "image": "https://send-am-web.vercel.app/logo-sent.svg",
+            "provider": { "@id": "https://send-am-web.vercel.app/#organization" },
+            "feesAndCommissionsSpecification": "https://send-am-web.vercel.app/#calculator",
+            "priceRange": "1% flat fee",
+            "currenciesAccepted": "USD, EUR, GBP",
+            "areaServed": [
+              { "@type": "Country", "name": "Nigeria", "identifier": "NG" },
+              { "@type": "Country", "name": "Kenya", "identifier": "KE" },
+              { "@type": "Country", "name": "Ghana", "identifier": "GH" }
+            ],
+            "availableChannel": {
+              "@type": "ServiceChannel",
+              "name": "WhatsApp chat",
+              "serviceUrl": "https://send-am-web.vercel.app/"
+            }
+          }
+        ]
+      }
+    </script>
+
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <!-- Fonts load without blocking first paint; system fonts render until Inter swaps in. -->
+    <link
+      rel="preload"
+      as="style"
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap"
+    />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap"
+      rel="stylesheet"
+      media="print"
+      onload="this.media='all'"
+    />
+    <noscript>
+      <link
+        href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap"
+        rel="stylesheet"
+      />
+    </noscript>
   </head>
   <body>
     <div id="root"></div>

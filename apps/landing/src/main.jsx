@@ -11,6 +11,12 @@ const updateSW = registerSW({
   onNeedRefresh: () => swUpdate.needRefresh(updateSW),
   onOfflineReady: () => swUpdate.offlineReady(),
 });
+import { startDevContrastCheck } from '@shared/contrast.js';
+import { initTheme } from './lib/theme.js';
+
+initTheme();
+registerSW();
+startDevContrastCheck({ devMode: import.meta.env.DEV });
 
 createRoot(document.getElementById('root')).render(
   <StrictMode>

@@ -209,4 +209,24 @@ describe('useListQuery hook', () => {
 
     expect(firstParams).not.toBe(secondParams);
   });
+
+  it('keeps params stable when only non-API keys such as sort change', () => {
+    const { result, rerender } = renderHook(
+      ({ initialParams }) => {
+        setupSearchParams(initialParams);
+        return useListQuery(['status']);
+      },
+      { wrapper, initialProps: { initialParams: { status: 'failed' } } }
+    );
+    const firstParams = result.current.params;
+    rerender({ initialParams: { status: 'failed', sort: 'amount', dir: 'desc' } });
+    expect(result.current.params).toBe(firstParams);
+    expect(result.current.params).toEqual({ status: 'failed' });
+  });
+
+  it('round-trips values that need URL encoding', () => {
+    setupSearchParams({ identifier: 'a&b=c d' });
+    const { result } = renderHook(() => useListQuery(['identifier']), { wrapper });
+    expect(result.current.params).toEqual({ identifier: 'a&b=c d' });
+  });
 });

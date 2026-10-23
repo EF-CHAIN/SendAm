@@ -7,6 +7,20 @@ import offlinePage from './build/offlinePage.js';
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [react(), offlinePage(), VitePWA({
+import criticalCss from './build/criticalCss.js';
+import { renderAboveTheFold } from './build/renderShell.js';
+
+const alias = {
+  '@': path.resolve(__dirname, './src'),
+  '@shared': path.resolve(__dirname, '../../packages/shared/src'),
+};
+
+// https://vite.dev/config/
+export default defineConfig({
+  plugins: [react(), criticalCss({
+    // Inline the CSS used by the navbar + hero; load the rest of Tailwind async.
+    renderMarkup: () => renderAboveTheFold({ root: __dirname, alias, plugins: [react()] }),
+  }), VitePWA({
     registerType: 'prompt',
     // Our own worker (src/sw.js): stale-while-revalidate for pages and
     // assets, a branded offline fallback, and an update prompt instead of
@@ -63,6 +77,41 @@ export default defineConfig({
         },
       ],
     },
+    workbox: {
+      globPatterns: ['**/*.{js,css,html,ico,png,svg,webp,avif,woff2,woff}'],
+      runtimeCaching: [
+        {
+          urlPattern: /^https:\/\/fonts\./,
+          handler: 'CacheFirst',
+          options: {
+            cacheName: 'sendam-fonts',
+            expiration: {
+              maxEntries: 10,
+              maxAgeSeconds: 365 * 24 * 60 * 60,
+            },
+          },
+        },
+        {
+          urlPattern: /\.(?:png|jpg|jpeg|gif|svg|webp|avif|ico|css|js|woff|woff2|ttf|eot)$/,
+          handler: 'StaleWhileRevalidate',
+          options: {
+            cacheName: 'sendam-assets',
+          },
+        },
+        {
+          urlPattern: /\.(?:json|xml)$/,
+          handler: 'NetworkFirst',
+          options: {
+            cacheName: 'sendam-dynamic',
+          },
+        },
+      ],
+      navigateFallback: '/index.html',
+      navigateFallbackDenylist: [/\.(?:png|jpg|jpeg|gif|svg|webp|avif|ico|css|js|woff|woff2|ttf|eot|json|xml)$/],
+      cleanupOutdatedCaches: true,
+      clientsClaim: true,
+      skipWaiting: true,
+    },
     devOptions: {
       enabled: true,
       type: 'module',
@@ -70,10 +119,7 @@ export default defineConfig({
   })],
   resolve: {
     dedupe: ['react', 'react-dom'],
-    alias: {
-      '@': path.resolve(__dirname, './src'),
-      '@shared': path.resolve(__dirname, '../../packages/shared/src'),
-    },
+    alias,
   },
   server: {
     port: 3000,

@@ -94,6 +94,35 @@ it into `dist/sw.js` and injects the list of build files to precache.
 To try it locally, run `npm run build && npm run preview` in this directory,
 load the site once, stop the preview server and open a page you have not
 visited.
+### Critical CSS
+
+The build inlines the CSS needed for the first viewport and stops the full
+Tailwind stylesheet from blocking first paint
+([`build/criticalCss.js`](build/criticalCss.js)):
+
+1. `build/renderShell.js` renders the navbar and hero
+   ([`src/critical-shell.jsx`](src/critical-shell.jsx)) through a temporary
+   Vite SSR server.
+2. [Beasties](https://github.com/danielroe/beasties) keeps only the rules that
+   markup uses and inlines them in a `<style>` tag in `index.html`
+   (about 15 kB of the 45 kB stylesheet).
+3. The full stylesheet is loaded with `media="print"` and switched to `all`
+   on load, with a `<noscript>` fallback. Google Fonts load the same way.
+4. The static navbar markup ships inside `#root`, so the first paint happens
+   before the JS bundle runs. React replaces it on mount.
+
+If any step fails, the build logs a `[critical-css]` warning and keeps the
+original render-blocking stylesheet rather than shipping unstyled HTML. The
+step only runs for `vite build`; the dev server is unchanged.
+
+To check First Contentful Paint against the 0.8 s target, run Lighthouse on
+the production build with mobile throttling:
+
+```bash
+npm run build --workspace=apps/landing
+npm run preview --workspace=apps/landing -- --port 4173
+npx lighthouse http://localhost:4173 --only-categories=performance --form-factor=mobile --throttling-method=simulate
+```
 
 ## Deployment
 
@@ -138,6 +167,53 @@ Output Directory:  apps/landing/dist
 In that layout Vercel does not read `apps/landing/vercel.json`, so copy it to
 the repository root if you need the headers and rewrite there.
 
+## Hero images
+
+The hero phone wallpaper is served through `ResponsivePicture`
+([`src/components/ResponsivePicture.jsx`](src/components/ResponsivePicture.jsx)):
+a `<picture>` with AVIF, then WebP, then the original `whatsapp-bg.png` as the
+fallback `<img>`. Variants are described with width descriptors
+(`srcset="... 600w, ... 1200w, ... 1800w"`, `sizes="600px"`), so a phone picks
+the 600px file at 1x and the 1200px file at 2x. The manifest lives in
+[`src/lib/heroImages.js`](src/lib/heroImages.js); files live in
+`public/img/hero-wallpaper-<width>.<avif|webp>`.
+
+`Hero` passes `priority` down to the wallpaper, which sets `loading="eager"`
+and `fetchpriority="high"`; every other use defaults to lazy loading. Mobile
+1x and 2x variants are asserted to stay under 100KB in
+`ResponsivePicture.test.jsx`.
+
+To regenerate the variants from `public/whatsapp-bg.png` (Pillow 11.3+):
+
+```bash
+python3 - <<'PY'
+from PIL import Image
+src = Image.open("public/whatsapp-bg.png").convert("RGBA")
+for w in (600, 1200, 1800):
+    im = src.resize((w, w), Image.LANCZOS)
+    im.save(f"public/img/hero-wallpaper-{w}.webp", quality=82, method=6)
+    im.save(f"public/img/hero-wallpaper-{w}.avif", quality=60, speed=4)
+PY
+```
+
+## Structured data
+
+`index.html` carries one schema.org JSON-LD block (`#sendam-structured-data`)
+with an `Organization` and a `FinancialService` node. `areaServed` mirrors the
+calculator corridors and `currenciesAccepted` mirrors the source currencies in
+`src/lib/currencyConstants.js`; `src/test/structured-data.test.js` fails when
+they drift. Validate changes with Google's Rich Results Test or the Schema.org
+validator after deploying.
+
+## Calculator rendering priority
+
+`CurrencyCalculator` keeps the amount field urgent and derives the quote from
+`useDeferredValue` copies of the amount and currencies, so typing is never
+blocked by the fee maths or locale formatting. Corridor tabs and quick-amount
+presets update inside `startTransition`. The output column is memoised and sets
+`aria-busy` / `data-stale` while it catches up. The maths itself lives in
+[`src/lib/quote.js`](src/lib/quote.js). Measure INP with Chrome DevTools
+Performance (CPU 6x slowdown) or Lighthouse timespan mode.
 ## Security Headers And CSP
 
 The landing site sends a strict Content Security Policy (CSP) plus four
@@ -226,6 +302,43 @@ Runs component/smoke tests (navigation, CTAs, FAQ) and `jest-axe` accessibility
 checks against the rendered home page with Vitest + Testing Library, in jsdom.
 No live services or network access required. CI runs this on every PR via the
 `landing-tests` job in [`test.yml`](../../.github/workflows/test.yml).
+
+### End-to-end (Playwright)
+
+```bash
+npx playwright install chromium        # once per machine
+npm run test:e2e:landing -- --project=chromium
+```
+
+- `e2e/landing-journey.spec.js`: smoke journey.
+- `e2e/calculator.spec.js`: the currency calculator across 10 preset scenarios.
+  These cover all 9 published corridors (USD, GBP, EUR to NGN, KES, GHS), each
+  preset amount, and a typed amount. The tests check the 1% fee, the
+  traditional-fee comparison and the payout, plus corridor tab switching,
+  input validation, and that the WhatsApp link carries the typed amount.
+  Expected values are written out by hand from the rate table.
+
+### Visual regression
+
+```bash
+npm run test:visual -- --project=landing-desktop-chrome --project=landing-ipad-mini --project=landing-iphone-14
+```
+
+`e2e/visual-regression.spec.js` runs from the root `playwright.config.js`
+under Desktop Chrome, iPad Mini and iPhone 14 profiles, all rendered with
+Chromium. For the home, onboarding status and not-found pages it compares a
+full-page screenshot and asserts there is no horizontal overflow.
+
+- **Threshold:** `VISUAL_MAX_DIFF_PIXEL_RATIO` sets the threshold. The default
+  is `0.0005` (0.05%); any value at or above 0.1% is rejected.
+- **Determinism:** remote fonts are blocked, motion is reduced and the
+  onboarding API is mocked, so screenshots are stable between runs.
+- **Diff artifacts:** on failure, Playwright writes expected, actual and diff
+  images to `test-results/` and the HTML report. CI uploads both as the
+  `playwright-visual-diffs` artifact.
+- **Baselines:** baselines are rendered on the CI runner. Run the *Visual
+  Regression Tests* workflow with `update_snapshots=true`, download the
+  `visual-baselines` artifact, and commit the PNGs.
 
 ## Tech Stack
 
