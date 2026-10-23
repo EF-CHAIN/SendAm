@@ -1,7 +1,7 @@
 import { render, screen, fireEvent, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, useLocation } from 'react-router-dom';
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import DataTable from './DataTable';
 
 const columns = [{ header: 'Name', accessor: 'name' }];
@@ -264,6 +264,193 @@ describe('DataTable Virtualization & Keyboard Navigation', () => {
       fireEvent.keyDown(backToFirst, { key: 'Enter' });
     });
     expect(onRowClick).toHaveBeenCalledWith(data[0]);
+  });
+});
+
+describe('DataTable column customization', () => {
+  const cols = [
+    { header: 'Name', accessor: 'name' },
+    { header: 'Role', accessor: 'role' },
+    { header: 'Status', accessor: 'status' },
+  ];
+  const rows = [
+    { id: 'a', name: 'Ada', role: 'admin', status: 'active' },
+    { id: 'b', name: 'Bo', role: 'viewer', status: 'idle' },
+  ];
+
+  const headerLabels = () =>
+    screen.getAllByRole('columnheader').map((th) => th.textContent);
+
+  const openCustomizer = () =>
+    userEvent.click(screen.getByRole('button', { name: /customize columns/i }));
+
+  beforeEach(() => {
+    window.localStorage.clear();
+  });
+
+  it('renders the Customize Columns trigger and shows every column by default', () => {
+    renderTable(<DataTable columns={cols} data={rows} storageKey="cols-default" />);
+
+    expect(screen.getByRole('button', { name: /customize columns/i })).toBeInTheDocument();
+    expect(headerLabels()).toEqual(['Name', 'Role', 'Status']);
+  });
+
+  it('hides a column immediately when its checkbox is unchecked', async () => {
+    renderTable(<DataTable columns={cols} data={rows} storageKey="cols-hide" />);
+    await openCustomizer();
+
+    await userEvent.click(screen.getByRole('checkbox', { name: 'Role' }));
+
+    expect(headerLabels()).toEqual(['Name', 'Status']);
+    expect(screen.queryByRole('cell', { name: 'viewer' })).not.toBeInTheDocument();
+  });
+
+  it('restores a hidden column when its checkbox is checked again', async () => {
+    renderTable(<DataTable columns={cols} data={rows} storageKey="cols-restore" />);
+    await openCustomizer();
+
+    const roleCheckbox = screen.getByRole('checkbox', { name: 'Role' });
+    await userEvent.click(roleCheckbox);
+    expect(headerLabels()).toEqual(['Name', 'Status']);
+
+    await userEvent.click(roleCheckbox);
+    expect(headerLabels()).toEqual(['Name', 'Role', 'Status']);
+  });
+
+  it('reorders columns with the move controls', async () => {
+    renderTable(<DataTable columns={cols} data={rows} storageKey="cols-order" />);
+    await openCustomizer();
+
+    await userEvent.click(screen.getByRole('button', { name: /move role up/i }));
+
+    expect(headerLabels()).toEqual(['Role', 'Name', 'Status']);
+  });
+
+  it('keeps at least one column visible', async () => {
+    renderTable(<DataTable columns={cols} data={rows} storageKey="cols-last" />);
+    await openCustomizer();
+
+    await userEvent.click(screen.getByRole('checkbox', { name: 'Role' }));
+    await userEvent.click(screen.getByRole('checkbox', { name: 'Status' }));
+
+    expect(screen.getByRole('checkbox', { name: 'Name' })).toBeDisabled();
+    expect(headerLabels()).toEqual(['Name']);
+  });
+
+  it('persists preferences and restores them on remount', async () => {
+    const { unmount } = renderTable(
+      <DataTable columns={cols} data={rows} storageKey="cols-persist" />
+    );
+    await openCustomizer();
+    await userEvent.click(screen.getByRole('checkbox', { name: 'Role' }));
+    expect(headerLabels()).toEqual(['Name', 'Status']);
+    unmount();
+
+    renderTable(<DataTable columns={cols} data={rows} storageKey="cols-persist" />);
+    expect(headerLabels()).toEqual(['Name', 'Status']);
+  });
+
+  it('restores the default layout with the reset control', async () => {
+    renderTable(<DataTable columns={cols} data={rows} storageKey="cols-reset" />);
+    await openCustomizer();
+
+    await userEvent.click(screen.getByRole('checkbox', { name: 'Role' }));
+    await userEvent.click(screen.getByRole('button', { name: /reset columns/i }));
+
+    expect(headerLabels()).toEqual(['Name', 'Role', 'Status']);
+    expect(screen.getByRole('checkbox', { name: 'Role' })).toBeChecked();
+  });
+});
+
+describe('DataTable multi-column sorting', () => {
+  const sortColumns = [
+    { header: 'Status', accessor: 'status', sortable: true },
+    { header: 'Date', accessor: 'date', sortable: true },
+  ];
+  const rows = [
+    { id: 1, status: 'pending', date: '2026-01-02' },
+    { id: 2, status: 'complete', date: '2026-01-03' },
+    { id: 3, status: 'pending', date: '2026-01-01' },
+    { id: 4, status: 'complete', date: '2026-01-01' },
+  ];
+
+  const dateOrderOf = () => Array.from(document.querySelectorAll('tbody tr[data-row-index]')).map((tr) => tr.querySelectorAll('td')[1].textContent);
+  const statusOrderOf = () => Array.from(document.querySelectorAll('tbody tr[data-row-index]')).map((tr) => tr.querySelectorAll('td')[0].textContent);
+  const header = (label) => screen.getByRole('button', { name: new RegExp(`^${label}`, 'i') });
+
+  it('plain click sorts ascending, then flips to descending on the next click', async () => {
+    const user = userEvent.setup();
+    renderTable(<DataTable columns={sortColumns} data={rows} keyField="id" />);
+
+    await user.click(header('Status'));
+    expect(statusOrderOf()).toEqual(['complete', 'complete', 'pending', 'pending']);
+    expect(screen.getByRole('columnheader', { name: /status/i })).toHaveAttribute('aria-sort', 'ascending');
+
+    await user.click(header('Status'));
+    expect(statusOrderOf()).toEqual(['pending', 'pending', 'complete', 'complete']);
+    expect(screen.getByRole('columnheader', { name: /status/i })).toHaveAttribute('aria-sort', 'descending');
+  });
+
+  it('shift+click adds a secondary key and shows priority badges 1 and 2', async () => {
+    const user = userEvent.setup();
+    renderTable(<DataTable columns={sortColumns} data={rows} keyField="id" />);
+
+    await user.click(header('Status'));
+    await user.keyboard('{Shift>}');
+    await user.click(header('Date'));
+    await user.keyboard('{/Shift}');
+
+    const badges = screen.getAllByTestId('sort-priority-badge').map((badge) => badge.textContent);
+    expect(badges).toEqual(['1', '2']);
+    // complete (2026-01-01 then 2026-01-03), then pending (2026-01-01 then 2026-01-02)
+    expect(dateOrderOf()).toEqual(['2026-01-01', '2026-01-03', '2026-01-01', '2026-01-02']);
+    expect(screen.getByRole('columnheader', { name: /date/i })).toHaveAttribute('aria-sort', 'ascending');
+  });
+
+  it('plain click after a multi-sort clears the secondary keys', async () => {
+    const user = userEvent.setup();
+    renderTable(<DataTable columns={sortColumns} data={rows} keyField="id" />);
+
+    await user.click(header('Status'));
+    await user.keyboard('{Shift>}');
+    await user.click(header('Date'));
+    await user.keyboard('{/Shift}');
+    await user.click(header('Date'));
+
+    expect(screen.queryByTestId('sort-priority-badge')).not.toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: /status/i })).toHaveAttribute('aria-sort', 'none');
+    expect(screen.getByRole('columnheader', { name: /date/i })).toHaveAttribute('aria-sort', 'ascending');
+  });
+
+  it('shift+click on a sorted column flips its direction without adding a badge', async () => {
+    const user = userEvent.setup();
+    renderTable(<DataTable columns={sortColumns} data={rows} keyField="id" />);
+
+    await user.click(header('Status'));
+    await user.keyboard('{Shift>}');
+    await user.click(header('Status'));
+    await user.keyboard('{/Shift}');
+
+    expect(screen.getByRole('columnheader', { name: /status/i })).toHaveAttribute('aria-sort', 'descending');
+    expect(screen.queryByTestId('sort-priority-badge')).not.toBeInTheDocument();
+  });
+
+  it('accepts a multi-key defaultSort array', () => {
+    renderTable(
+      <DataTable
+        columns={sortColumns}
+        data={rows}
+        keyField="id"
+        defaultSort={[
+          { key: 'status', direction: 'ascending' },
+          { key: 'date', direction: 'descending' },
+        ]}
+      />
+    );
+
+    expect(statusOrderOf()).toEqual(['complete', 'complete', 'pending', 'pending']);
+    expect(screen.getAllByTestId('sort-priority-badge').map((b) => b.textContent)).toEqual(['1', '2']);
+    expect(screen.getByRole('columnheader', { name: /date/i })).toHaveAttribute('aria-sort', 'descending');
   });
 });
 
