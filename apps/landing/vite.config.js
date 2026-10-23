@@ -3,11 +3,37 @@ import react from '@vitejs/plugin-react';
 import path from 'node:path';
 import { visualizer } from 'rollup-plugin-visualizer';
 import { VitePWA } from 'vite-plugin-pwa';
+import offlinePage from './build/offlinePage.js';
 
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [react(), visualizer(), VitePWA({
+  plugins: [react(), offlinePage(), VitePWA({
+import criticalCss from './build/criticalCss.js';
+import { renderAboveTheFold } from './build/renderShell.js';
+
+const alias = {
+  '@': path.resolve(__dirname, './src'),
+  '@shared': path.resolve(__dirname, '../../packages/shared/src'),
+};
+
+// https://vite.dev/config/
+export default defineConfig({
+  plugins: [react(), criticalCss({
+    // Inline the CSS used by the navbar + hero; load the rest of Tailwind async.
+    renderMarkup: () => renderAboveTheFold({ root: __dirname, alias, plugins: [react()] }),
+  }), VitePWA({
     registerType: 'prompt',
+    // Our own worker (src/sw.js): stale-while-revalidate for pages and
+    // assets, a branded offline fallback, and an update prompt instead of
+    // skipWaiting. The build injects the precache manifest into it.
+    strategies: 'injectManifest',
+    srcDir: 'src',
+    filename: 'sw.js',
+    injectManifest: {
+      globPatterns: ['**/*.{js,css,html,ico,png,svg,woff2}'],
+      rollupFormat: 'iife',
+    },
     includeAssets: ['favicon.svg', 'icons/*.png', 'icons/*.svg'],
     manifest: {
       name: 'SendAm',
@@ -54,7 +80,7 @@ export default defineConfig({
       ],
     },
     workbox: {
-      globPatterns: ['**/*.{js,css,html,ico,png,svg,woff2,woff}'],
+      globPatterns: ['**/*.{js,css,html,ico,png,svg,webp,avif,woff2,woff}'],
       runtimeCaching: [
         {
           urlPattern: /^https:\/\/fonts\./,
@@ -68,7 +94,7 @@ export default defineConfig({
           },
         },
         {
-          urlPattern: /\.(?:png|jpg|jpeg|gif|svg|webp|ico|css|js|woff|woff2|ttf|eot)$/,
+          urlPattern: /\.(?:png|jpg|jpeg|gif|svg|webp|avif|ico|css|js|woff|woff2|ttf|eot)$/,
           handler: 'StaleWhileRevalidate',
           options: {
             cacheName: 'sendam-assets',
@@ -83,7 +109,7 @@ export default defineConfig({
         },
       ],
       navigateFallback: '/index.html',
-      navigateFallbackDenylist: [/\.(?:png|jpg|jpeg|gif|svg|webp|ico|css|js|woff|woff2|ttf|eot|json|xml)$/],
+      navigateFallbackDenylist: [/\.(?:png|jpg|jpeg|gif|svg|webp|avif|ico|css|js|woff|woff2|ttf|eot|json|xml)$/],
       cleanupOutdatedCaches: true,
       clientsClaim: true,
       skipWaiting: true,
@@ -95,15 +121,12 @@ export default defineConfig({
   })],
   resolve: {
     dedupe: ['react', 'react-dom'],
-    alias: {
-      '@': path.resolve(__dirname, './src'),
-      '@shared': path.resolve(__dirname, '../../packages/shared/src'),
-    },
+    alias,
   },
   server: {
     port: 3000,
     headers: {
-      'Content-Security-Policy': "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self' ws: wss:; frame-ancestors 'none'; base-uri 'none'; form-action 'none';",
+      'Content-Security-Policy': "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data:; connect-src 'self' ws: wss:; frame-ancestors 'none'; base-uri 'none'; form-action 'none';",
       'X-Frame-Options': 'DENY',
       'X-Content-Type-Options': 'nosniff',
       'Referrer-Policy': 'strict-origin-when-cross-origin',

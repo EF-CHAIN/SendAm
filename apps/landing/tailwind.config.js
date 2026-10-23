@@ -1,5 +1,6 @@
 /** @type {import('tailwindcss').Config} */
 export default {
+  darkMode: 'class',
   content: [
     './index.html',
     './src/**/*.{js,jsx}',
@@ -16,7 +17,9 @@ export default {
         'whatsapp-dark': '#128C7E',
       },
       fontFamily: {
-        sans: ['Inter', 'sans-serif'],
+        // Self-hosted in public/fonts and declared in index.html.
+        sans: ['Inter', 'Inter Fallback', 'system-ui', 'sans-serif'],
+        display: ['Outfit', 'Outfit Fallback', 'Inter', 'system-ui', 'sans-serif'],
       },
       keyframes: {
         'fade-up': {

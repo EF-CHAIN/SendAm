@@ -54,6 +54,8 @@ export default function Hero() {
         </div>
 
         {/* Visual */}
+        <div className="animate-fade-up [animation-delay:120ms]">
+          <ChatMockup priority />
         <div className="animate-fade-up [animation-delay:120ms] flex justify-center lg:justify-end">
           <div
             data-testid="hero-mockup-container"

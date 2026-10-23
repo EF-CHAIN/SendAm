@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react';
 import { Check, CheckCheck, Clock, Mic } from 'lucide-react';
 import PhoneFrame from './PhoneFrame.jsx';
+import ResponsivePicture from './ResponsivePicture.jsx';
+import { HERO_WALLPAPER } from '@/lib/heroImages.js';
 
 const messages = [
   { from: 'user', text: 'Send 25000 NGN to Ada', time: '9:41' },
@@ -23,6 +25,8 @@ const messages = [
   },
 ];
 
+// `priority` marks the wallpaper as above-the-fold (eager + high fetch priority).
+export default function ChatMockup({ priority = false }) {
 const TICK_TIMELINE = [
   { delay: 500, index: 0, status: 'sent' },
   { delay: 1100, index: 0, status: 'delivered' },
@@ -150,7 +154,12 @@ export default function ChatMockup({
 
   return (
     <PhoneFrame statusBarClassName="bg-whatsapp-dark text-white">
-      <div className="flex h-full flex-col bg-[#ece5dd] bg-[url('/whatsapp-bg.png')] bg-cover bg-center">
+      <div className="relative isolate flex h-full flex-col bg-[#ece5dd]">
+        <ResponsivePicture
+          {...HERO_WALLPAPER}
+          priority={priority}
+          className="absolute inset-0 -z-10 h-full w-full object-cover object-center"
+        />
         <div className="flex items-center gap-3 bg-whatsapp-dark px-4 pb-3 pt-10 text-white">
           <div className="flex h-9 w-9 items-center justify-center overflow-hidden rounded-full font-bold">
             <img
