@@ -1,4 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
+vi.mock('@/lib/imageCompression.js', () => ({ compressImageForUpload: vi.fn() }));
+import { compressImageForUpload } from '@/lib/imageCompression.js';
 import { render, screen, fireEvent, act } from '@testing-library/react';
 import OnboardingWizard from './OnboardingWizard.jsx';
 
@@ -62,5 +64,178 @@ describe('OnboardingWizard Component', () => {
     expect(screen.getByText(/Enter your WhatsApp phone number/i)).toBeInTheDocument();
 
     vi.useRealTimers();
+  });
+
+  it('debounces draft serialization to localStorage and excludes sensitive PIN fields', async () => {
+    vi.useFakeTimers();
+    localStorage.clear();
+    render(<OnboardingWizard />);
+
+    const phoneInput = screen.getByLabelText(/WhatsApp Phone Number/i);
+    fireEvent.change(phoneInput, { target: { value: '+234 812 345 6789' } });
+
+    // Step 1 -> Step 2
+    fireEvent.click(screen.getByRole('button', { name: /Next Step/i }));
+
+    // Input PIN digits
+    const pin0 = screen.getAllByPlaceholderText('•')[0];
+    fireEvent.change(pin0, { target: { value: '9' } });
+
+    // Timer not advanced yet - debounced
+    expect(localStorage.getItem('sendam_onboarding_draft_v1')).toBeNull();
+
+    act(() => {
+      vi.advanceTimersByTime(500);
+    });
+
+    const savedRaw = localStorage.getItem('sendam_onboarding_draft_v1');
+    expect(savedRaw).not.toBeNull();
+    const saved = JSON.parse(savedRaw);
+
+    expect(saved.phone).toBe('+234 812 345 6789');
+    expect(saved.currentStep).toBe(2);
+    // PIN must never be persisted
+    expect(saved.pin).toBeUndefined();
+
+    vi.useRealTimers();
+    localStorage.clear();
+  });
+
+  it('restores draft state on mount and displays Resume your application banner', () => {
+    localStorage.setItem(
+      'sendam_onboarding_draft_v1',
+      JSON.stringify({
+        phone: '+234 999 888 7777',
+        transferAmount: '150.00',
+        recipient: '+233 555 444 3333',
+        currentStep: 3,
+      })
+    );
+
+    render(<OnboardingWizard />);
+
+    expect(screen.getByTestId('resume-draft-banner')).toBeInTheDocument();
+    expect(screen.getByText(/Resume your application:/i)).toBeInTheDocument();
+
+    // Check that draft state is active on step 3
+    expect(screen.getByLabelText(/Transfer Amount \(USDC\)/i)).toHaveValue('150.00');
+    expect(screen.getByLabelText(/Recipient Phone/i)).toHaveValue('+233 555 444 3333');
+
+    // Click Resume button to dismiss banner
+    fireEvent.click(screen.getByRole('button', { name: /^Resume$/i }));
+    expect(screen.queryByTestId('resume-draft-banner')).not.toBeInTheDocument();
+
+    localStorage.clear();
+  });
+
+  it('discards draft and resets form when clear button is clicked', () => {
+    localStorage.setItem(
+      'sendam_onboarding_draft_v1',
+      JSON.stringify({
+        phone: '+234 999 888 7777',
+        transferAmount: '150.00',
+        recipient: '+233 555 444 3333',
+        currentStep: 3,
+      })
+    );
+
+    render(<OnboardingWizard />);
+    expect(screen.getByTestId('resume-draft-banner')).toBeInTheDocument();
+
+    // Click clear draft
+    fireEvent.click(screen.getByRole('button', { name: /Clear draft/i }));
+
+    expect(localStorage.getItem('sendam_onboarding_draft_v1')).toBeNull();
+    expect(screen.queryByTestId('resume-draft-banner')).not.toBeInTheDocument();
+    // Resets to step 1 with default phone
+    expect(screen.getByLabelText(/WhatsApp Phone Number/i)).toHaveValue('+234 801 234 5678');
+
+    localStorage.clear();
+  });
+
+  it('clears draft from localStorage when simulation completes', async () => {
+    vi.useFakeTimers();
+    localStorage.setItem(
+      'sendam_onboarding_draft_v1',
+      JSON.stringify({
+        phone: '+234 999 888 7777',
+        transferAmount: '150.00',
+        recipient: '+233 555 444 3333',
+        currentStep: 3,
+      })
+    );
+
+    render(<OnboardingWizard />);
+    const executeBtn = screen.getByRole('button', { name: /Execute Simulation/i });
+    fireEvent.click(executeBtn);
+
+    act(() => {
+      vi.advanceTimersByTime(1500);
+    });
+
+    expect(screen.getByText(/Simulated Onboarding & Transfer Complete!/i)).toBeInTheDocument();
+    expect(localStorage.getItem('sendam_onboarding_draft_v1')).toBeNull();
+
+    vi.useRealTimers();
+    localStorage.clear();
+  });
+
+  it('handles corrupted localStorage payload gracefully without throwing', () => {
+    localStorage.setItem('sendam_onboarding_draft_v1', 'corrupted-json{');
+    expect(() => render(<OnboardingWizard />)).not.toThrow();
+    expect(screen.queryByTestId('resume-draft-banner')).not.toBeInTheDocument();
+    expect(screen.getByLabelText(/WhatsApp Phone Number/i)).toHaveValue('+234 801 234 5678');
+    localStorage.clear();
+  });
+});
+
+describe('OnboardingWizard identity photo upload', () => {
+  it('compresses a chosen photo, shows progress, then reports it is ready', async () => {
+    compressImageForUpload.mockImplementation(async (_file, { onProgress }) => {
+      onProgress(40);
+      return new Blob([new Uint8Array(512 * 1024)], { type: 'image/jpeg' });
+    });
+    render(<OnboardingWizard />);
+
+    const input = screen.getByLabelText(/Identity Document Photo/i);
+    const photo = new File(['x'], 'id.jpg', { type: 'image/jpeg' });
+    fireEvent.change(input, { target: { files: [photo] } });
+
+    expect(compressImageForUpload).toHaveBeenCalledWith(photo, expect.objectContaining({ onProgress: expect.any(Function) }));
+    expect(await screen.findByRole('status')).toHaveTextContent('Photo ready to upload (512 KB)');
+    expect(screen.queryByRole('progressbar')).not.toBeInTheDocument();
+  });
+
+  it('shows the compression progress bar while the photo is being processed', async () => {
+    let finish;
+    compressImageForUpload.mockImplementation(
+      (_file, { onProgress }) =>
+        new Promise((resolve) => {
+          onProgress(35);
+          finish = () => resolve(new Blob([new Uint8Array(1024)]));
+        }),
+    );
+    render(<OnboardingWizard />);
+
+    fireEvent.change(screen.getByLabelText(/Identity Document Photo/i), {
+      target: { files: [new File(['x'], 'id.jpg', { type: 'image/jpeg' })] },
+    });
+
+    const bar = await screen.findByRole('progressbar', { name: /compressing identity photo/i });
+    expect(bar).toHaveAttribute('aria-valuenow', '35');
+
+    await act(async () => finish());
+    expect(await screen.findByRole('status')).toHaveTextContent('Photo ready to upload');
+  });
+
+  it('surfaces a compression failure to the visitor', async () => {
+    compressImageForUpload.mockRejectedValue(new Error('Please choose a photo file.'));
+    render(<OnboardingWizard />);
+
+    fireEvent.change(screen.getByLabelText(/Identity Document Photo/i), {
+      target: { files: [new File(['x'], 'notes.txt', { type: 'text/plain' })] },
+    });
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Please choose a photo file.');
   });
 });

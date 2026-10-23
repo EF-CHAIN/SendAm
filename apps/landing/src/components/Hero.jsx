@@ -54,8 +54,18 @@ export default function Hero() {
         </div>
 
         {/* Visual */}
-        <div className="animate-fade-up [animation-delay:120ms]">
-          <ChatMockup />
+        <div className="animate-fade-up [animation-delay:120ms] flex justify-center lg:justify-end">
+          <div
+            data-testid="hero-mockup-container"
+            className="relative mx-auto aspect-[75/150] w-[300px] max-w-full rounded-[3.2rem] bg-slate-100 shadow-sm"
+          >
+            <div
+              aria-hidden="true"
+              data-testid="hero-skeleton-placeholder"
+              className="pointer-events-none absolute inset-0 -z-10 rounded-[3.2rem] bg-gradient-to-b from-slate-100 via-slate-200 to-slate-100 motion-safe:animate-pulse"
+            />
+            <ChatMockup />
+          </div>
         </div>
       </div>
     </section>

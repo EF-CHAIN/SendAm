@@ -63,6 +63,43 @@ describe('Transactions Component', () => {
     expect(screen.getByLabelText('Status')).toHaveValue('success');
   });
 
+  it('reproduces search, filter and pagination state from a shared URL', async () => {
+    // #752: an operator who filters, pages and shares the link must hand the
+    // engineer an identical view in another tab — controls, request params and
+    // the pager's position all restored from the query string alone.
+    const requests = [];
+    server.use(http.get('*/api/admin/transactions', ({ request }) => {
+      const query = new URL(request.url).searchParams;
+      requests.push(Object.fromEntries(query.entries()));
+      return HttpResponse.json({
+        data: [{ _id: 'tx9', type: 'payout', amount: '7', asset: 'USDC', status: 'Failed', createdAt: new Date().toISOString() }],
+        pagination: { limit: Number(query.get('limit')) || 50, nextCursor: 'next-9', prevCursor: 'prev-9', hasMore: true, total: 61 },
+      });
+    }));
+
+    render(
+      <MemoryRouter initialEntries={['/transactions?status=failed&phone=%2B234801&limit=25&after=cursor-page-2&page=2']}>
+        <Transactions />
+      </MemoryRouter>
+    );
+
+    await screen.findByRole('table');
+
+    // Search + filter state.
+    expect(screen.getByLabelText('Status')).toHaveValue('failed');
+    expect(screen.getByLabelText('User Phone')).toHaveValue('+234801');
+    // Pagination state: page size, cursor window and position.
+    expect(screen.getByRole('combobox', { name: 'Items per page' })).toHaveValue('25');
+    expect(requests.at(-1)).toMatchObject({
+      status: 'failed',
+      phone: '+234801',
+      limit: '25',
+      after: 'cursor-page-2',
+    });
+    // The page counter itself is part of the shared URL (#753 page param).
+    expect(screen.getByTestId('jump-to-page')).toHaveValue(2);
+  });
+
   it('fetches a fresh first page with the selected limit', async () => {
     const requests = [];
     server.use(http.get('*/api/admin/transactions', ({ request }) => {

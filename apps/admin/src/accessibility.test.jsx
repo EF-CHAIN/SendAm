@@ -130,7 +130,9 @@ describe('admin dashboard accessibility', () => {
     it('announces the loading state and renders stats with a logical heading structure', async () => {
       const { container } = renderAdmin('/');
       // Synchronously after mount the shared Loader exposes a live status region.
-      expect(screen.getByRole('status')).toBeInTheDocument();
+      const loadingStatus = screen.getByRole('status');
+      expect(loadingStatus).toHaveAttribute('aria-live', 'polite');
+      expect(loadingStatus).toHaveTextContent('Loading data, please wait...');
       const loadingResults = await axe(container);
       expect(loadingResults).toHaveNoViolations();
 
