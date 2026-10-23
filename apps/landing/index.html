@@ -20,12 +20,20 @@
     <!-- Open Graph -->
     <meta property="og:type" content="website" />
     <meta property="og:site_name" content="SendAm" />
+    <meta property="og:url" content="https://send-am-web.vercel.app/" />
     <meta property="og:title" content="SendAm | Send money like you send a text" />
     <meta
       property="og:description"
       content="WhatsApp-first payments powered by the Stellar network. Create a wallet and send XLM from a chat."
     />
-    <meta property="og:image" content="/logo-sent.svg" />
+    <meta
+      property="og:image"
+      content="https://send-am-web.vercel.app/social-preview.png"
+    />
+    <meta property="og:image:type" content="image/png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="SendAm logo on a light teal background" />
 
     <!-- Twitter -->
     <meta name="twitter:card" content="summary_large_image" />
@@ -34,7 +42,11 @@
       name="twitter:description"
       content="WhatsApp-first payments powered by the Stellar network. Create a wallet and send XLM from a chat."
     />
-    <meta name="twitter:image" content="/logo-sent.svg" />
+    <meta
+      name="twitter:image"
+      content="https://send-am-web.vercel.app/social-preview.png"
+    />
+    <meta name="twitter:image:alt" content="SendAm logo on a light teal background" />
 
     <!-- Structured data (schema.org JSON-LD): corporate identity, payment service, corridors, support -->
     <script type="application/ld+json" id="sendam-structured-data">
@@ -87,10 +99,24 @@
 
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <!-- Fonts load without blocking first paint; system fonts render until Inter swaps in. -->
+    <link
+      rel="preload"
+      as="style"
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap"
+    />
     <link
       href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap"
       rel="stylesheet"
+      media="print"
+      onload="this.media='all'"
     />
+    <noscript>
+      <link
+        href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap"
+        rel="stylesheet"
+      />
+    </noscript>
   </head>
   <body>
     <div id="root"></div>

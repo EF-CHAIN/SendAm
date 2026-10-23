@@ -33,6 +33,36 @@ npm run dev:landing   # http://localhost:3000
 npm run build --workspace=apps/landing
 ```
 
+### Critical CSS
+
+The build inlines the CSS needed for the first viewport and stops the full
+Tailwind stylesheet from blocking first paint
+([`build/criticalCss.js`](build/criticalCss.js)):
+
+1. `build/renderShell.js` renders the navbar and hero
+   ([`src/critical-shell.jsx`](src/critical-shell.jsx)) through a temporary
+   Vite SSR server.
+2. [Beasties](https://github.com/danielroe/beasties) keeps only the rules that
+   markup uses and inlines them in a `<style>` tag in `index.html`
+   (about 15 kB of the 45 kB stylesheet).
+3. The full stylesheet is loaded with `media="print"` and switched to `all`
+   on load, with a `<noscript>` fallback. Google Fonts load the same way.
+4. The static navbar markup ships inside `#root`, so the first paint happens
+   before the JS bundle runs. React replaces it on mount.
+
+If any step fails, the build logs a `[critical-css]` warning and keeps the
+original render-blocking stylesheet rather than shipping unstyled HTML. The
+step only runs for `vite build`; the dev server is unchanged.
+
+To check First Contentful Paint against the 0.8 s target, run Lighthouse on
+the production build with mobile throttling:
+
+```bash
+npm run build --workspace=apps/landing
+npm run preview --workspace=apps/landing -- --port 4173
+npx lighthouse http://localhost:4173 --only-categories=performance --form-factor=mobile --throttling-method=simulate
+```
+
 ## Deployment
 
 The landing site builds to static assets, so it deploys to Vercel as a static
@@ -123,6 +153,81 @@ presets update inside `startTransition`. The output column is memoised and sets
 `aria-busy` / `data-stale` while it catches up. The maths itself lives in
 [`src/lib/quote.js`](src/lib/quote.js). Measure INP with Chrome DevTools
 Performance (CPU 6x slowdown) or Lighthouse timespan mode.
+## Security Headers And CSP
+
+The landing site sends a strict Content Security Policy (CSP) plus four
+companion headers. They are declared in two places, one per environment:
+
+| Environment | Declared in | Scope |
+| --- | --- | --- |
+| `npm run dev:landing` | `server.headers` in [`vite.config.js`](vite.config.js) | every dev-server response on `http://localhost:3000` |
+| Deployed site | `headers` in [`vercel.json`](vercel.json) | every response, plus two per-path rules |
+
+Vercel reads `vercel.json` only from the project root directory, so the
+deployed headers require **Root Directory** set to `apps/landing` as described
+in [Deployment](#deployment).
+
+To see what the dev server actually sends:
+
+```bash
+npm run dev:landing
+curl -I http://localhost:3000/
+```
+
+### Directives
+
+| Directive | Value | Purpose |
+| --- | --- | --- |
+| `default-src` | `'self'` | fallback for any fetch type not listed below |
+| `script-src` | `'self' 'unsafe-inline'` | bundled modules plus the inline React Refresh preamble Vite injects in dev |
+| `style-src` | `'self' 'unsafe-inline' https://fonts.googleapis.com` | Tailwind output, inline `style={{}}` props, Google Fonts stylesheet |
+| `font-src` | `'self' https://fonts.gstatic.com` | Inter webfont files |
+| `img-src` | `'self' data:` | bundled assets and inline data-URL images |
+| `connect-src` | `'self'` (deployed) / `'self' ws: wss:` (dev) | fetch/XHR/EventSource; dev adds the HMR web socket |
+| `frame-ancestors` | `'none'` | the site cannot be embedded in a frame |
+| `base-uri` | `'none'` | blocks `<base>` hijacking of relative URLs |
+| `form-action` | `'none'` | no form can submit off-origin |
+| `upgrade-insecure-requests` | deployed only | rewrites `http://` subresources to `https://` |
+
+The non-CSP headers are the same in both environments:
+`X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`,
+`Referrer-Policy: strict-origin-when-cross-origin`, and
+`Permissions-Policy: geolocation=(), microphone=(), camera=()`.
+
+### Local vs deployed differences
+
+| Behaviour | Dev server | Deployed (Vercel) |
+| --- | --- | --- |
+| `connect-src` | `'self' ws: wss:` | `'self'` |
+| `upgrade-insecure-requests` | absent | present |
+| `/sw.js` | falls back to `index.html` (`Content-Type: text/html`) | served as JavaScript with `Service-Worker-Allowed: /` |
+| `/manifest.json` | `Content-Type: application/json` | `Content-Type: application/manifest+json` |
+
+Only the deployed site applies the two per-path rules in `vercel.json`, so
+service-worker behaviour has to be verified there rather than against the dev
+server.
+
+### Allowing another origin
+
+Anything the page fetches — a local backend proxy, a webhook receiver, an
+analytics beacon — must be listed in `connect-src`, otherwise the browser
+blocks the request and logs a CSP violation in the console. The policy exists
+twice, so add the origin to **both** files or it will work in one environment
+and fail in the other:
+
+1. `apps/landing/vite.config.js` — `server.headers['Content-Security-Policy']`
+2. `apps/landing/vercel.json` — the `Content-Security-Policy` header under `headers`
+
+To let the page call the API while developing, widen `connect-src` to
+`'self' ws: wss: http://localhost:3002`; for the deployed site use the API's
+own HTTPS origin, for example `'self' https://api.your-domain.com` (do not add
+`http://` origins to the deployed policy). The same pattern applies to the
+other fetch types: `img-src` for remote images, `style-src` for a remote
+stylesheet, `font-src` for a remote font.
+
+Vite watches its own config, so saving `vite.config.js` restarts the server and
+picks up the new header — the log prints `vite.config.js changed, restarting
+server...`. Deployed header changes take effect on the next Vercel deployment.
 
 ## Test
 
@@ -136,6 +241,43 @@ Runs component/smoke tests (navigation, CTAs, FAQ) and `jest-axe` accessibility
 checks against the rendered home page with Vitest + Testing Library, in jsdom.
 No live services or network access required. CI runs this on every PR via the
 `landing-tests` job in [`test.yml`](../../.github/workflows/test.yml).
+
+### End-to-end (Playwright)
+
+```bash
+npx playwright install chromium        # once per machine
+npm run test:e2e:landing -- --project=chromium
+```
+
+- `e2e/landing-journey.spec.js`: smoke journey.
+- `e2e/calculator.spec.js`: the currency calculator across 10 preset scenarios.
+  These cover all 9 published corridors (USD, GBP, EUR to NGN, KES, GHS), each
+  preset amount, and a typed amount. The tests check the 1% fee, the
+  traditional-fee comparison and the payout, plus corridor tab switching,
+  input validation, and that the WhatsApp link carries the typed amount.
+  Expected values are written out by hand from the rate table.
+
+### Visual regression
+
+```bash
+npm run test:visual -- --project=landing-desktop-chrome --project=landing-ipad-mini --project=landing-iphone-14
+```
+
+`e2e/visual-regression.spec.js` runs from the root `playwright.config.js`
+under Desktop Chrome, iPad Mini and iPhone 14 profiles, all rendered with
+Chromium. For the home, onboarding status and not-found pages it compares a
+full-page screenshot and asserts there is no horizontal overflow.
+
+- **Threshold:** `VISUAL_MAX_DIFF_PIXEL_RATIO` sets the threshold. The default
+  is `0.0005` (0.05%); any value at or above 0.1% is rejected.
+- **Determinism:** remote fonts are blocked, motion is reduced and the
+  onboarding API is mocked, so screenshots are stable between runs.
+- **Diff artifacts:** on failure, Playwright writes expected, actual and diff
+  images to `test-results/` and the HTML report. CI uploads both as the
+  `playwright-visual-diffs` artifact.
+- **Baselines:** baselines are rendered on the CI runner. Run the *Visual
+  Regression Tests* workflow with `update_snapshots=true`, download the
+  `visual-baselines` artifact, and commit the PNGs.
 
 ## Tech Stack
 

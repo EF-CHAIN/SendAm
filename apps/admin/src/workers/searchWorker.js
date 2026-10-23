@@ -52,14 +52,33 @@ function tokenize(text) {
 }
 
 /**
- * Builds searchable representation of transaction/user record.
+ * Resolves the display entity category for search records.
+ */
+function getRecordCategory(record) {
+  if (record.category) {
+    const cat = String(record.category).toLowerCase();
+    if (cat.includes("user")) return "Users";
+    if (cat.includes("account") || cat.includes("wallet")) return "Stellar Accounts";
+    return "Transactions";
+  }
+  if (record.publicKey) return "Stellar Accounts";
+  if (record.whatsappName || (record.role && !record.txHash)) return "Users";
+  return "Transactions";
+}
+
+/**
+ * Builds searchable representation of transaction/user/wallet record.
  */
 function indexRecord(record) {
+  const category = getRecordCategory(record);
   const searchableParts = [
     record.id || record._id || "",
     record.txHash || record.hash || "",
+    record.publicKey || "",
     record.phoneNumber || record.phone || record.userId?.phoneNumber || "",
-    record.user?.phoneNumber || record.user?.whatsappName || "",
+    record.user?.phoneNumber || record.user?.whatsappName || record.whatsappName || "",
+    record.name || record.email || "",
+    record.label || "",
     record.amount != null ? String(record.amount) : "",
     record.asset || "",
     record.type || "",
@@ -67,13 +86,15 @@ function indexRecord(record) {
     record.rail || "",
     record.destination || "",
     record.memo || "",
+    category,
   ];
 
   const fullText = searchableParts.join(" ").toLowerCase();
   const tokens = Array.from(new Set(tokenize(fullText)));
 
   return {
-    raw: record,
+    raw: { ...record, category: record.category || category },
+    category,
     fullText,
     tokens,
   };

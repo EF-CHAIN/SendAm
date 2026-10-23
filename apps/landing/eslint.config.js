@@ -19,9 +19,9 @@ export default defineConfig([
     },
   },
   {
-    // Vite and Playwright configs run in Node, so they need Node globals
-    // (e.g. __dirname, process.env).
-    files: ['vite.config.js', 'playwright.config.js'],
+    // Vite and Playwright configs and the build plugins run in Node, so they
+    // need Node globals (e.g. __dirname, process.env, Buffer).
+    files: ['vite.config.js', 'playwright.config.js', 'build/**/*.js'],
     languageOptions: { globals: globals.node },
   },
   {

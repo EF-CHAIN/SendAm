@@ -108,8 +108,8 @@ export default function Transactions() {
       </span>
     )},
     { header: 'User Phone', render: (row) => row.userId?.phoneNumber || 'Unknown' },
-    { header: 'Type', render: (row) => <span className="capitalize font-medium text-gray-700">{row.type}</span> },
-    { header: 'Amount', render: (row) => <span className="font-bold">{row.amount} {row.asset}</span> },
+    { header: 'Type', accessor: 'type', sortable: true, render: (row) => <span className="capitalize font-medium text-gray-700">{row.type}</span> },
+    { header: 'Amount', accessor: 'amount', sortable: true, render: (row) => <span className="font-bold">{row.amount} {row.asset}</span> },
     { header: 'Rail', render: (row) => <span className="capitalize">{row.rail}</span> },
     { header: 'Destination', render: (row) => (
       <span className="font-mono text-xs text-gray-500">
@@ -127,8 +127,8 @@ export default function Transactions() {
         View
       </a>
     ) : '—' },
-    { header: 'Status', render: (row) => <StatusBadge status={row.status} /> },
-    { header: 'Date', render: (row) => formatDate(row.createdAt) },
+    { header: 'Status', accessor: 'status', sortable: true, render: (row) => <StatusBadge status={row.status} /> },
+    { header: 'Date', accessor: 'createdAt', sortable: true, render: (row) => formatDate(row.createdAt) },
   ];
 
   return (
@@ -228,6 +228,7 @@ export default function Transactions() {
             columns={columns}
             data={transactions}
             keyField="_id"
+            syncSortWithUrl
             onRowClick={(row) => navigate(`/transactions/${row._id || row.id}`)}
             rowClassName="cursor-pointer hover:bg-primary/5 transition-colors"
           />

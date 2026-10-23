@@ -9,11 +9,18 @@ Part of the [SendAm](../../README.md) monorepo.
 | File | Export | Purpose |
 | --- | --- | --- |
 | `src/Loader.jsx` | `default` | Inline loading spinner |
+| `src/ToastProvider.jsx` | `default`, `useToast` | Shared toast notification provider with auto-dismiss timers and stacked bottom-right alerts |
+| `src/ModalPortal.jsx` | `default` | Accessible modal backdrop portal rendering to `#modal-root` with layout-shift-free scroll lock |
+| `src/Tooltip.jsx` | `default` | Floating UI tooltip with collision detection, boundary clamping, and automated flip |
+| `src/Skeleton.jsx` | `default` | Shared placeholder skeleton with configurable shimmer and multiple variants |
 | `src/ErrorBoundary.jsx` | `default` | React error boundary that renders a safe recovery UI |
 | `src/ErrorFallback.jsx` | `default` | Recovery UI shown by `ErrorBoundary` |
-| `src/formatDate.js` | `formatDate` | Locale-aware date/time formatting |
-| `src/normalizeError.js` | `normalizeError` | Turns any thrown value into a safe, structured error |
-| `src/logger.js` | `logger`, `redact` | Structured console logging with secret redaction |
+| `src/formatDate.js` | `formatDate`, `formatRelativeTime`, `subscribeRelativeTime`, `getNextRelativeTimeUpdateDelay` | Locale-aware date/time formatting and live relative time |
+| `src/useRelativeTime.js` | `default` | React hook wrapping the live relative time |
+| `src/StellarAddress.jsx` | `default` | Truncated Stellar public key with tooltip and copy button |
+| `src/normalizeError.js` | `normalizeError` | Turns any thrown value (HTTP, network, Stellar) into `{ title, message, code }` plus safe metadata |
+| `src/logger.js` | `logger`, `redact`, `LOG_BUFFER_SIZE` | Structured console logging with secret redaction and a 100-entry in-memory buffer |
+| `src/formatCurrency.js` | `formatCurrency` | Fiat and Stellar asset display amounts |
 | `src/api.js` | `default` | Pre-configured Axios instance |
 
 This package has no build step. Workspaces consume the source files directly
@@ -77,6 +84,138 @@ if (loading) return <Loader />;
 if (loading) return <Loader size={16} className="text-gray-400" />;
 ```
 
+### `ToastProvider` and `useToast`
+
+Unified non-intrusive toast notification system supporting `success`, `error`, `warning`, and `info` toasts with auto-dismiss timers, click-to-dismiss, and smooth exit animations. Toasts stack gracefully in the bottom-right corner of the viewport.
+
+#### Provider Setup
+
+```jsx
+import { ToastProvider } from '@shared/ToastProvider.jsx';
+
+function App() {
+  return (
+    <ToastProvider defaultDuration={4000}>
+      <RootRouter />
+    </ToastProvider>
+  );
+}
+```
+
+#### Hook Usage
+
+```jsx
+import { useToast } from '@shared/ToastProvider.jsx';
+
+function SubmitButton() {
+  const { toast } = useToast();
+
+  const handleAction = async () => {
+    try {
+      await save();
+      toast.success('Settings saved successfully');
+    } catch (err) {
+      toast.error('Failed to save settings');
+    }
+  };
+
+  return <button onClick={handleAction}>Save</button>;
+}
+```
+
+| Method / Prop | Signature | Description |
+| --- | --- | --- |
+| `toast.success(message, options)` | `(string, options?) => string` | Success toast with `role="status"` and `aria-live="polite"` |
+| `toast.error(message, options)` | `(string, options?) => string` | Error toast with `role="alert"` and `aria-live="assertive"` |
+| `toast.warning(message, options)` | `(string, options?) => string` | Warning toast with `role="status"` |
+| `toast.info(message, options)` | `(string, options?) => string` | Info toast with `role="status"` |
+| `toast.dismiss(id)` | `(string) => void` | Triggers smooth exit animation and dismisses toast |
+| `toast.clear()` | `() => void` | Dismisses all active toasts |
+
+### `ModalPortal`
+
+Accessible backdrop modal rendered using `createPortal` to `#modal-root`. Locks `document.body` scroll while open without layout shift (by offsetting scrollbar width), provides Tab key focus trapping, Escape key listener, and backdrop click dismissal.
+
+```jsx
+import ModalPortal from '@shared/ModalPortal.jsx';
+
+function ConfirmDialog({ isOpen, onClose, onConfirm }) {
+  return (
+    <ModalPortal
+      isOpen={isOpen}
+      onClose={onClose}
+      ariaLabel="Confirm deletion"
+      role="alertdialog"
+    >
+      <div className="bg-white dark:bg-slate-900 rounded-lg p-6 max-w-md shadow-xl border border-gray-200 dark:border-slate-800">
+        <h3 className="text-lg font-bold">Are you sure?</h3>
+        <p className="mt-2 text-sm text-gray-600 dark:text-gray-400">This action cannot be undone.</p>
+        <div className="mt-4 flex justify-end gap-2">
+          <button onClick={onClose}>Cancel</button>
+          <button onClick={onConfirm} className="bg-red-600 text-white px-4 py-2 rounded">Delete</button>
+        </div>
+      </div>
+    </ModalPortal>
+  );
+}
+```
+
+| Prop | Type | Default | Description |
+| --- | --- | --- | --- |
+| `isOpen` | `boolean` | `true` | Controls modal visibility and body scroll lock |
+| `onClose` | `() => void` | — | Called on Escape or backdrop click |
+| `closeOnEsc` | `boolean` | `true` | Closes modal on Escape key press |
+| `closeOnBackdropClick` | `boolean` | `true` | Closes modal when clicking backdrop |
+| `role` | `'dialog' \| 'alertdialog'` | `'dialog'` | Accessible dialog role |
+| `ariaLabel` / `ariaLabelledBy` | `string` | — | Accessible naming |
+| `rootId` | `string` | `'modal-root'` | Portal target element ID (created automatically if missing) |
+
+### `Tooltip`
+
+Lightweight floating tooltip with automated boundary collision detection, screen-edge clamping, and auto-flip positioning. Stays fully visible regardless of scroll position or screen edge proximity, and is accessible via keyboard focus and hover.
+
+```jsx
+import Tooltip from '@shared/Tooltip.jsx';
+
+<Tooltip content="Export all settlement records as CSV" placement="top">
+  <button type="button">Export</button>
+</Tooltip>
+```
+
+| Prop | Type | Default | Description |
+| --- | --- | --- | --- |
+| `content` | `React.ReactNode` | — | Tooltip body content |
+| `placement` | `'top' \| 'bottom' \| 'left' \| 'right'` | `'top'` | Preferred initial placement; flips automatically on collision |
+| `delay` | `number` | `100` | Delay before showing tooltip (ms) |
+| `offset` | `number` | `8` | Distance in pixels between trigger and tooltip bubble |
+| `padding` | `number` | `8` | Viewport edge padding margin in pixels |
+| `disabled` | `boolean` | `false` | Disables tooltip display when true |
+
+### `Skeleton`
+
+Shared skeleton placeholder component with configurable shimmer effect, supporting `text`, `circular`, and `rectangular` variants to replace custom loading placeholders.
+
+```jsx
+import Skeleton from '@shared/Skeleton.jsx';
+
+// Text lines
+<Skeleton variant="text" count={3} />
+
+// Circular avatar
+<Skeleton variant="circular" width={40} height={40} />
+
+// Rectangular card placeholder with shimmer
+<Skeleton variant="rectangular" height={160} animation="shimmer" />
+```
+
+| Prop | Type | Default | Description |
+| --- | --- | --- | --- |
+| `variant` | `'text' \| 'circular' \| 'rectangular'` | `'rectangular'` | Shape variant |
+| `animation` | `'shimmer' \| 'pulse' \| 'none'` | `'shimmer'` | Animation style |
+| `width` | `string \| number` | — | Custom width (e.g. `100`, `'100%'`, `'4rem'`) |
+| `height` | `string \| number` | — | Custom height (e.g. `20`, `'2.5rem'`) |
+| `count` | `number` | `1` | Number of skeleton elements stacked together |
+
 ### `ErrorBoundary`
 
 Class component that catches render-phase errors in its subtree and renders a
@@ -131,7 +270,67 @@ failure immediately; the decorative icon is marked `aria-hidden`; all
 interactive controls have visible `focus-visible` outlines and descriptive
 labels.
 
+### `StellarAddress`
+
+Renders a Stellar public key as `GABC...WXYZ` (first 4 and last 4 characters)
+so 56-character addresses no longer break table layouts. The full address is
+the button's `title` tooltip; clicking copies it and swaps the copy icon for a
+checkmark for two seconds.
+
+| Prop | Type | Default | Description |
+| --- | --- | --- | --- |
+| `address` | `string` | — | Full public key. Renders nothing when empty or not a string; values too short to shorten are shown as is |
+| `className` | `string` | `''` | Extra classes appended to the button |
+
+Copying uses `navigator.clipboard.writeText` and falls back to
+`document.execCommand('copy')`. If both fail the icon stays unchanged and a
+"Copy failed" message is announced. A visually hidden `role="status"` region
+announces "Address copied", and the button's `aria-label` carries the full
+address for screen readers.
+
+```jsx
+import StellarAddress from '@shared/StellarAddress.jsx';
+
+<td><StellarAddress address={wallet.publicKey} /></td>
+```
+
 ## Utilities
+
+### `formatCurrency(amount, currencyCode)`
+
+Formats a finite number or plain decimal string with `Intl.NumberFormat` in
+`en-US`, matching the fixed locale used by `formatDate`. ISO currencies use
+their standard minor units: USD, EUR, GBP and NGN have exactly two decimals,
+and NGN uses the ₦ symbol. Other alphanumeric Stellar asset codes (1–12
+characters, including XLM and USDC) use up to seven decimals, omit trailing
+zeroes, and appear after the amount. ISO currency codes take precedence over
+custom asset codes with the same name. Codes are trimmed; ISO currency codes
+are normalized to uppercase, while other asset codes keep their original case
+because Stellar asset codes are case-sensitive.
+
+```js
+import { formatCurrency } from '@shared/formatCurrency.js';
+
+formatCurrency(1234.5, 'USD');           // "$1,234.50"
+formatCurrency(1234.5, 'NGN');           // "₦1,234.50"
+formatCurrency('0.0000001', 'XLM');      // "0.0000001 XLM"
+formatCurrency('1.12345675', 'USDC');    // "1.1234568 USDC"
+```
+
+This is a display utility, not transaction validation or arithmetic. Extra
+fractional digits are rounded by Intl (half away from zero), and negative
+amounts are allowed. For exact large balances, pass decimal strings directly
+from the API; precision already lost in a JavaScript number cannot be recovered.
+This requires Intl support for exact decimal-string formatting and
+`Intl.supportedValuesOf` (available in modern browsers and Node 20+). Amounts
+that round to zero are displayed without a minus sign.
+Invalid amounts or codes throw `TypeError` rather than silently displaying a
+zero balance. Strings must use plain decimals (no grouping, currency symbols,
+or exponent notation); null, empty strings, booleans, NaN and infinity are rejected.
+Transaction limits and backend money rules are unchanged.
+
+The formatter tests run in the existing admin CI suite through the shared alias:
+`npm run test:admin -- src/lib/formatCurrency.test.js`.
 
 ### `formatDate(dateString)`
 
@@ -163,46 +362,99 @@ const safeFormat = (value) =>
   value && Number.isNaN(new Date(value).getTime()) ? '' : formatDate(value);
 ```
 
+### `formatRelativeTime(date, now?)`
+
+Relative time for live feeds. Accepts a `Date`, ISO string or epoch
+milliseconds; `now` (epoch ms) is injectable for tests.
+
+| Age | Output |
+| --- | --- |
+| under 1 minute | `Just now` |
+| under 1 hour | `5m ago` |
+| under 24 hours | `2h ago` |
+| 24 hours or more | the absolute `formatDate` output |
+
+Timestamps up to a minute in the future (client clock skew) read `Just now`.
+Further ahead they are rendered with `Intl.RelativeTimeFormat` (`in 5 minutes`)
+for the next 24 hours, then as an absolute date. Unlike `formatDate`, empty or
+unparseable input returns `''` instead of throwing. The English suffixes are
+fixed so the output is identical in every browser.
+
+To keep the text fresh, `subscribeRelativeTime(date, callback)` calls the
+callback immediately and again on every minute boundary while the event is
+under an hour old, then hourly until it rolls over to the absolute date, after
+which it stops. It returns an unsubscribe function.
+`getNextRelativeTimeUpdateDelay(date, now?)` exposes the next delay (or `null`).
+In React use the hook, which cleans up on unmount:
+
+```jsx
+import useRelativeTime from '@shared/useRelativeTime.js';
+
+function Age({ createdAt }) {
+  const text = useRelativeTime(createdAt); // "Just now" -> "1m ago" -> ...
+  return <time dateTime={createdAt} title={formatDate(createdAt)}>{text}</time>;
+}
+```
+
 
 ### `normalizeError(thrown)`
 
 Converts any thrown value into a stable shape that is safe to render. Handles
 `Error` instances, strings, plain objects, `null`/`undefined`, Axios errors with
-a `response` shape, and malformed payloads.
-
-Returns an object with two clearly separated halves:
+a `response` shape, fetch failures, `{ status }` objects, network disconnects,
+timeouts, cancellations, Stellar Horizon result codes, and malformed payloads.
+It never throws.
 
 | Field | Type | Safe to render? |
 | --- | --- | --- |
-| `userMessage` | `string` | **Yes** — static, category-based copy |
-| `category` | `'network' \| 'auth' \| 'notFound' \| 'server' \| 'unknown'` | Yes |
-| `retryable` | `boolean` | Yes — `false` only for `auth` |
+| `title` | `string` | **Yes** — short heading for a toast or alert |
+| `message` | `string` | **Yes** — actionable, static copy |
+| `code` | `string` | Yes — stable identifier, see below |
+| `userMessage` | `string` | **Yes** — alias of `message`, kept for existing callers |
+| `category` | `'network' \| 'auth' \| 'notFound' \| 'server' \| 'stellar' \| 'unknown'` | Yes |
+| `retryable` | `boolean` | Yes — whether a retry can help (`false` for auth, validation, missing resources and permanent Stellar failures) |
 | `correlationId` | `string \| null` | Read from the `x-correlation-id` response header (max 128 chars) |
 | `internal` | `object` | **No** — diagnostics for logging only |
 
+Messages are always static copy chosen by `code`; server-provided text is never
+rendered.
+
 Classification order:
 
-1. If an HTTP status is present (Axios error), it wins: `401`/`403` → `auth`,
-   `404` → `notFound`, `>= 500` → `server`, anything else → `unknown`.
-2. Otherwise `ERR_NETWORK`, `ECONNREFUSED`, or the message `Network Error` →
-   `network`.
-3. Non-`Error` thrown values → `unknown`.
-4. Otherwise the message is matched heuristically (`network`/`fetch` →
-   `network`; `auth`/`unauthorized`/`forbidden` → `auth`; else `unknown`).
+1. Stellar Horizon `extras.result_codes` (on `response.data`, `data` or the
+   error itself). The first operation code other than `op_success` wins over
+   the transaction code, so `tx_failed` + `op_underfunded` gives
+   `op_underfunded`. `code` is the Stellar code (for example `op_underfunded`,
+   `tx_bad_seq`, `tx_insufficient_fee`); unknown but well-formed codes get
+   generic "Transaction failed" copy and keep their code.
+2. An HTTP status from `response.status`, `status` or `statusCode`:
+   `BAD_REQUEST`, `AUTH_REQUIRED` (401), `FORBIDDEN`, `NOT_FOUND`, `TIMEOUT`
+   (408), `CONFLICT`, `VALIDATION_FAILED` (422), `RATE_LIMITED`, `SERVER_ERROR`,
+   `SERVICE_UNAVAILABLE` (502/503), `GATEWAY_TIMEOUT`, `REQUEST_FAILED` for
+   other 4xx, and `SERVER_ERROR` for other 5xx.
+3. No response: `REQUEST_CANCELED` (`ERR_CANCELED`, `AbortError`), `TIMEOUT`
+   (`ECONNABORTED`, `ETIMEDOUT`, `TimeoutError`), `NETWORK_ERROR`
+   (`ERR_NETWORK`, `ECONNREFUSED`, `Network Error`, `Failed to fetch`, ...) or
+   `OFFLINE` when `navigator.onLine` is `false`.
+4. Non-`Error` thrown values -> `UNKNOWN_ERROR`.
+5. Otherwise the message is matched heuristically (`network`/`fetch` ->
+   `NETWORK_ERROR`; `auth`/`unauthorized`/`forbidden` -> `AUTH_REQUIRED`; else
+   `UNKNOWN_ERROR`).
 
-`internal` includes `name`, `message` (one line, no stack), `status`, and
-`path` — the path has its query string stripped so API keys in query params are
-never logged. Response bodies are deliberately excluded.
+`internal` includes `name`, `message` (one line, no stack), `status`, `path`
+(query string stripped so API keys in query params are never logged), the
+Stellar code and the API envelope's `error.code` as `backendCode`. Response
+bodies and transaction XDR are deliberately excluded.
 
 ```js
 import { normalizeError } from '@shared/normalizeError.js';
 
 try {
-  await api.get('/admin/users');
+  await submitPayment();
 } catch (thrown) {
-  const { userMessage, retryable, category, internal } = normalizeError(thrown);
-  logger.error('Failed to load users', { category, ...internal });
-  setError({ userMessage, retryable });  // only safe fields reach the UI
+  const { title, message, code, retryable, internal } = normalizeError(thrown);
+  logger.error('Payment failed', { code, ...internal });
+  toast.error({ title, message, retryable });  // only safe fields reach the UI
 }
 ```
 
@@ -220,6 +472,22 @@ logger.info('User list loaded', { count: 42 });
 logger.warn('Unexpected payload shape', { keys: Object.keys(data) });
 logger.error('Request failed', { status: 500, correlationId });
 ```
+
+Every record is also kept in a circular in-memory buffer holding the last
+`LOG_BUFFER_SIZE` (100) entries across all levels, so support can recover what
+happened after the console was cleared or the view changed. The buffer lives in
+memory only: a full page reload empties it.
+
+```js
+logger.getRecentLogs();       // deep copy, oldest first, at most 100 entries
+logger.downloadLogs();        // saves sendam-logs-<timestamp>.json, returns the filename
+logger.downloadLogs('ticket-42.json');
+logger.clearLogs();           // empties the buffer
+```
+
+The export is `{ exportedAt, capacity, count, logs }`. Buffered entries are the
+already-redacted records, so a download carries no more than the console did.
+`downloadLogs` is a no-op returning `null` outside a browser.
 
 Every context object is passed through `redact()` first, which recursively
 replaces values of sensitive keys with `[REDACTED]`. The redacted key set
@@ -285,9 +553,9 @@ These are provided by the consuming app, not installed by this package:
 
 | Dependency | Range | Used by |
 | --- | --- | --- |
-| `react` | `>=18` | `Loader`, `ErrorBoundary`, `ErrorFallback` |
+| `react` | `>=18` | `Loader`, `ErrorBoundary`, `ErrorFallback`, `StellarAddress`, `useRelativeTime` |
 | `axios` | `^1` | `api` |
-| `lucide-react` | `*` | `Loader` |
+| `lucide-react` | `*` | `Loader`, `StellarAddress` |
 
 ## Related documentation
 
