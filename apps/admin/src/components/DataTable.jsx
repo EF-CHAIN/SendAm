@@ -11,11 +11,13 @@ import {
   RotateCcw,
 } from 'lucide-react';
 import { useSearchParams } from 'react-router-dom';
+import { compareValues, sortFromSearchParams, DIRECTION_TO_DIR } from './dataTableSort';
 
 const FOCUSABLE_HEADER = 'focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary';
 
 // Pagination cursors and page size are not filters — they must not trigger the
 // "Reset Filters" recovery action in the empty state.
+const NON_FILTER_PARAMS = new Set(['after', 'before', 'limit', 'sort', 'dir']);
 const NON_FILTER_PARAMS = new Set(['after', 'before', 'limit']);
 
 // Single-line content + vertical padding + the row's 1px border. An explicit
@@ -116,6 +118,9 @@ export default function DataTable({
   maxHeight = 600,
   overscan = 5,
   virtualizeThreshold = 50,
+  syncSortWithUrl = false,
+}) {
+  const [localSort, setLocalSort] = useState(defaultSort);
   storageKey,
 }) {
   const [sort, setSort] = useState(() => normalizeSort(defaultSort));
@@ -140,6 +145,12 @@ export default function DataTable({
     measuredHeights[density] || 0
   );
   const [searchParams, setSearchParams] = useSearchParams();
+  // With URL sync the query string is the single source of truth, so a sorted
+  // view survives reloads, shared links and back/forward navigation. Unknown
+  // keys or directions fall back to `defaultSort`.
+  const sort = syncSortWithUrl
+    ? sortFromSearchParams(searchParams, columns) ?? defaultSort
+    : localSort;
   const hasActiveFilters =
     filtersActive ??
     Array.from(searchParams.keys()).some((key) => !NON_FILTER_PARAMS.has(key));
@@ -147,6 +158,27 @@ export default function DataTable({
   const sortKeyOf = (column) => column.accessor ?? column.header;
   const sortedData = useMemo(() => sortRows(data, columns, sort), [data, columns, sort]);
 
+  const nextSort = (current, key) =>
+    current?.key !== key
+      ? { key, direction: 'ascending' }
+      : { key, direction: current.direction === 'ascending' ? 'descending' : 'ascending' };
+
+  const handleSort = (column) => {
+    const key = sortKeyOf(column);
+    if (!syncSortWithUrl) {
+      setLocalSort((current) => nextSort(current, key));
+      return;
+    }
+    const next = nextSort(sort, key);
+    setSearchParams(
+      (prev) => {
+        const params = new URLSearchParams(prev);
+        params.set('sort', next.key);
+        params.set('dir', DIRECTION_TO_DIR[next.direction]);
+        return params;
+      },
+      { replace: true }
+    );
   // Plain click: sort by this column alone, flipping direction if it already
   // leads the sort. Shift+click: add it as a secondary key, or flip its direction
   // when it is already part of the sort. Plain clicks clear any secondary keys.

@@ -4,6 +4,7 @@ import { ChevronDown, ChevronUp, Copy, Check, Code } from 'lucide-react';
 import { getAdminTransaction } from '@/lib/adminApi';
 import { formatDate } from '@shared/formatDate';
 import StatusBadge from '@/components/StatusBadge';
+import PaymentPathVisualizer from '@/components/PaymentPathVisualizer';
 import Loader from '@shared/Loader';
 import { exportReceiptPdf } from '@/lib/receiptPdf';
 import { Download, FileCode, ExternalLink } from 'lucide-react';
@@ -319,6 +320,8 @@ export default function TransactionDetail() {
           </Field>
           <Field label="Quote ID" value={tx.quoteId} mono />
         </dl>
+
+        <PaymentPathVisualizer tx={tx} />
 
         {/* Routing */}
         <div className="px-4 py-3 bg-gray-50 dark:bg-slate-800/60 border-t border-b border-gray-200 dark:border-slate-800">

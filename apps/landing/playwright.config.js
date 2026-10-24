@@ -5,6 +5,9 @@ import { defineConfig, devices } from '@playwright/test';
  */
 export default defineConfig({
   testDir: './e2e',
+  // The pixel-diff suite runs from the root playwright.config.js, which owns
+  // its viewports and baselines.
+  testIgnore: ['**/visual-regression.spec.js'],
   timeout: 30 * 1000,
   expect: {
     timeout: 5000,
@@ -42,7 +45,9 @@ export default defineConfig({
     },
   ],
   webServer: {
-    command: 'npm run dev',
+    // vite.config.js serves the landing app on 3000 by default; pin the port
+    // Playwright waits on so the server and baseURL agree.
+    command: 'npm run dev -- --port 5173 --strictPort',
     port: 5173,
     reuseExistingServer: !process.env.CI,
     timeout: 120 * 1000,

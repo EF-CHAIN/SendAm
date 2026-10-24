@@ -306,6 +306,77 @@ function ReceiptStatus({ status }) {
 const SWIPE_REPLY_THRESHOLD = 56;
 const MAX_SWIPE_DISTANCE = 96;
 
+/**
+ * Normalize a WhatsApp interactive list message out of a bot message, or
+ * return null when the message isn't one.
+ *
+ * Accepted shapes, in order:
+ *   - `message.interactive` — the WhatsApp Cloud API payload:
+ *     `{ type: 'list', body: { text }, action: { button, sections } }`
+ *   - `message.listMessage` — the same thing minus the Cloud API nesting:
+ *     `{ body, buttonLabel, sections }`
+ *   - `message.text` that *is* one of the above as a JSON string. The sim
+ *     pipeline only carries reply strings (see sim.controller.js), so this is
+ *     how a list message actually travels through the simulator today.
+ *
+ * The result is `{ body, buttonLabel, sections: [{ id, title, rows }] }` with
+ * every row shaped `{ id, title, description }`. Sections without usable rows
+ * are dropped; a list with no rows left is not a list message.
+ */
+export function parseListMessage(message) {
+  if (!message || message.sender !== 'bot') return null;
+
+  let source = null;
+  if (message.interactive && typeof message.interactive === 'object') {
+    source = message.interactive;
+  } else if (message.listMessage && typeof message.listMessage === 'object') {
+    source = { type: 'list', ...message.listMessage };
+  } else {
+    const text = String(message.text || '').trim();
+    if (text.startsWith('{') && text.includes('sections')) {
+      try {
+        const parsed = JSON.parse(text);
+        if (parsed && typeof parsed === 'object') {
+          source = parsed.interactive && typeof parsed.interactive === 'object'
+            ? parsed.interactive
+            : parsed;
+        }
+      } catch {
+        return null;
+      }
+    }
+  }
+  if (!source || (source.type && source.type !== 'list')) return null;
+
+  const action = source.action && typeof source.action === 'object' ? source.action : source;
+  const rawSections = Array.isArray(action.sections) ? action.sections : [];
+  const sections = rawSections
+    .map((section, sectionIndex) => ({
+      id: `section-${sectionIndex}`,
+      title: typeof section?.title === 'string' ? section.title : '',
+      rows: (Array.isArray(section?.rows) ? section.rows : [])
+        .map((row, rowIndex) => ({
+          id: String(row?.id || `row-${sectionIndex}-${rowIndex}`),
+          title: typeof row?.title === 'string' ? row.title : '',
+          description: typeof row?.description === 'string' ? row.description : '',
+        }))
+        .filter((row) => row.title),
+    }))
+    .filter((section) => section.rows.length > 0);
+  if (sections.length === 0) return null;
+
+  const bodyText =
+    typeof source.body === 'string' ? source.body : source.body?.text;
+  return {
+    body: typeof bodyText === 'string' ? bodyText : '',
+    buttonLabel:
+      (typeof action.button === 'string' && action.button) ||
+      (typeof source.buttonLabel === 'string' && source.buttonLabel) ||
+      'Menu',
+    sections,
+  };
+}
+
 export function parseQuickReplies(message) {
   if (!message || message.sender !== 'bot') return [];
   if (Array.isArray(message.quickReplies) && message.quickReplies.length > 0) {
@@ -369,7 +440,7 @@ function pointFromEvent(event) {
 // A message bubble that can be dragged horizontally to the right to quote it.
 // Swiping reveals a reply arrow; releasing past the threshold notifies the
 // parent and springs the bubble back into place.
-function SwipeableBubble({ item, isUser, onReply }) {
+function SwipeableBubble({ item, isUser, onReply, darkMode = false }) {
   const isVoice = item.type === 'voice' || item.isVoice;
   const translateX = useRef(new Animated.Value(0)).current;
   const startX = useRef(0);
@@ -445,6 +516,7 @@ function SwipeableBubble({ item, isUser, onReply }) {
               ? 'bg-green-500 rounded-2xl px-3 py-2'
               : 'bg-gray-200 rounded-2xl px-3 py-2'
           }
+          style={darkMode ? { backgroundColor: isUser ? '#005c4b' : '#202c33' } : undefined}
         >
           {item.replyTo && (
             <View className="mb-1 border-l-2 border-emerald-300 pl-2">
@@ -491,7 +563,12 @@ function SwipeableBubble({ item, isUser, onReply }) {
             <VoiceBubble item={item} isUser={isUser} />
           ) : (
             Boolean(item.text) && (
-              <Text className={isUser ? 'text-white' : 'text-gray-900'}>{item.text}</Text>
+              <Text
+                style={darkMode ? { color: '#e9edef' } : undefined}
+                className={isUser ? 'text-white' : 'text-gray-900'}
+              >
+                {item.text}
+              </Text>
             )
           )}
           {hasMeta && (
@@ -531,23 +608,148 @@ function SwipeableBubble({ item, isUser, onReply }) {
   );
 }
 
+const MONTHS = [
+  'January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December',
+];
+
+/** Parses a message timestamp (ISO string or epoch ms). Returns null if unusable. */
+function messageDate(message) {
+  const raw = message?.timestamp ?? message?.createdAt;
+  if (raw === undefined || raw === null || raw === '') return null;
+  const date = new Date(raw);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+/** Local calendar-day key, e.g. "2026-9-14" (month is zero-based; only used for equality). */
+function dayKey(date) {
+  return `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;
+}
+
+/**
+ * Label for a date separator pill: "Today", "Yesterday", or a full date such as
+ * "October 14, 2026". Compares local calendar days, not 24h windows.
+ */
+export function formatDateHeader(date, now = new Date()) {
+  if (dayKey(date) === dayKey(now)) return 'Today';
+  const yesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
+  if (dayKey(date) === dayKey(yesterday)) return 'Yesterday';
+  return `${MONTHS[date.getMonth()]} ${date.getDate()}, ${date.getFullYear()}`;
+}
+
+/**
+ * Flattens messages into rows, inserting a date row before the first message of
+ * each calendar day. Messages without a valid timestamp never start a new day and
+ * get no header of their own.
+ */
+export function buildRows(messages, now = new Date()) {
+  const rows = [];
+  let lastKey = null;
+  for (const message of messages) {
+    const date = messageDate(message);
+    if (date) {
+      const key = dayKey(date);
+      if (key !== lastKey) {
+        rows.push({ type: 'date', id: `date-${key}`, label: formatDateHeader(date, now) });
+        lastKey = key;
+      }
+    }
+    rows.push({ type: 'message', id: message.id, message });
+  }
+  return rows;
+}
+
 export default function MessageList({
   messages,
   onQuickReply,
+  onOpenList,
   disabledReplies = {},
   sending = false,
   onReply,
+  now,
+  darkMode = false,
 }) {
+  const rows = buildRows(messages, now);
+  const stickyHeaderIndices = rows.reduce((acc, row, i) => (row.type === 'date' ? [...acc, i] : acc), []);
+
   return (
-    <ScrollView contentContainerClassName="px-3 py-2 gap-2">
-      {messages.map((item) => {
+    <ScrollView
+      contentContainerClassName="px-3 py-2 gap-2"
+      stickyHeaderIndices={stickyHeaderIndices}
+    >
+      {rows.map((row) => {
+        if (row.type === 'date') {
+          return (
+            <View key={row.id} testID="date-header" className="items-center py-1">
+              <View className="bg-white/90 rounded-full px-3 py-1 shadow-sm border border-gray-200">
+                <Text className="text-xs font-medium text-gray-600">{row.label}</Text>
+              </View>
+            </View>
+          );
+        }
+        const item = row.message;
         const isUser = item.sender === 'user';
-        const quickReplies = !isUser ? parseQuickReplies(item) : [];
+        const listMessage = !isUser ? parseListMessage(item) : null;
+        // A list message's text is its payload, not a menu to regex-scan.
+        const quickReplies = !isUser && !listMessage ? parseQuickReplies(item) : [];
         const isMsgDisabled = Boolean(disabledReplies[item.id]) || sending;
+
+        const bubbleStyle = darkMode
+          ? {
+              backgroundColor: isUser ? '#005c4b' : '#202c33',
+            }
+          : undefined;
+
+        const bubbleTextClass = darkMode
+          ? 'text-[#e9edef]'
+          : isUser
+            ? 'text-white'
+            : 'text-gray-900';
 
         return (
           <View key={item.id} className="gap-1.5">
-            <SwipeableBubble item={item} isUser={isUser} onReply={onReply} />
+            <View
+              testID={`bubble-${item.sender}`}
+              style={bubbleStyle}
+              className={
+                isUser
+                  ? 'self-end bg-green-500 rounded-2xl px-3 py-2 max-w-[80%]'
+                  : 'self-start bg-gray-200 rounded-2xl px-3 py-2 max-w-[80%]'
+              }
+            >
+              {listMessage ? (
+                <View className="gap-1.5">
+                  <Text
+                    style={darkMode ? { color: '#e9edef' } : undefined}
+                    className="text-gray-900"
+                  >
+                    {listMessage.body || 'Choose an option'}
+                  </Text>
+                  <View className="border-t border-gray-300" />
+                  <Pressable
+                    testID={`list-message-button-${item.id}`}
+                    accessibilityRole="button"
+                    disabled={isMsgDisabled}
+                    onPress={() => onOpenList && onOpenList(listMessage, item.id)}
+                    className={`flex-row items-center justify-center gap-1.5 py-1 ${
+                      isMsgDisabled ? 'opacity-50' : 'active:opacity-70'
+                    }`}
+                  >
+                    <Text className="text-sm font-semibold text-sky-600">
+                      ☰ {listMessage.buttonLabel}
+                    </Text>
+                  </Pressable>
+                </View>
+              ) : (
+                <Text
+                  style={darkMode ? { color: '#e9edef' } : undefined}
+                  className={bubbleTextClass}
+                >
+                  {item.text}
+                </Text>
+              )}
+            </View>
+            <SwipeableBubble item={item} isUser={isUser} onReply={onReply} darkMode={darkMode} />
 
             {/* WhatsApp interactive quick-reply pill buttons */}
             {quickReplies.length > 0 && (
@@ -564,6 +766,11 @@ export default function MessageList({
                       accessibilityRole="button"
                       disabled={isMsgDisabled}
                       onPress={() => onQuickReply && onQuickReply(reply.payload, item.id)}
+                      style={
+                        darkMode && !isMsgDisabled
+                          ? { backgroundColor: '#202c33', borderColor: '#00a884' }
+                          : undefined
+                      }
                       className={`px-3 py-1.5 rounded-full border shadow-sm ${
                         isMsgDisabled
                           ? isSelected
@@ -573,6 +780,7 @@ export default function MessageList({
                       }`}
                     >
                       <Text
+                        style={darkMode && !isMsgDisabled ? { color: '#00a884' } : undefined}
                         className={`text-xs font-semibold ${
                           isMsgDisabled
                             ? isSelected

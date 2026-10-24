@@ -179,6 +179,25 @@ EXPO_PUBLIC_API_BASE_URL=http://192.168.1.20:3002 npm run dev:chat-sim
 Expo inlines `EXPO_PUBLIC_*` variables at bundle time, so restart the
 Metro server after changing it.
 
+## End-to-end tests (Playwright)
+
+`apps/chat-sim/e2e/chat.spec.js` drives the Expo web build in Chromium and mocks
+`/api/sim/*` inside the spec, so no API or database is needed. It covers the
+greeting to payment-confirmation conversation (Idle, RateQuoted,
+ReceiptDelivered), the typing indicator while a reply is in flight, API
+failures, blank-message handling, the simulated voice note path (a fake
+`SpeechRecognition` is injected before the app loads) and `Switch Account`
+session reset.
+
+```bash
+npm install
+npx playwright install chromium
+npm run test:e2e:chat-sim      # starts `expo start --web --port 8081` if not running
+```
+
+The Jest config in `apps/chat-sim/package.json` ignores `/e2e/`, so the two
+runners do not pick up each other's files.
+
 ## Two-device walkthrough (the MVP demo)
 
 1. Device A, number `+234...01`: `balance` → wallet auto-created and funded.

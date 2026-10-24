@@ -115,6 +115,96 @@ describe('NetworkStatusBanner', () => {
     expect(onReconnect).toHaveBeenCalled();
   });
 
+  it('displays green Connection restored. Syncing... toast for 3s upon reconnect', async () => {
+    const onReconnect = vi.fn().mockResolvedValue(true);
+    const { getByRole, queryByRole } = render(
+      <NetworkStatusBanner onReconnect={onReconnect} toastDurationMs={3000} />
+    );
+
+    act(() => {
+      window.dispatchEvent(new Event('offline'));
+    });
+
+    await act(async () => {
+      window.dispatchEvent(new Event('online'));
+    });
+
+    const toast = getByRole('status');
+    expect(toast).toBeDefined();
+    expect(toast.textContent).toContain('Connection restored. Syncing...');
+    expect(onReconnect).toHaveBeenCalled();
+
+    act(() => {
+      vi.advanceTimersByTime(3000);
+    });
+
+    expect(queryByRole('status')).toBeNull();
+  });
+
+  it('displays offline pending queue counter badge and view pending operations button', () => {
+    const onViewPendingActions = vi.fn();
+    const { getByRole, getByTestId } = render(
+      <NetworkStatusBanner pendingActions={3} onViewPendingActions={onViewPendingActions} />
+    );
+
+    act(() => {
+      window.dispatchEvent(new Event('offline'));
+    });
+
+    const badge = getByTestId('pending-actions-badge');
+    expect(badge).toBeDefined();
+    expect(badge.textContent).toBe('3 actions queued for replay when online');
+
+    const viewBtn = getByRole('button', { name: /view pending operations/i });
+    expect(viewBtn).toBeDefined();
+
+    act(() => {
+      fireEvent.click(viewBtn);
+    });
+
+    expect(onViewPendingActions).toHaveBeenCalled();
+    const dialog = getByRole('dialog');
+    expect(dialog).toBeDefined();
+    expect(dialog.textContent).toContain('Pending Offline Operations');
+    expect(dialog.textContent).toContain('Operation #1');
+    expect(dialog.textContent).toContain('Operation #2');
+    expect(dialog.textContent).toContain('Operation #3');
+  });
+
+  it('increments badge as actions are queued offline and decrements as replay succeeds', async () => {
+    const { getByTestId, queryByTestId, rerender } = render(
+      <NetworkStatusBanner pendingActions={0} />
+    );
+
+    act(() => {
+      window.dispatchEvent(new Event('offline'));
+    });
+
+    expect(queryByTestId('pending-actions-badge')).toBeNull();
+
+    act(() => {
+      window.dispatchEvent(
+        new CustomEvent('offline-action-queued', { detail: { count: 3 } })
+      );
+    });
+
+    const badge = getByTestId('pending-actions-badge');
+    expect(badge.textContent).toBe('3 actions queued for replay when online');
+
+    await act(async () => {
+      window.dispatchEvent(new Event('online'));
+    });
+
+    act(() => {
+      window.dispatchEvent(
+        new CustomEvent('offline-action-replayed', { detail: { count: 0 } })
+      );
+    });
+
+    rerender(<NetworkStatusBanner pendingActions={0} />);
+    expect(queryByTestId('pending-actions-badge')).toBeNull();
+  });
+
   describe('api offline retry queue', () => {
     it('initializes with zero pending retries', () => {
       expect(getPendingRetryCount()).toBe(0);

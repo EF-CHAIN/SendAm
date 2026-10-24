@@ -26,6 +26,10 @@ per-app scripts either from the app directory or via
 | `npm run lint` | ESLint across api, landing and admin |
 | `npm test` | The API test suite (`node --test`) |
 | `npm run test:landing` | The landing test suite (Vitest) |
+| `npm run test:admin` | The admin test suite (Vitest) |
+| `npm run test:e2e:landing` | Landing Playwright suite (smoke journey and currency calculator) |
+| `npm run test:e2e:admin` | Admin Playwright suite (Transactions DataTable search, date range, sorting, pagination) |
+| `npm run test:visual` | Pixel-diff visual regression for landing (Desktop Chrome, iPad Mini, iPhone 14) and admin, from `playwright.config.js` |
 | `npm run load -- <args>` | API load-test harness, forwarding `<args>` |
 | `npm run install:all` | Alias for `npm install` (workspace install) |
 
@@ -70,7 +74,11 @@ directory, or from the root with `npm run <script> --workspace=apps/<app>`:
 | `npm run lint` | ESLint |
 | `npm test` | Vitest, single run |
 | `npm run test:watch` | Vitest watch mode (landing only) |
-| `npm run test:e2e` | Playwright end-to-end run (landing only; `npm run test:e2e:landing` from the root) |
+| `npm run test:e2e` | Playwright end-to-end run (`npm run test:e2e:landing` / `npm run test:e2e:admin` from the root) |
+
+Playwright runs need a browser once per machine: `npx playwright install chromium`.
+Each Playwright config starts its own Vite dev server (landing on 5173, admin
+on 5174) and mocks every API call, so no backend is required.
 
 The chat simulator is an Expo app: `npm start` (root: `npm run dev:chat-sim`)
 starts Metro, and `npm run android` / `npm run ios` / `npm run web` target a

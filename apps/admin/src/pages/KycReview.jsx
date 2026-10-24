@@ -17,6 +17,7 @@ import KycImageCompareModal from '@/components/KycImageCompareModal';
 import { encryptData, downloadEncryptedFile } from '@/lib/clientCrypto';
 import { REJECTION_REASONS } from '@/lib/rejectionReasons';
 import PasskeyPromptModal, { usePasskeyStepUp } from '@/components/PasskeyPromptModal';
+import { Clock, User, ChevronDown, ChevronUp } from 'lucide-react';
 
 export { REJECTION_REASONS };
 
@@ -43,6 +44,7 @@ export default function KycReview() {
   const [exportModalOpen, setExportModalOpen] = useState(false);
   const [error, setError] = useState('');
   const [refreshKey, setRefreshKey] = useState(0);
+  const [timelineRow, setTimelineRow] = useState(null);
   const [mutatingId, setMutatingId] = useState(null);
 
   // Side-by-side comparison modal state
@@ -239,6 +241,40 @@ export default function KycReview() {
     },
   ];
 
+  const renderTimelineEvents = (row) => {
+    const history = row.reviewHistory || row.reviewEvents || [];
+    const sorted = [...history].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+    if (sorted.length === 0) return null;
+    return sorted.map((event, idx) => (
+      <div key={idx} className="flex items-start gap-3 pl-4 border-l-2 border-l-gray-200 dark:border-l-slate-700">
+        <div className="mt-1 w-2 h-2 rounded-full bg-gray-400 dark:bg-gray-500" />
+        <div className="flex-1">
+          <div className="flex items-baseline gap-2 mb-0.5">
+            <span className="font-semibold text-sm text-gray-900 dark:text-gray-100">
+              {event.reviewerName || event.reviewer?.username || 'Unknown reviewer'}
+            </span>
+            <span className="text-xs text-gray-500 dark:text-gray-400">
+              {new Date(event.createdAt || event.timestamp).toLocaleString()}
+            </span>
+          </div>
+          {event.previousStatus && event.newStatus && (
+            <div className="flex items-center gap-2 mb-1">
+              <span className="text-xs text-gray-500">Status:</span>
+              <span className="text-xs font-medium text-gray-700 dark:text-gray-300">{event.previousStatus}</span>
+              <span className="text-xs text-gray-400">→</span>
+              <span className={`text-xs font-medium ${event.newStatus === 'approved' ? 'text-green-700' : event.newStatus === 'rejected' ? 'text-red-700' : 'text-blue-700'}`}>
+                {event.newStatus}
+              </span>
+            </div>
+          )}
+          {event.internalComments && (
+            <p className="text-xs text-gray-700 dark:text-gray-300 italic">{event.internalComments}</p>
+          )}
+        </div>
+      </div>
+    ));
+  };
+
   return (
     <div>
       <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3 mb-6">
@@ -295,7 +331,30 @@ export default function KycReview() {
           {error}
         </div>
       )}
-      <DataTable caption="KYC review submissions" columns={columns} data={rows} keyField="_id" />
+      <DataTable caption="KYC review submissions" columns={columns} data={rows} keyField="_id" onRowClick={(row) => setTimelineRow((prev) => (prev?._id === row._id ? null : row))} />
+
+      {timelineRow && (
+        <div className="mb-6 rounded-xl border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-sm overflow-hidden">
+          <div className="flex items-center justify-between px-4 py-3 bg-gray-50 dark:bg-slate-800 border-b border-gray-200 dark:border-slate-700 cursor-pointer" onClick={() => setTimelineRow(null)}>
+            <div className="flex items-center gap-2">
+              <Clock className="w-4 h-4 text-gray-600 dark:text-gray-400" />
+              <span className="text-sm font-medium text-gray-900 dark:text-gray-100">Review timeline for {timelineRow.userId?.phoneNumber}</span>
+            </div>
+            <ChevronUp className="w-4 h-4 text-gray-600 dark:text-gray-400" />
+          </div>
+          <div className="p-4 space-y-4">
+            <div className="flex items-start gap-3">
+              <div className="flex-1 space-y-4">
+                {renderTimelineEvents(timelineRow)}
+              </div>
+            </div>
+            {!timelineRow.reviewHistory?.length && (
+              <p className="text-xs text-gray-500 text-center py-4">No review history recorded for this KYC application.</p>
+            )}
+          </div>
+        </div>
+      )}
+
       <Pagination pagination={pagination} onNext={goNext} onPrev={goPrev} />
 
       {/* Approve / Reject confirmation modal */}

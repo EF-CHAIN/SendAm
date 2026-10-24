@@ -121,4 +121,27 @@ describe('Transactions Component', () => {
     await screen.findByText('100 USDC');
     expect(requests.at(-1)).toEqual({ limit: '100', after: null });
   });
+
+  it('sorts the loaded page by column header without refetching', async () => {
+    const requests = [];
+    server.use(http.get('*/api/admin/transactions', ({ request }) => {
+      requests.push(new URL(request.url).search);
+      return HttpResponse.json({
+        data: [
+          { _id: 'a', type: 'deposit', amount: '100', asset: 'USDC', status: 'success', createdAt: '2026-03-01T00:00:00.000Z' },
+          { _id: 'b', type: 'payout', amount: '9', asset: 'USDC', status: 'failed', createdAt: '2026-03-02T00:00:00.000Z' },
+        ],
+        pagination: { limit: 50, nextCursor: null, prevCursor: null, hasMore: false, total: 2 },
+      });
+    }));
+    renderPage();
+    await screen.findByText('100 USDC');
+    const before = requests.length;
+
+    await userEvent.click(screen.getByRole('button', { name: /amount/i }));
+    const amounts = screen.getAllByText(/ USDC$/).map((el) => el.textContent);
+    expect(amounts).toEqual(['9 USDC', '100 USDC']);
+    expect(screen.getByRole('columnheader', { name: /amount/i })).toHaveAttribute('aria-sort', 'ascending');
+    expect(requests).toHaveLength(before);
+  });
 });
