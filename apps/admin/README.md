@@ -298,6 +298,17 @@ config with `npm run test:visual`.
 - Axios
 - Lucide React icons
 
+## Responsive admin navigation
+
+Below 1024px, the header's **Open navigation** button opens the sidebar as a
+modal drawer over the page. Close it with the close button, backdrop, Escape,
+a left swipe, or any navigation link (including the current route). Opening
+search, logging out, browser navigation, and resizing to desktop also dismiss it.
+The native dialog traps focus, makes the page behind it inert, and restores focus
+when closed; background scrolling is locked only while it is open. The slide and
+backdrop fade respect reduced-motion preferences. At 1024px and above, the sidebar
+stays visible beside the content. Permission-based link visibility is unchanged.
+
 ## Corridor chart time ranges
 
 The dashboard chart defaults to **7D**. The **24H**, **7D**, **30D**, and **1Y**
