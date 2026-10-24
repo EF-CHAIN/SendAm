@@ -6,6 +6,12 @@ import App from './App.jsx';
 import { registerSW } from 'virtual:pwa-register';
 import { swUpdate } from '@/lib/swUpdate.js';
 
+if (import.meta.env.DEV && import.meta.env.VITE_USE_MSW === 'true') {
+  import('./mocks/browser').then(({ worker }) => {
+    worker.start();
+  });
+}
+
 // The worker waits after installing an update; UpdatePrompt offers the reload.
 const updateSW = registerSW({
   onNeedRefresh: () => swUpdate.needRefresh(updateSW),

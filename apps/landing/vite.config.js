@@ -1,11 +1,13 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import path from 'node:path';
+import { visualizer } from 'rollup-plugin-visualizer';
 import { VitePWA } from 'vite-plugin-pwa';
 import offlinePage from './build/offlinePage.js';
 
 // https://vite.dev/config/
 export default defineConfig({
+  plugins: [react(), visualizer(), VitePWA({
   plugins: [react(), offlinePage(), VitePWA({
 import criticalCss from './build/criticalCss.js';
 import { renderAboveTheFold } from './build/renderShell.js';
