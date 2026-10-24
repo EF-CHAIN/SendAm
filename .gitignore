@@ -18,6 +18,9 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 
+# Generated accessibility audit output (scripts/a11y-report.mjs)
+reports/
+
 # OS and editor files
 .DS_Store
 Thumbs.db

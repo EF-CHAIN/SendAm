@@ -3,6 +3,8 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import Transactions from './Transactions';
 import { describe, it, expect } from 'vitest';
+import { http, HttpResponse } from 'msw';
+import { server } from '../mocks/server';
 
 const renderPage = () => render(
   <MemoryRouter>
@@ -59,5 +61,87 @@ describe('Transactions Component', () => {
     });
 
     expect(screen.getByLabelText('Status')).toHaveValue('success');
+  });
+
+  it('reproduces search, filter and pagination state from a shared URL', async () => {
+    // #752: an operator who filters, pages and shares the link must hand the
+    // engineer an identical view in another tab — controls, request params and
+    // the pager's position all restored from the query string alone.
+    const requests = [];
+    server.use(http.get('*/api/admin/transactions', ({ request }) => {
+      const query = new URL(request.url).searchParams;
+      requests.push(Object.fromEntries(query.entries()));
+      return HttpResponse.json({
+        data: [{ _id: 'tx9', type: 'payout', amount: '7', asset: 'USDC', status: 'Failed', createdAt: new Date().toISOString() }],
+        pagination: { limit: Number(query.get('limit')) || 50, nextCursor: 'next-9', prevCursor: 'prev-9', hasMore: true, total: 61 },
+      });
+    }));
+
+    render(
+      <MemoryRouter initialEntries={['/transactions?status=failed&phone=%2B234801&limit=25&after=cursor-page-2&page=2']}>
+        <Transactions />
+      </MemoryRouter>
+    );
+
+    await screen.findByRole('table');
+
+    // Search + filter state.
+    expect(screen.getByLabelText('Status')).toHaveValue('failed');
+    expect(screen.getByLabelText('User Phone')).toHaveValue('+234801');
+    // Pagination state: page size, cursor window and position.
+    expect(screen.getByRole('combobox', { name: 'Items per page' })).toHaveValue('25');
+    expect(requests.at(-1)).toMatchObject({
+      status: 'failed',
+      phone: '+234801',
+      limit: '25',
+      after: 'cursor-page-2',
+    });
+    // The page counter itself is part of the shared URL (#753 page param).
+    expect(screen.getByTestId('jump-to-page')).toHaveValue(2);
+  });
+
+  it('fetches a fresh first page with the selected limit', async () => {
+    const requests = [];
+    server.use(http.get('*/api/admin/transactions', ({ request }) => {
+      const query = new URL(request.url).searchParams;
+      requests.push({ limit: query.get('limit'), after: query.get('after') });
+      return HttpResponse.json({
+        data: [{ _id: 'tx1', type: 'deposit', amount: query.get('limit') === '25' ? '25' : '100', asset: 'USDC', status: 'Completed', createdAt: new Date().toISOString() }],
+        pagination: { limit: Number(query.get('limit')) || 50, nextCursor: null, prevCursor: null, hasMore: false, total: 1 },
+      });
+    }));
+
+    render(
+      <MemoryRouter initialEntries={['/transactions?after=old&limit=25']}>
+        <Transactions />
+      </MemoryRouter>
+    );
+    await screen.findByText('25 USDC');
+    await userEvent.selectOptions(screen.getByRole('combobox', { name: 'Items per page' }), '100');
+    await screen.findByText('100 USDC');
+    expect(requests.at(-1)).toEqual({ limit: '100', after: null });
+  });
+
+  it('sorts the loaded page by column header without refetching', async () => {
+    const requests = [];
+    server.use(http.get('*/api/admin/transactions', ({ request }) => {
+      requests.push(new URL(request.url).search);
+      return HttpResponse.json({
+        data: [
+          { _id: 'a', type: 'deposit', amount: '100', asset: 'USDC', status: 'success', createdAt: '2026-03-01T00:00:00.000Z' },
+          { _id: 'b', type: 'payout', amount: '9', asset: 'USDC', status: 'failed', createdAt: '2026-03-02T00:00:00.000Z' },
+        ],
+        pagination: { limit: 50, nextCursor: null, prevCursor: null, hasMore: false, total: 2 },
+      });
+    }));
+    renderPage();
+    await screen.findByText('100 USDC');
+    const before = requests.length;
+
+    await userEvent.click(screen.getByRole('button', { name: /amount/i }));
+    const amounts = screen.getAllByText(/ USDC$/).map((el) => el.textContent);
+    expect(amounts).toEqual(['9 USDC', '100 USDC']);
+    expect(screen.getByRole('columnheader', { name: /amount/i })).toHaveAttribute('aria-sort', 'ascending');
+    expect(requests).toHaveLength(before);
   });
 });

@@ -25,8 +25,15 @@ export default defineConfig([
     },
   },
   {
-    // Vite config runs in Node, so it needs Node globals (e.g. __dirname).
-    files: ['vite.config.js'],
+    // Vite and Playwright configs and the e2e suite run in Node, so they need
+    // Node globals (e.g. __dirname, process.env).
+    files: ['vite.config.js', 'playwright.config.js', 'e2e/**/*.js'],
     languageOptions: { globals: globals.node },
+  },
+  {
+    // Tests and test setup run under Vitest/jsdom (browser globals) but also
+    // touch Node globals directly (e.g. `global.ResizeObserver`).
+    files: ['**/*.test.{js,jsx}', 'src/setupTests.js', 'src/test/**/*.{js,jsx}'],
+    languageOptions: { globals: { ...globals.browser, ...globals.node } },
   },
 ])

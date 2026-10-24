@@ -7,20 +7,240 @@ Part of the [SendAm](../../README.md) monorepo.
 ## Pages
 
 ```text
-/login            Admin login screen
-/                 Dashboard overview (stats)
-/users            User table
-/wallets          Wallet table
-/transactions     Transaction table
+/login             Admin login screen
+/set-password      Private password setup for bootstrap / rotated credentials
+/                  Dashboard overview (stats)
+/users             User table
+/wallets           Wallet table
+/transactions      Transaction table
+/transactions/:id  Transaction detail (drill-down from the transactions table)
+/kyc               KYC review queue
+/audit-logs        Audit log browser
+/system-health     System health probe
 ```
+
+`/login` and `/set-password` render outside `AdminLayout`; the other eight routes render inside
+`AdminLayout`, which wraps them in `ProtectedRoute` (unauthenticated visitors are redirected to
+`/login`) and provides the sidebar, theme toggle, and `⌘K` / `Ctrl+K` global search.
+
+The sidebar only lists destinations the signed-in operator is allowed to reach — `AdminSidebar`
+calls `getAdminMe()` and keeps a link only when `hasPermission()` matches:
+
+| Sidebar link | Route | Required permission |
+| --- | --- | --- |
+| Overview | `/` | `admin.read` |
+| Users | `/users` | `admin.read` |
+| Wallets | `/wallets` | `admin.read` |
+| Transactions | `/transactions` | `admin.read` |
+| KYC | `/kyc` | `compliance.read` |
+| Audit | `/audit-logs` | `admin.read` |
+| Health | `/system-health` | `operations.write` |
+
+If `getAdminMe()` fails the sidebar renders no links at all. `/transactions/:id` has no sidebar
+entry — it is reached by clicking a row in the transactions table.
+
+## Operator Workflows
+
+### Login (`/login`) and password rotation (`/set-password`)
+
+1. Submit an email and password. `Login.jsx` posts them to `POST /api/admin/login`.
+2. When the API responds with `mustChangePassword: true`, the app navigates to `/set-password`
+   instead of the dashboard.
+3. `/set-password` asks for the current password, a new password, and a confirmation. The new
+   password must be at least 12 characters and reach **Strong** on the live strength meter;
+   on success the operator lands on `/`. The checklist shows length, strength, and confirmation
+   matching. Long passphrases are welcome; no particular mix of character types is mandatory.
+   The client-side zxcvbn estimator checks common words, keyboard patterns, repetitions, and
+   predictable substitutions locally, with no network lookup or password logging. Strong means
+   zxcvbn score 4 (an estimate of at least 10^10 guesses), plus the 12-character minimum. For
+   responsiveness, only the first 100 characters are scored; the full password is submitted
+   unchanged to the existing password-change API. The estimator loads only with this lazy route.
+   This is guidance and a frontend submit gate, not a new server-side policy or a guarantee
+   against compromise; the API's existing validation and session-revocation flow are unchanged.
+4. Pressing `Logout` in the sidebar clears the stored token and returns to `/login`.
+
+### Dashboard (`/`)
+
+Read-only overview: seven stat cards (total users, managed wallets, all transactions, successful
+transactions, failed transactions, pending transactions, pending KYC) followed by a
+"Settled Volume by Asset" table listing each asset's amount, its base-currency equivalent, and
+the rate source. The `baseCurrency` equivalent renders as `unavailable` when the API omits
+`baseAmount`.
+
+### Users (`/users`)
+
+- Filter and page the user table, then drill into **Onboarding Status** to see the blockers that
+  keep an account from completing onboarding.
+- **Deactivate** opens a dialog that requires a reason (`risk_score_exceeded`,
+  `sanctions_match`, `prolonged_inactivity`, `fraud_suspicion`, `customer_request`,
+  `regulatory_order`, or `duplicate_account`), free-text operational notes, and an optional
+  force flag.
+- **Reactivate** captures a resolution rationale (for example "identity verified" or "false
+  positive resolved") and an optional second admin ID for the approval record.
+- Each row can also download JSON compliance evidence for off-platform review.
+
+### Wallets (`/wallets`)
+
+Browse custodial wallets by user phone, chain, and funding state (`pending`, `funded`, or
+`failed`). Columns show the owning user's phone number, the public key, the network, and the
+creation date.
+
+### Transactions (`/transactions`) and transaction detail (`/transactions/:id`)
+
+1. Filter the table by status (`pending`, `processing`, `success`, `failed`), asset, rail, user
+   phone, user ID, transaction ID or hash, and a from/to date range. Use **Export** to pull the
+   current filtered view.
+   Click the Type, Amount, Status or Date header to sort the loaded page. Sorting is
+   client-side and does not refetch. The sort is stored in the URL as `?sort=<field>&dir=asc|desc`,
+   next to the filters, page size (`limit`) and cursors (`after` / `before`), so a reload or a
+   shared link restores the same view.
+2. Click any row to open `/transactions/:id`, which groups the record into Identifiers, Amount,
+   Routing, Parties, Timestamps, and Metadata.
+3. From the detail view an operator can **Decode XDR** (opens `XdrDecoderModal`), **Download PDF
+   Receipt**, or expand **View Raw JSON** and **Copy JSON** to move the payload into another tool.
+
+### KYC review (`/kyc`)
+
+1. Filter the queue by status (`not_started`, `pending`, `review`, `approved`, `rejected`), phone,
+   or country; the table surfaces provider, tier, risk score, and last update.
+2. `Approve` and `Reject` are only offered while a row is `pending` or `review`. Both open a
+   confirmation dialog first.
+3. A rejection requires a reason, and choosing `other` additionally requires explanatory notes —
+   the submit button stays disabled until the notes are filled in.
+4. Because these are compliance decisions, each mutation is gated behind a WebAuthn passkey
+   step-up (`kyc.approve` / `kyc.reject`) before the request is sent.
+5. **Export KYC** exports the filtered set either as a plain file or, via the modal, as an
+   encrypted `.sendam-enc` bundle protected by an operator-chosen passphrase.
+
+### Audit logs (`/audit-logs`)
+
+1. Narrow entries by action, actor type, actor ID, entity type, entity identifier, and a from/to
+   date range.
+2. **Export CSV** downloads the audit trail; **Export Workflow Events** downloads the parallel
+   workflow-event stream.
+3. **Verify Event Chain** runs the tamper-resistance check across the HMAC hash chain and reports
+   the number of events verified. Treat a failure here as an incident, not a UI glitch.
+4. Pair this screen with the KYC workflow: confirm that an approve/reject decision appears with
+   the expected actor and entity before closing a compliance review.
+
+### System health (`/system-health`)
+
+Renders every key/value pair returned by the admin system-health endpoint as a card. There is no
+client-side shaping, so the exact fields depend on the API response. A failed probe shows a
+sanitized message with a **Try again** button; raw error details are deliberately not rendered.
+
+## List Query Architecture
+
+Every list screen (`/users`, `/wallets`, `/transactions`, `/kyc`, `/audit-logs`) keeps its filters
+and its pagination position in the **URL query string**, not in component state. `src/lib/useListQuery.js`
+bridges React Router's `useSearchParams()` to the admin API, so a reload, a browser Back/Forward, or a
+copied link all restore the exact same view:
+
+```text
+/transactions?status=success&asset=XLM&limit=25&after=eyJpIjoi...
+```
+
+Because the request is derived from the URL, the same `params` object drives both the list request and
+the export request — there is no second, hidden copy of the filter state.
+
+### The hook
+
+```jsx
+import { useListQuery } from '@/lib/useListQuery';
+
+const { params, getFilter, setFilter, resetFilters, goNext, goPrev } =
+  useListQuery(['status', 'asset']);
+```
+
+`params` contains only `after`, `before`, `limit` and the filter keys you declare; empty values are
+dropped, so an untouched filter never reaches the API. Its object identity is memoized on the
+serialised query string, which means the fetch effect (`useEffect(..., [params])`) fires once per
+distinct query instead of on every render.
+
+| Return | Signature | Effect on the URL |
+| --- | --- | --- |
+| `params` | object | The API query object built from the current search params |
+| `getFilter` | `(key) => string` | Reads a filter; `''` when absent |
+| `setFilter` | `(key, value)` | Sets `key`, deletes it when `value` is falsy, and always clears `after`/`before` |
+| `resetFilters` | `() => void` | Deletes every declared filter key plus `after`/`before`; **`limit` is preserved** |
+| `goNext` | `(cursor) => void` | Sets `after=<cursor>` and deletes `before` |
+| `goPrev` | `(cursor) => void` | Sets `before=<cursor>` and deletes `after` |
+
+`setFilter` and `resetFilters` discard the cursors on purpose: a cursor only addresses a position
+inside the window it was minted for, so changing the filter has to re-mint it from page one.
+`limit` survives both, so a reset does not silently undo the operator's page-size choice.
+
+### Filter keys per page
+
+| Page | Declared filter keys |
+| --- | --- |
+| `/users` | `phone` |
+| `/wallets` | `phone`, `chain`, `fundingState` |
+| `/transactions` | `status`, `asset`, `rail`, `phone`, `userId`, `identifier`, `from`, `to` |
+| `/kyc` | `status`, `phone`, `country` |
+| `/audit-logs` | `action`, `actorType`, `actorId`, `entityType`, `identifier`, `from`, `to` |
+
+### Keyset cursor pagination
+
+The admin API paginates by **keyset**, not by offset (`apps/api/src/utils/cursorPagination.js`): offset
+pagination skips or duplicates rows when new rows are inserted between two page requests. Cursors are
+opaque base64url strings that encode the sort tuple:
+
+```js
+JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8'));
+// { i: '665f...', s: 'createdAt', v: '2026-01-08T00:00:00.000Z' }
+```
+
+`i` is the row id (the tie-breaker that makes the ordering total), `s` the sort field and `v` its
+value. `decodeCursor()` rejects a cursor whose `s` does not match the endpoint's sort field with
+`400 Invalid cursor`, so a cursor minted by one list cannot be replayed against another.
+
+| Query | Meaning |
+| --- | --- |
+| `after=<cursor>` | Walk forward — rows strictly after the cursor in display order |
+| `before=<cursor>` | Walk backward — rows strictly before the cursor in display order |
+| `limit=<n>` | Page size: defaults to `50`, clamped to `100`; non-numeric or `<= 0` falls back to `50` |
+
+Each response carries a `pagination` block (`sendCursorPaginated` in `apps/api/src/utils/response.js`):
+
+```json
+{ "limit": 50, "nextCursor": "eyJp...", "prevCursor": "eyJp...", "hasMore": true }
+```
+
+`total` is included only when the endpoint computes it. `hasMore` describes the direction the server
+actually scanned, not the display order: navigating with `before` scans in reverse, so `hasMore` then
+refers to rows above the current window.
+
+### The pager component
+
+`src/components/Pagination.jsx` turns that block into controls:
+
+- `canPrev = Boolean(prevCursor)` and `canNext = Boolean(nextCursor) && hasMore`.
+- The whole Prev/Next row is **hidden** when both are false — there is no absolute page count with
+  keyset pagination, only the optional `total`.
+- The **Items per page** select offers `10`, `25`, `50`, `100`; changing it writes `limit` and clears
+  `after`/`before`.
+
+One consequence worth knowing: a page fetched with `before` that lands on the top of the window comes
+back with `prevCursor: null` and `hasMore: false`, so `canPrev` and `canNext` are both false and the
+pager disappears instead of offering **Next**. Changing the page size or re-applying a filter clears
+both cursors and re-mints a first page, which restores navigation.
+
+### Exports ignore the cursor window
+
+Export helpers (`exportAdminTransactions`, `exportAdminKyc`, `exportAdminAuditLogs`) strip `after`,
+`before` and `limit` before calling the API, so an export always covers the full filtered set rather
+than only the visible page. The server caps an export at `MAX_EXPORT_ROWS` (`5000`).
 
 ## How Auth Works
 
-The dashboard authenticates against the backend admin API:
+The dashboard authenticates against the backend admin API in `apps/api`:
 
-1. The login screen posts the admin password to `POST /api/admin/login`.
-2. The API returns an HMAC-signed, expiring session token.
-3. The app stores the token and sends it as `Authorization: Bearer <token>` on every admin request.
+1. The login screen (`src/pages/Login.jsx`) posts an `{ email, password }` object to `POST /api/admin/login` via `adminLogin` in `src/lib/adminApi.js`. The legacy single-password flow is no longer supported.
+2. On success the API returns an HMAC-signed, expiring session token in `data.token`. For bootstrap or temporary credentials the response also includes `mustChangePassword: true`.
+3. When `mustChangePassword` is `true`, the app redirects to `/set-password` so the operator sets a private password before any admin work; otherwise it proceeds to the dashboard (`/`).
+4. The token is persisted in `localStorage` under the key `adminToken` (see `src/lib/auth.js`) and is attached to every request as `Authorization: Bearer <token>` by a request interceptor in `src/lib/adminApi.js`.
+5. Any `401` response clears the stored token and bounces the user back to `/login`.
 
 All data routes (`/stats`, `/users`, `/wallets`, `/transactions`) require a valid token; there is no client-only mock auth.
 
@@ -49,6 +269,27 @@ The admin app expects the backend running on `http://localhost:3002` (see `apps/
 npm run build --workspace=apps/admin
 ```
 
+## Test
+
+```bash
+npm run test:admin            # Vitest + Testing Library + MSW
+npx playwright install chromium   # once per machine
+npm run test:e2e:admin        # Playwright, starts the dev server on 5174
+```
+
+`e2e/datatable.spec.js` drives the Transactions table against mock data from
+[`e2e/fixtures/transactions.js`](e2e/fixtures/transactions.js). It intercepts
+`GET /api/admin/transactions` and applies the same filters and cursor
+pagination the API does. It covers:
+
+- text search and the from/to date range;
+- column sorting (direction, row order and no refetch);
+- Prev/Next pagination and page size;
+- URL synchronisation, including restoring the view from a deep link.
+
+The pixel-diff suite (`e2e/visual-regression.spec.js`) runs from the root
+config with `npm run test:visual`.
+
 ## Tech Stack
 
 - Vite + React
@@ -56,3 +297,28 @@ npm run build --workspace=apps/admin
 - Tailwind CSS
 - Axios
 - Lucide React icons
+
+## Responsive admin navigation
+
+Below 1024px, the header's **Open navigation** button opens the sidebar as a
+modal drawer over the page. Close it with the close button, backdrop, Escape,
+a left swipe, or any navigation link (including the current route). Opening
+search, logging out, browser navigation, and resizing to desktop also dismiss it.
+The native dialog traps focus, makes the page behind it inert, and restores focus
+when closed; background scrolling is locked only while it is open. The slide and
+backdrop fade respect reduced-motion preferences. At 1024px and above, the sidebar
+stays visible beside the content. Permission-based link visibility is unchanged.
+
+## Corridor chart time ranges
+
+The dashboard chart defaults to **7D**. The **24H**, **7D**, **30D**, and **1Y**
+pills group the supplied history into 24 hourly, 7 daily, 30 daily, or 12 monthly
+buckets respectively, including the current local hour/day/month. Corridor
+filters apply to the same history; future or invalid timestamps are excluded.
+The chart cannot retrieve history absent from the stats response.
+
+A shimmer covers the fixed 320px chart area while preparing a new selection;
+old KPI values and tooltips are hidden until the matching dataset is ready.
+The animation respects reduced-motion preferences. `CorridorChart` also accepts
+`loading` for callers awaiting data. Empty supplied history displays an empty
+state; the existing sample fallback is used only when no history array is supplied.

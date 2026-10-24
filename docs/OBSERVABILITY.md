@@ -84,6 +84,10 @@ The primary metrics are:
 - `sendam_webhook_events_total`
 - `sendam_health_checks_total`
 - process uptime and resident memory gauges
+- `sendam_alert_delivery_test_total` — counter of synthetic test runs, labelled by `result`
+- `sendam_alert_delivery_test_failures_total` — counter of tests that produced a non-success result
+- `sendam_alert_delivery_test_last_run_timestamp_seconds` — Unix timestamp of the most recent test run
+- `sendam_alert_delivery_test_last_success_timestamp_seconds` — Unix timestamp of the most recent successful test
 
 Redis availability and recovery signals (see
 `apps/api/src/config/redis.js` and `test/redis.safeguards.test.js`):
@@ -103,6 +107,96 @@ Redis availability and recovery signals (see
 Labels are deliberately bounded to method, route, status, queue, and outcome.
 Do not add phone numbers, wallet addresses, transaction IDs, job IDs, or
 correlation IDs as metric labels.
+
+## Admin system health endpoint
+
+The admin dashboard's Health page (route `/system-health`, sidebar label
+"Health") reads `GET /api/admin/system-health`. The route is registered in
+`apps/api/src/routes/admin.routes.js` behind `requireAdmin('operations.write')`,
+and the sidebar entry is filtered by the same permission, so a session without
+`operations.write` neither sees the link nor reaches the handler.
+
+### Response envelope
+
+The handler (`getSystemHealth` in
+[`apps/api/src/controllers/admin.controller.js`](../apps/api/src/controllers/admin.controller.js))
+replies through `sendSuccess`, so the payload is wrapped in the same success
+envelope every other admin endpoint uses:
+
+```jsonc
+{
+  "success": true,
+  "message": "Success",
+  "data": {
+    "api": "ok",
+    "database": "ok",
+    "queues": "redis-configured",
+    "settlementRail": "stellar",
+    "custodyModel": "direct",
+    "timestamp": "2026-10-05T02:25:27.469Z"
+  },
+  "correlationId": "…"
+}
+```
+
+`apps/admin/src/lib/adminApi.js` unwraps one level (`data`), and
+`apps/admin/src/pages/SystemHealth.jsx` renders `Object.entries(health)` — one
+card per key, with the key as the label and `String(value)` as the body. A field
+added to the handler therefore shows up in the UI with no frontend change.
+
+### Field semantics
+
+| Field | Meaning |
+| --- | --- |
+| `api` | Constant `ok` — the process answered the request. |
+| `database` | Constant `ok` — the handler does not probe Postgres. |
+| `queues` | `redis-configured` when `REDIS_URL` or `UPSTASH_REDIS_URL` is set, otherwise `unavailable`. |
+| `settlementRail` | Constant `stellar`. |
+| `custodyModel` | Constant `direct`. |
+| `timestamp` | ISO 8601 UTC timestamp taken when the handler ran. |
+
+### Health criteria and thresholds
+
+This endpoint reports configuration, not measured health: `api` and `database`
+are constants and `queues` only reflects whether a Redis URL is present, so a
+failing dependency does not change the response. It does not classify a
+deployment as healthy, degraded, or unhealthy, and the admin page does not
+derive a classification either — it prints the strings it is given.
+
+Numeric health thresholds live in Prometheus, not in this handler:
+
+| Signal | Warning | Critical | Alert |
+| --- | --- | --- | --- |
+| Queue backlog (`sendam_queue_backlog_size`) | over 50 jobs for 5m | over 200 jobs for 2m | `SendAmQueueBacklogWarning` / `SendAmQueueBacklogCritical` |
+| Queue lag (`sendam_queue_lag_seconds`) | over 300s for 5m | — | `SendAmQueueJobLagHigh` |
+| Oldest job age (`sendam_queue_oldest_job_age_seconds`) | — | over 120s for 5m | `SendAmQueueLagHigh` |
+| Failed jobs (`sendam_queue_jobs_total` with `status="failed"`) | — | over 5 in 10m for 5m | `SendAmQueueFailures` |
+| Redis availability (`sendam_redis_status`) | — | `0` for 2m | `SendAmRedisDisconnected` |
+| Database health checks (`sendam_health_checks_total` with `status="degraded"`) | — | any increase in 5m for 1m | `SendAmDatabaseHealthDegraded` |
+| Worker heartbeat | — | stale over 90s for 1m | `SendAmWorkerHeartbeatStale` |
+| Deposit sweep age (`sendam_deposit_sweep_age_seconds`) | — | over 120s for 3m | `SendAmDepositSweepStale` |
+
+These thresholds are declared in `observability/prometheus-rules.yml`; change
+them there rather than in the admin handler.
+
+For a dependency-aware probe, use the public `GET /health` endpoint (also served
+as `/health/ready`). It runs `SELECT 1` against Postgres and pings Redis in
+parallel under a `HEALTH_CHECK_TIMEOUT_MS` budget (1000 ms by default), and
+answers:
+
+- `200` — `{"status": "ok", "db": "connected", "redis": "connected", "uptime": …}`
+- `503` — `{"status": "degraded", "db": "unknown", "redis": "unknown", "uptime": …}`, returned when either probe fails or the budget expires.
+
+Either outcome increments `sendam_health_checks_total` with `status="ok"` or
+`status="degraded"`, which is what `SendAmDatabaseHealthDegraded` alerts on.
+
+### Payload used by the frontend mock
+
+The default msw handler in `apps/admin/src/mocks/handlers.js` answers this URL
+with `{ database, redis, horizon, queue }`, which is not the shape above. Tests
+that need the production contract override it — see
+[`apps/admin/src/pages/SystemHealth.test.jsx`](../apps/admin/src/pages/SystemHealth.test.jsx),
+whose payload mirrors the real handler.
 
 ## Rollout
 
@@ -221,3 +315,25 @@ Fires when `sendam_queue_lag_seconds` exceeds 300s (5 minutes).
 Fires on `SendAmDeadLetterQueueGrowing` when repeated job failures move to the dead-letter queue.
 1. Inspect DLQ messages with `node apps/api/scripts/whatsapp-dlq.js inspect`.
 2. Fix underlying provider errors before replaying: `node apps/api/scripts/whatsapp-dlq.js replay`.
+
+### Alert delivery test
+
+Fires on `SendAmAlertDeliveryTestMissed` or `SendAmAlertDeliveryTestFailing` when the continuous
+alert-delivery test has not verified end-to-end delivery within the expected window (default: 30 minutes).
+This alert means **alerting itself may be broken** and should be treated as high priority.
+
+1. Check `GET /api/admin/system-health` (requires `operations.write` admin token). The `alertDelivery`
+   field shows `status`, `lastTestAt`, `lastSuccessAt`, `lastResult`, and per-route details.
+2. Review the worker log stream for `alert_delivery_test_completed` events. The `overallResult` and
+   per-route `result`/`error` fields identify which route failed and why.
+3. If `status: missed`, the worker may have crashed or the poller was disabled. Verify the worker
+   process is running and `ALERT_DELIVERY_TEST_INTERVAL_MS` is non-zero.
+4. If `status: degraded`, the test ran but delivery failed. Check:
+   - **WhatsApp route**: `ALERT_DELIVERY_TEST_PHONE` must be set, `MESSAGE_TRANSPORT=meta`, and
+     `WHATSAPP_TOKEN` / `WHATSAPP_PHONE_NUMBER_ID` must be valid.
+   - **Webhook fallback route**: `ERROR_MONITOR_WEBHOOK_URL` endpoint availability, network egress,
+     and TLS certificate. Confirm the endpoint returns HTTP 2xx.
+5. If both routes fail, escalate — the alerting pipeline has no verified delivery path.
+6. To manually trigger a test without waiting for the scheduled interval, restart the worker process
+   (the poller runs immediately on startup).
+

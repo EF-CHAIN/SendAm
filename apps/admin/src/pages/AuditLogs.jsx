@@ -10,6 +10,7 @@ import DataTable from '@/components/DataTable';
 import Loader from '@shared/Loader';
 import Pagination from '@/components/Pagination';
 import FilterBar from '@/components/FilterBar';
+import { ChevronDown, ChevronUp, Code, Plus, Minus } from 'lucide-react';
 
 export default function AuditLogs() {
   const { params, getFilter, setFilter, resetFilters, goNext, goPrev } = useListQuery([
@@ -24,6 +25,7 @@ export default function AuditLogs() {
   const [chainResult, setChainResult] = useState(null);
   const [error, setError] = useState('');
   const [refreshKey, setRefreshKey] = useState(0);
+  const [selectedRow, setSelectedRow] = useState(null);
 
   useEffect(() => {
     let active = true;
@@ -86,6 +88,47 @@ export default function AuditLogs() {
     } finally {
       setVerifyingChain(false);
     }
+  };
+
+  const handleRowClick = (row) => {
+    setSelectedRow((prev) => (prev?._id === row._id ? null : row));
+  };
+
+  const renderDiffPanel = (metadata, type) => {
+    const isBefore = type === 'before';
+    const accentColor = isBefore ? 'text-red-600 border-red-200 bg-red-50' : 'text-green-600 border-green-200 bg-green-50';
+    if (!metadata || typeof metadata !== 'object' || Object.keys(metadata).length === 0) {
+      return (
+        <div className={`p-3 rounded-lg border ${accentColor}`}>
+          <p className="text-xs text-center opacity-60">{isBefore ? 'No previous values' : 'No new values'}</p>
+        </div>
+      );
+    }
+    const other = isBefore ? selectedRow.metadata?.after : selectedRow.metadata?.before;
+    return (
+      <div className="space-y-2">
+        {Object.entries(metadata).map(([key, value]) => {
+          const changed = other && other[key] !== undefined && other[key] !== value;
+          return (
+            <div key={key} className={`p-2 rounded border text-xs ${accentColor} ${changed ? 'border-l-4' : ''}`}>
+              <div className="flex justify-between mb-1">
+                <span className={`font-mono font-bold ${changed ? 'font-semibold' : 'font-medium'} `}>
+                  {key}
+                </span>
+                {changed && (
+                  <span className={`text-xs ${isBefore ? 'text-red-700' : 'text-green-700'} font-bold`}>
+                    {isBefore ? '▼ changed' : '▲ changed'}
+                  </span>
+                )}
+              </div>
+              <div className="font-mono text-xs break-all">
+                {typeof value === 'object' ? JSON.stringify(value) : String(value)}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    );
   };
 
   if (loading) return <div className="flex justify-center py-20"><Loader size={32} /></div>;
@@ -176,7 +219,33 @@ export default function AuditLogs() {
       />
 
       {error && <div className="mb-4 p-3 bg-red-50 text-red-600 border border-red-200 rounded" role="alert">{error}</div>}
-      <DataTable columns={columns} data={rows} keyField="_id" />
+      <DataTable caption="Audit log entries" columns={columns} data={rows} keyField="_id" onRowClick={handleRowClick} />
+
+      {selectedRow && (
+        <div className="mb-6 rounded-xl border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-sm overflow-hidden">
+          <div className="flex items-center justify-between px-4 py-3 bg-gray-50 dark:bg-slate-800 border-b border-gray-200 dark:border-slate-700 cursor-pointer" onClick={() => setSelectedRow(null)}>
+            <div className="flex items-center gap-2">
+              <Code className="w-4 h-4 text-gray-600 dark:text-gray-400" />
+              <span className="text-sm font-medium text-gray-900 dark:text-gray-100">Metadata diff for {selectedRow.action}</span>
+            </div>
+            <ChevronUp className="w-4 h-4 text-gray-600 dark:text-gray-400" />
+          </div>
+          <div className="p-4">
+            <div className="flex gap-4 text-xs font-semibold text-gray-500 mb-2">
+              <div className="flex-1 text-red-600">Before</div>
+              <div className="flex-1 text-green-600">After</div>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              {renderDiffPanel(selectedRow.metadata?.before, 'before')}
+              {renderDiffPanel(selectedRow.metadata?.after, 'after')}
+            </div>
+            {!selectedRow.metadata && (
+              <p className="text-xs text-gray-500 text-center py-4">No metadata changes recorded for this entry.</p>
+            )}
+          </div>
+        </div>
+      )}
+
       <Pagination pagination={pagination} onNext={goNext} onPrev={goPrev} />
     </div>
   );

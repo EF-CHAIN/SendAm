@@ -130,7 +130,9 @@ describe('admin dashboard accessibility', () => {
     it('announces the loading state and renders stats with a logical heading structure', async () => {
       const { container } = renderAdmin('/');
       // Synchronously after mount the shared Loader exposes a live status region.
-      expect(screen.getByRole('status')).toBeInTheDocument();
+      const loadingStatus = screen.getByRole('status');
+      expect(loadingStatus).toHaveAttribute('aria-live', 'polite');
+      expect(loadingStatus).toHaveTextContent('Loading data, please wait...');
       const loadingResults = await axe(container);
       expect(loadingResults).toHaveNoViolations();
 
@@ -165,7 +167,7 @@ describe('admin dashboard accessibility', () => {
       const table = screen.getByRole('table');
       const headers = within(table).getAllByRole('columnheader');
       expect(headers.map((h) => h.textContent)).toEqual([
-        'User Phone', 'Type', 'Amount', 'Rail', 'Destination', 'Receipt', 'Status', 'Date',
+        'ID / Hash', 'User Phone', 'Type', 'Amount', 'Rail', 'Destination', 'Receipt', 'Status', 'Date',
       ]);
       for (const th of headers) {
         expect(th).toHaveAttribute('scope', 'col');

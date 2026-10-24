@@ -4,6 +4,7 @@ const verifyWebhook = require('../middlewares/verifyWebhook');
 const verifyWhatsappSignature = require('../middlewares/verifyWhatsappSignature');
 const webhookController = require('../controllers/webhook.controller');
 const { validateExternalPayload } = require('../common/validation');
+const { increment } = require('../observability/metrics');
 
 // Parse JSON bodies with a size limit, preserving the raw request body for signature verification.
 router.use(
@@ -49,12 +50,12 @@ router.post(
 // Handle errors from body parsing and request timeouts gracefully.
 router.use((err, req, res, next) => {
   if (err.type === 'entity.too.large') {
-    // TODO: Increment webhook_body_too_large metric.
+    increment('sendam_webhook_body_too_large_total');
     return res.status(413).json({ error: 'Request body too large' });
   }
 
   if (err.code === 'REQUEST_TIMEOUT') {
-    // TODO: Increment webhook_timeout metric.
+    increment('sendam_webhook_timeout_total');
     return res.status(err.status).json({ error: 'Request timed out' });
   }
 

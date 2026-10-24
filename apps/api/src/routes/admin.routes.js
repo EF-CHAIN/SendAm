@@ -16,6 +16,7 @@ const loginLimiter = rateLimit({
 router.post('/login', loginLimiter, adminController.login);
 router.post('/invitations/accept', loginLimiter, adminController.acceptInvite);
 router.post('/logout', requireAdmin('admin.read'), adminController.logout);
+router.post('/session/renew', requireAdmin('admin.read'), adminController.renewAdminSession);
 // Identity of the authenticated operator. Needs an authenticated session but
 // must be reachable even when a password change is pending.
 router.get('/me', typeof requireAdmin.authenticate === 'function' ? requireAdmin.authenticate : requireAdmin('admin.read'), adminController.me);
@@ -32,6 +33,7 @@ router.get('/stats', requireAdmin('admin.read'), adminController.getStats);
 router.get('/users', requireAdmin('admin.read'), adminController.getUsers);
 router.get('/wallets', requireAdmin('admin.read'), adminController.getWallets);
 router.get('/transactions', requireAdmin('admin.read'), adminController.getTransactions);
+router.get('/transactions/export', requireAdmin('admin.read'), adminController.exportTransactions);
 router.get('/transactions/:id', requireAdmin('admin.read'), adminController.getTransaction);
 router.post('/transactions/:id/refund', requireAdmin('operations.write'), adminController.refundTransaction);
 router.get('/payments/stuck', requireAdmin('operations.write'), adminController.getStuckPayments);
