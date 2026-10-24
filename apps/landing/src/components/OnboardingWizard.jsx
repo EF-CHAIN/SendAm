@@ -1,6 +1,167 @@
-import { useState } from 'react';
-import { Smartphone, Lock, Send, CheckCircle2, ArrowRight, ArrowLeft, RefreshCw, Sparkles } from 'lucide-react';
+import { useState, useEffect, useRef } from 'react';
+import { Smartphone, Lock, Send, CheckCircle2, ArrowRight, ArrowLeft, RefreshCw, Sparkles, Camera, ChevronDown } from 'lucide-react';
 import { whatsappUrl } from '@/lib/links.js';
+import { compressImageForUpload } from '@/lib/imageCompression.js';
+import { COUNTRY_PRESETS, formatE164 } from '@/lib/phoneFormat.js';
+
+const IDLE_DOCUMENT = { status: 'idle', progress: 0, sizeKb: 0, blob: null, message: '' };
+
+const STORAGE_KEY = 'sendam_onboarding_draft_v1';
+const DEFAULT_AMOUNT = '25.00';
+const DEFAULT_RECIPIENT = '+233 241 987 654';
+
+const DEFAULT_COUNTRY = COUNTRY_PRESETS[0]; // Nigeria
+
+/** Strip non-digit characters from a phone string. */
+function digitsOnly(str) {
+  return str.replace(/\D/g, '');
+}
+
+/** Compound phone picker: flag dropdown + auto-formatting number input. */
+function CountryPhonePicker({ country, onCountryChange, phone, onPhoneChange }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+
+  // Close dropdown on outside click
+  useEffect(() => {
+    function handleClick(e) {
+      if (ref.current && !ref.current.contains(e.target)) setOpen(false);
+    }
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, []);
+
+  function handleCountrySelect(preset) {
+    onCountryChange(preset);
+    // Re-format existing digits against new country
+    const raw = digitsOnly(phone);
+    onPhoneChange(formatE164(raw, preset));
+    setOpen(false);
+  }
+
+  function handleInput(e) {
+    const raw = digitsOnly(e.target.value);
+    onPhoneChange(formatE164(raw, country));
+  }
+
+  const isValid = country.regex.test(phone.replace(/\s/g, ''));
+
+  return (
+    <div className="relative max-w-md" ref={ref}>
+      <div className={`flex rounded-xl border ${
+        isValid ? 'border-emerald-400 ring-1 ring-emerald-300/60' : 'border-slate-200'
+      } overflow-hidden focus-within:ring-2 focus-within:ring-primary/20 focus-within:border-primary transition`}>
+        {/* Country flag dropdown trigger */}
+        <button
+          type="button"
+          id="wizard-country-picker"
+          aria-label={`Selected country: ${country.name} (${country.dialCode}). Click to change.`}
+          aria-haspopup="listbox"
+          aria-expanded={open}
+          onClick={() => setOpen((v) => !v)}
+          className="flex items-center gap-1.5 px-3 py-3 bg-slate-50 border-r border-slate-200 text-slate-700 hover:bg-slate-100 transition shrink-0 text-sm font-medium"
+        >
+          <span aria-hidden="true" className="text-xl leading-none">{country.flag}</span>
+          <span className="text-xs text-slate-500">{country.dialCode}</span>
+          <ChevronDown className="w-3 h-3 text-slate-400" aria-hidden="true" />
+        </button>
+
+        {/* Phone number input */}
+        <div className="relative flex-1">
+          <Smartphone className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" aria-hidden="true" />
+          <input
+            id="wizard-phone"
+            type="tel"
+            inputMode="numeric"
+            aria-label="WhatsApp Phone Number"
+            aria-invalid={!isValid}
+            aria-describedby="wizard-phone-hint"
+            value={phone}
+            onChange={handleInput}
+            placeholder={country.placeholder}
+            className="w-full pl-9 pr-4 py-3 bg-white text-slate-900 font-medium focus:outline-none text-sm"
+          />
+        </div>
+      </div>
+
+      {/* Validation hint */}
+      <p id="wizard-phone-hint" className={`mt-1 text-xs ${
+        isValid ? 'text-emerald-600' : 'text-slate-400'
+      }`}>
+        {isValid ? '✓ Valid E.164 format' : `Format: ${country.placeholder}`}
+      </p>
+
+      {/* Country dropdown listbox */}
+      {open && (
+        <ul
+          role="listbox"
+          aria-label="Select country"
+          className="absolute z-50 top-full mt-1 left-0 w-56 bg-white rounded-xl border border-slate-200 shadow-lg overflow-hidden"
+        >
+          {COUNTRY_PRESETS.map((preset) => (
+            <li
+              key={preset.code}
+              role="option"
+              aria-selected={preset.code === country.code}
+              onClick={() => handleCountrySelect(preset)}
+              className={`flex items-center gap-3 px-4 py-2.5 cursor-pointer text-sm hover:bg-slate-50 transition ${
+                preset.code === country.code ? 'bg-primary/5 text-primary font-semibold' : 'text-slate-700'
+              }`}
+            >
+              <span className="text-xl" aria-hidden="true">{preset.flag}</span>
+              <span>{preset.name}</span>
+              <span className="ml-auto text-xs text-slate-400">{preset.dialCode}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+function loadDraft() {
+  if (typeof window === 'undefined' || !window.localStorage) return null;
+  try {
+    const raw = window.localStorage.getItem(STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object') return null;
+    return {
+      phone: typeof parsed.phone === 'string' ? parsed.phone : undefined,
+      transferAmount: typeof parsed.transferAmount === 'string' ? parsed.transferAmount : undefined,
+      recipient: typeof parsed.recipient === 'string' ? parsed.recipient : undefined,
+      currentStep: typeof parsed.currentStep === 'number' && parsed.currentStep >= 1 && parsed.currentStep <= 3 ? parsed.currentStep : 1,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function saveDraft(data) {
+  if (typeof window === 'undefined' || !window.localStorage) return;
+  try {
+    // Explicit allowlist excluding sensitive PIN
+    const payload = {
+      phone: data.phone,
+      transferAmount: data.transferAmount,
+      recipient: data.recipient,
+      currentStep: data.currentStep,
+      savedAt: Date.now(),
+    };
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
+  } catch {
+    // Gracefully ignore QuotaExceededError or security restrictions
+  }
+}
+
+function clearDraft() {
+  if (typeof window === 'undefined' || !window.localStorage) return;
+  try {
+    window.localStorage.removeItem(STORAGE_KEY);
+  } catch {
+    // Ignore error
+  }
+}
 
 const STEPS = [
   {
@@ -24,13 +185,44 @@ const STEPS = [
 ];
 
 export default function OnboardingWizard() {
-  const [currentStep, setCurrentStep] = useState(1);
-  const [phone, setPhone] = useState('+234 801 234 5678');
+  const initialDraft = loadDraft();
+  const [currentStep, setCurrentStep] = useState(initialDraft?.currentStep || 1);
+  const [selectedCountry, setSelectedCountry] = useState(DEFAULT_COUNTRY);
+  const [phone, setPhone] = useState(
+    initialDraft?.phone ?? `${DEFAULT_COUNTRY.dialCode} ${DEFAULT_COUNTRY.format('8012345678')}`
+  );
   const [pin, setPin] = useState(['', '', '', '']);
-  const [transferAmount, setTransferAmount] = useState('25.00');
-  const [recipient, setRecipient] = useState('+233 241 987 654');
+  const [transferAmount, setTransferAmount] = useState(initialDraft?.transferAmount ?? DEFAULT_AMOUNT);
+  const [recipient, setRecipient] = useState(initialDraft?.recipient ?? DEFAULT_RECIPIENT);
   const [simulating, setSimulating] = useState(false);
   const [completed, setCompleted] = useState(false);
+  const [idDocument, setIdDocument] = useState(IDLE_DOCUMENT);
+
+  const handleIdDocumentChange = async (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    setIdDocument({ ...IDLE_DOCUMENT, status: 'compressing' });
+    try {
+      const blob = await compressImageForUpload(file, {
+        onProgress: (progress) => setIdDocument((current) => ({ ...current, progress })),
+      });
+      setIdDocument({ status: 'ready', progress: 100, sizeKb: Math.round(blob.size / 1024), blob, message: '' });
+    } catch (err) {
+      setIdDocument({ ...IDLE_DOCUMENT, status: 'error', message: err.message });
+    }
+  };
+  const [showDraftBanner, setShowDraftBanner] = useState(Boolean(initialDraft));
+
+  useEffect(() => {
+    if (completed) {
+      clearDraft();
+      return;
+    }
+    const timer = setTimeout(() => {
+      saveDraft({ phone, transferAmount, recipient, currentStep });
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [phone, transferAmount, recipient, currentStep, completed]);
 
   const handlePinChange = (index, value) => {
     if (value.length > 1) value = value.slice(-1);
@@ -47,6 +239,7 @@ export default function OnboardingWizard() {
       setTimeout(() => {
         setSimulating(false);
         setCompleted(true);
+        clearDraft();
       }, 1200);
     }
   };
@@ -59,10 +252,27 @@ export default function OnboardingWizard() {
   };
 
   const handleReset = () => {
+    clearDraft();
     setCurrentStep(1);
     setCompleted(false);
     setSimulating(false);
     setPin(['', '', '', '']);
+    setSelectedCountry(DEFAULT_COUNTRY);
+    setPhone(`${DEFAULT_COUNTRY.dialCode} ${DEFAULT_COUNTRY.format('8012345678')}`);
+    setTransferAmount(DEFAULT_AMOUNT);
+    setRecipient(DEFAULT_RECIPIENT);
+    setShowDraftBanner(false);
+  };
+
+  const handleClearDraft = () => {
+    clearDraft();
+    setCurrentStep(1);
+    setPin(['', '', '', '']);
+    setSelectedCountry(DEFAULT_COUNTRY);
+    setPhone(`${DEFAULT_COUNTRY.dialCode} ${DEFAULT_COUNTRY.format('8012345678')}`);
+    setTransferAmount(DEFAULT_AMOUNT);
+    setRecipient(DEFAULT_RECIPIENT);
+    setShowDraftBanner(false);
   };
 
   return (
@@ -83,6 +293,39 @@ export default function OnboardingWizard() {
 
         {/* Wizard Container Card */}
         <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+          {showDraftBanner && (
+            <div
+              data-testid="resume-draft-banner"
+              role="status"
+              className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 px-6 py-3.5 bg-emerald-50 border-b border-emerald-200/80 text-emerald-900"
+            >
+              <div className="flex items-center gap-2.5 text-xs sm:text-sm font-medium">
+                <Sparkles className="w-4 h-4 text-emerald-600 shrink-0" aria-hidden="true" />
+                <span>
+                  <strong className="font-semibold text-emerald-950">Resume your application:</strong> We restored your saved draft from your last session.
+                </span>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  data-testid="resume-draft-button"
+                  onClick={() => setShowDraftBanner(false)}
+                  className="px-3 py-1 text-xs font-semibold bg-emerald-700 text-white rounded-lg hover:bg-emerald-800 transition"
+                >
+                  Resume
+                </button>
+                <button
+                  type="button"
+                  data-testid="clear-draft-button"
+                  onClick={handleClearDraft}
+                  className="px-3 py-1 text-xs font-semibold text-emerald-800 hover:text-emerald-950 hover:bg-emerald-100 rounded-lg transition"
+                >
+                  Clear draft
+                </button>
+              </div>
+            </div>
+          )}
+
           {/* Step Indicator Header */}
           <div className="grid grid-cols-3 border-b border-slate-100 bg-slate-50/50">
             {STEPS.map((step) => {
@@ -134,17 +377,56 @@ export default function OnboardingWizard() {
                       <label htmlFor="wizard-phone" className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-2">
                         WhatsApp Phone Number
                       </label>
-                      <div className="relative max-w-md">
-                        <Smartphone className="absolute left-3.5 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
-                        <input
-                          id="wizard-phone"
-                          type="text"
-                          value={phone}
-                          onChange={(e) => setPhone(e.target.value)}
-                          className="w-full pl-11 pr-4 py-3 rounded-xl border border-slate-200 text-slate-900 font-medium focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition"
-                          placeholder="+234 800 000 0000"
-                        />
-                      </div>
+                      <CountryPhonePicker
+                        country={selectedCountry}
+                        onCountryChange={setSelectedCountry}
+                        phone={phone}
+                        onPhoneChange={setPhone}
+                      />
+                    </div>
+                    <div>
+                      <label htmlFor="wizard-id-document" className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-2">
+                        Identity Document Photo (optional)
+                      </label>
+                      <input
+                        id="wizard-id-document"
+                        type="file"
+                        accept="image/*"
+                        onChange={handleIdDocumentChange}
+                        className="block w-full max-w-md text-sm text-slate-600 file:mr-3 file:rounded-lg file:border-0 file:bg-slate-100 file:px-3 file:py-2 file:font-semibold file:text-slate-700 hover:file:bg-slate-200"
+                      />
+                      <p className="mt-2 text-xs text-slate-500 max-w-md">
+                        Large camera photos are shrunk on your device to under 1 MB before upload.
+                      </p>
+                      {idDocument.status === 'compressing' && (
+                        <div className="mt-3 max-w-md">
+                          <div
+                            role="progressbar"
+                            aria-label="Compressing identity photo"
+                            aria-valuemin={0}
+                            aria-valuemax={100}
+                            aria-valuenow={idDocument.progress}
+                            className="h-2 w-full overflow-hidden rounded-full bg-slate-200"
+                          >
+                            <div
+                              className="h-full bg-primary transition-all duration-200"
+                              style={{ width: `${idDocument.progress}%` }}
+                            />
+                          </div>
+                          <p className="mt-1 text-xs text-slate-500">Compressing photo… {idDocument.progress}%</p>
+                        </div>
+                      )}
+                      {idDocument.status === 'ready' && (
+                        <p role="status" className="mt-3 inline-flex items-center gap-2 text-xs font-semibold text-emerald-700">
+                          <Camera className="w-4 h-4" aria-hidden="true" />
+                          Photo ready to upload ({idDocument.sizeKb} KB)
+                        </p>
+                      )}
+                      {idDocument.status === 'error' && (
+                        <p role="alert" className="mt-3 text-xs font-semibold text-red-700">
+                          {idDocument.message}
+                        </p>
+                      )}
                     </div>
                     <div className="p-4 bg-emerald-50/70 border border-emerald-200/60 rounded-xl flex items-start gap-3">
                       <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0 mt-0.5" />

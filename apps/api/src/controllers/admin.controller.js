@@ -1,5 +1,5 @@
 const { sendSuccess, sendError, sendCursorPaginated } = require('../utils/response');
-const { authenticate, createInvitation, acceptInvitation, revokeSessions, hashPassword, changeOwnPassword } = require('../services/adminAuth.service');
+const { authenticate, createInvitation, acceptInvitation, revokeSessions, hashPassword, changeOwnPassword, renewSession } = require('../services/adminAuth.service');
 const { writeAuditLog } = require('../common/audit.service');
 const { queryEvents, verifyEventChain: verifyEventChainService } = require('../common/event.service');
 const { deactivateAccount, reactivateAccount, getAccountStatusHistory, DEACTIVATION_REASONS } = require('../compliance/account.service');
@@ -189,6 +189,17 @@ const revokeAdministratorSessions = async (req, res, next) => {
     await writeAuditLog({ actorType: 'administrator', actorId: req.admin.id, action: 'admin.sessions.revoked', entityType: 'AdminUser', entityId: req.params.id, req });
     return sendSuccess(res, null, 'Sessions revoked');
   } catch (error) { return next(error); }
+};
+
+const renewAdminSession = async (req, res, next) => {
+  try {
+    const result = await renewSession({ adminId: req.admin.id, sessionId: req.admin.sessionId });
+    await writeAuditLog({ actorType: 'administrator', actorId: req.admin.id, action: 'admin.session.renewed', entityType: 'AdminSession', entityId: result.session.id, req });
+    return sendSuccess(res, { token: result.token, expiresAt: result.session.expiresAt }, 'Session renewed');
+  } catch (error) {
+    if (error.statusCode) return sendError(res, error.message, error.statusCode);
+    return next(error);
+  }
 };
 
 const logout = async (req, res, next) => {
@@ -598,6 +609,22 @@ const exportAuditLogs = async (req, res, next) => {
 
 const getSystemHealth = async (_req, res, next) => {
   try {
+    const { getLastTestResult, getLastSuccessfulTestResult, evaluateAlertDeliveryHealth } = require('../observability/alertDeliveryTest.service');
+    const config = require('../config/env');
+
+    const [lastTest, lastSuccess] = await Promise.all([
+      getLastTestResult(prisma),
+      getLastSuccessfulTestResult(prisma),
+    ]);
+
+    const alertDeliveryHealth = evaluateAlertDeliveryHealth({
+      lastTest,
+      lastSuccess,
+      intervalMs: config.alertDeliveryTest?.intervalMs || 15 * 60 * 1000,
+      missedFactor: config.alertDeliveryTest?.missedFactor || 2,
+      now: Date.now(),
+    });
+
     sendSuccess(res, {
       api: 'ok',
       database: 'ok',
@@ -605,6 +632,17 @@ const getSystemHealth = async (_req, res, next) => {
       settlementRail: 'stellar',
       custodyModel: 'direct',
       timestamp: new Date().toISOString(),
+      alertDelivery: {
+        status: alertDeliveryHealth.status,
+        message: alertDeliveryHealth.message,
+        lastTestAt: alertDeliveryHealth.lastTestAt,
+        lastSuccessAt: alertDeliveryHealth.lastSuccessAt,
+        overdueBy: alertDeliveryHealth.overdueBy,
+        lastResult: lastTest?.overallResult ?? null,
+        routes: lastTest?.routes ?? null,
+        testId: lastTest?.testId ?? null,
+        intervalMs: config.alertDeliveryTest?.intervalMs || 15 * 60 * 1000,
+      },
     });
   } catch (error) {
     next(error);
@@ -1093,6 +1131,7 @@ module.exports = {
   login,
   acceptInvite,
   logout,
+  renewAdminSession,
   changePassword,
   me,
   listAdministrators,

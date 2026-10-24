@@ -30,3 +30,15 @@ export const TARGET_CURRENCIES = [
 ];
 
 export const PRESET_AMOUNTS = [50, 100, 250, 500];
+
+// Resolves the indicative rate between any two known currencies. Rates are
+// stored only for the send corridors, so the reverse direction falls back to
+// the reciprocal of the stored rate. Unknown pairs fall back to 1.
+export function getExchangeRate(from, to) {
+  if (!from || !to || from === to) return 1;
+  const direct = EXCHANGE_RATES[from]?.[to];
+  if (direct) return direct;
+  const reverse = EXCHANGE_RATES[to]?.[from];
+  if (reverse) return 1 / reverse;
+  return 1;
+}

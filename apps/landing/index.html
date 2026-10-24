@@ -20,12 +20,20 @@
     <!-- Open Graph -->
     <meta property="og:type" content="website" />
     <meta property="og:site_name" content="SendAm" />
+    <meta property="og:url" content="https://send-am-web.vercel.app/" />
     <meta property="og:title" content="SendAm | Send money like you send a text" />
     <meta
       property="og:description"
       content="WhatsApp-first payments powered by the Stellar network. Create a wallet and send XLM from a chat."
     />
-    <meta property="og:image" content="/logo-sent.svg" />
+    <meta
+      property="og:image"
+      content="https://send-am-web.vercel.app/social-preview.png"
+    />
+    <meta property="og:image:type" content="image/png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="SendAm logo on a light teal background" />
 
     <!-- Twitter -->
     <meta name="twitter:card" content="summary_large_image" />
@@ -34,14 +42,129 @@
       name="twitter:description"
       content="WhatsApp-first payments powered by the Stellar network. Create a wallet and send XLM from a chat."
     />
-    <meta name="twitter:image" content="/logo-sent.svg" />
+    <meta
+      name="twitter:image"
+      content="https://send-am-web.vercel.app/social-preview.png"
+    />
+    <meta name="twitter:image:alt" content="SendAm logo on a light teal background" />
+
+    <!--
+      Self-hosted Latin subsets of Inter (body) and Outfit (headings), both
+      variable weight 100-900, from Fontsource 5.3.0 (SIL OFL 1.1, see
+      public/fonts). Preloading lets the browser fetch them in parallel with
+      the bundle; font-display: swap paints text immediately in a metric-matched
+      fallback, so there is no invisible text and no reflow when they arrive.
+    -->
+    <link rel="preload" href="/fonts/inter-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="preload" href="/fonts/outfit-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin />
+    <style>
+      @font-face {
+        font-family: 'Inter';
+        font-style: normal;
+        font-weight: 100 900;
+        font-display: swap;
+        src: url('/fonts/inter-latin-wght-normal.woff2') format('woff2');
+        unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+      }
+      @font-face {
+        font-family: 'Outfit';
+        font-style: normal;
+        font-weight: 100 900;
+        font-display: swap;
+        src: url('/fonts/outfit-latin-wght-normal.woff2') format('woff2');
+        unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+      }
+      /*
+        Fallback faces scaled to each web font's average glyph width and
+        vertical metrics (computed against Arial-compatible metrics), so the
+        swap does not move text. Values match docs in apps/landing/README.md.
+      */
+      @font-face {
+        font-family: 'Inter Fallback';
+        src: local('Arial'), local('Liberation Sans'), local('Helvetica');
+        size-adjust: 106.92%;
+        ascent-override: 90.6%;
+        descent-override: 22.56%;
+        line-gap-override: 0%;
+      }
+      @font-face {
+        font-family: 'Outfit Fallback';
+        src: local('Arial'), local('Liberation Sans'), local('Helvetica');
+        size-adjust: 98.53%;
+        ascent-override: 101.49%;
+        descent-override: 26.39%;
+        line-gap-override: 0%;
+      }
+    </style>
+    <!-- Structured data (schema.org JSON-LD): corporate identity, payment service, corridors, support -->
+    <script type="application/ld+json" id="sendam-structured-data">
+      {
+        "@context": "https://schema.org",
+        "@graph": [
+          {
+            "@type": "Organization",
+            "@id": "https://send-am-web.vercel.app/#organization",
+            "name": "SendAm",
+            "url": "https://send-am-web.vercel.app/",
+            "logo": "https://send-am-web.vercel.app/icons/icon-512x512.png",
+            "description": "SendAm turns WhatsApp into a Stellar wallet so people can send and receive money from a chat, with no app to install.",
+            "sameAs": ["https://github.com/Gozirimdev/SendAm"],
+            "contactPoint": [
+              {
+                "@type": "ContactPoint",
+                "contactType": "customer support",
+                "url": "https://send-am-web.vercel.app/#faq",
+                "availableLanguage": ["English"]
+              }
+            ]
+          },
+          {
+            "@type": "FinancialService",
+            "@id": "https://send-am-web.vercel.app/#service",
+            "name": "SendAm cross-border money transfer",
+            "serviceType": "Cross-border money transfer",
+            "description": "WhatsApp-first payments on the Stellar network with a flat 1% fee.",
+            "url": "https://send-am-web.vercel.app/",
+            "image": "https://send-am-web.vercel.app/logo-sent.svg",
+            "provider": { "@id": "https://send-am-web.vercel.app/#organization" },
+            "feesAndCommissionsSpecification": "https://send-am-web.vercel.app/#calculator",
+            "priceRange": "1% flat fee",
+            "currenciesAccepted": "USD, EUR, GBP",
+            "areaServed": [
+              { "@type": "Country", "name": "Nigeria", "identifier": "NG" },
+              { "@type": "Country", "name": "Kenya", "identifier": "KE" },
+              { "@type": "Country", "name": "Ghana", "identifier": "GH" }
+            ],
+            "availableChannel": {
+              "@type": "ServiceChannel",
+              "name": "WhatsApp chat",
+              "serviceUrl": "https://send-am-web.vercel.app/"
+            }
+          }
+        ]
+      }
+    </script>
 
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <!-- Fonts load without blocking first paint; system fonts render until Inter swaps in. -->
+    <link
+      rel="preload"
+      as="style"
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap"
+    />
     <link
       href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap"
       rel="stylesheet"
+      media="print"
+      onload="this.media='all'"
     />
+    <noscript>
+      <link
+        href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap"
+        rel="stylesheet"
+      />
+    </noscript>
   </head>
   <body>
     <div id="root"></div>

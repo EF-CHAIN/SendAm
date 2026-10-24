@@ -4,6 +4,9 @@
   "private": true,
   "type": "module",
   "description": "Shared UI and utilities for the SendAm web apps",
+  "scripts": {
+    "test": "vitest run --config vitest.config.js"
+  },
   "peerDependencies": {
     "react": ">=18",
     "axios": "^1",

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { ChevronDown } from 'lucide-react';
 
 const faqs = [
@@ -67,6 +67,24 @@ function FaqItem({ q, a, index }) {
 }
 
 export default function Faq() {
+  const listRef = useRef(null);
+
+  // WAI-ARIA accordion: arrows cycle between headers, Home/End jump to the ends.
+  function handleKeyDown(event) {
+    const triggers = Array.from(listRef.current.querySelectorAll('button[aria-controls^="faq-panel-"]'));
+    const current = triggers.indexOf(document.activeElement);
+    if (current === -1) return;
+    const target = {
+      ArrowDown: (current + 1) % triggers.length,
+      ArrowUp: (current - 1 + triggers.length) % triggers.length,
+      Home: 0,
+      End: triggers.length - 1,
+    }[event.key];
+    if (target === undefined) return;
+    event.preventDefault();
+    triggers[target].focus();
+  }
+
   return (
     <section id="faq" className="container mx-auto px-4 py-16 sm:px-6 lg:py-24">
       <div className="mx-auto max-w-3xl">
@@ -75,7 +93,7 @@ export default function Faq() {
             Frequently asked questions
           </h2>
         </div>
-        <div>
+        <div ref={listRef} onKeyDown={handleKeyDown}>
           {faqs.map((f, index) => (
             <FaqItem key={f.q} index={index} {...f} />
           ))}

@@ -117,4 +117,74 @@ describe('SystemHealth page', () => {
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
     expect(calls).toBe(2);
   });
+
+  describe('Auto-refresh interval and degraded visual highlighting (#774)', () => {
+    it('renders segmented refresh interval selector with 5s, 15s, 30s, 1m, and Paused options', async () => {
+      server.use(http.get(HEALTH_URL, () => HttpResponse.json({ data: healthyPayload })));
+
+      renderHealth();
+      await waitForHeading();
+
+      const selector = screen.getByTestId('refresh-interval-selector');
+      expect(selector).toBeInTheDocument();
+      expect(selector).toHaveValue('15');
+
+      const options = Array.from(selector.querySelectorAll('option')).map((o) => o.textContent);
+      expect(options).toEqual(['5s', '15s', '30s', '1m', 'Paused']);
+    });
+
+    it('renders circular countdown ring and updates when changing interval', async () => {
+      server.use(http.get(HEALTH_URL, () => HttpResponse.json({ data: healthyPayload })));
+
+      renderHealth();
+      await waitForHeading();
+
+      const ring = screen.getByTestId('countdown-ring');
+      expect(ring).toBeInTheDocument();
+      expect(ring).toHaveTextContent('15');
+
+      const user = userEvent.setup();
+      const selector = screen.getByTestId('refresh-interval-selector');
+      await user.selectOptions(selector, '5');
+
+      expect(selector).toHaveValue('5');
+      expect(ring).toHaveTextContent('5');
+
+      // Test paused state
+      await user.selectOptions(selector, '0');
+      expect(selector).toHaveValue('0');
+      expect(ring.getAttribute('title')).toContain('paused');
+    });
+
+    it('visually highlights degraded services in amber and critical failures in red', async () => {
+      server.use(
+        http.get(HEALTH_URL, () =>
+          HttpResponse.json({
+            data: {
+              api: 'ok',
+              database: 'down',
+              queues: 'degraded',
+            },
+          })
+        )
+      );
+
+      renderHealth();
+      await waitForHeading();
+
+      const dbCard = screen.getByTestId('health-card-database');
+      expect(dbCard).toHaveAttribute('data-status', 'down');
+      expect(dbCard.className).toContain('border-red-300');
+      expect(dbCard).toHaveTextContent(/critical \/ down/i);
+
+      const queueCard = screen.getByTestId('health-card-queues');
+      expect(queueCard).toHaveAttribute('data-status', 'degraded');
+      expect(queueCard.className).toContain('border-amber-300');
+      expect(queueCard).toHaveTextContent(/degraded/i);
+
+      const apiCard = screen.getByTestId('health-card-api');
+      expect(apiCard).toHaveAttribute('data-status', 'ok');
+      expect(apiCard).toHaveTextContent(/operational/i);
+    });
+  });
 });

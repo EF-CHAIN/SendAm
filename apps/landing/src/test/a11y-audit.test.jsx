@@ -264,7 +264,7 @@ describe('landing WCAG 2.2 AAA audit', () => {
     it('distinguishes every checkpoint state by text, not just colour', async () => {
       renderAt('/onboarding');
       await screen.findByRole('heading', { name: /onboarding checkpoints/i });
-      const statuses = screen.getAllByText(/^(Done|Pending|Blocked)$/);
+      const statuses = await screen.findAllByText(/^(Done|Pending|Blocked)$/);
       // 5 complete + 1 incomplete in the demo dataset.
       expect(statuses).toHaveLength(6);
       expect(screen.getAllByText('Done')).toHaveLength(5);
@@ -297,6 +297,9 @@ describe('landing WCAG 2.2 AAA audit', () => {
         await user.tab();
         expect(within(nav).getByRole('link', { name })).toHaveFocus();
       }
+      // The language switcher sits between the Onboarding link and the CTA.
+      await user.tab();
+      expect(within(nav).getByRole('combobox', { name: /language/i })).toHaveFocus();
       await user.tab();
       expect(within(nav).getByRole('link', { name: /open whatsapp|start/i })).toHaveFocus();
     });
