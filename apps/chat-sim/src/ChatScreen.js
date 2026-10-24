@@ -13,6 +13,7 @@ import {
   View,
   useWindowDimensions,
 } from 'react-native';
+import MessageList, { findMessageMatches, parseQuickReplies } from './MessageList';
 import MessageList, { parseListMessage, parseQuickReplies } from './MessageList';
 import EmojiPicker from './EmojiPicker';
 import usePolling from './usePolling';
@@ -286,6 +287,11 @@ export default function ChatScreen() {
   const photoInputRef = useRef(null);
   const docInputRef = useRef(null);
   const [replyTo, setReplyTo] = useState(null);
+  // In-chat search (#786): the query filters messages, matches highlight in
+  // yellow, and Up/Down walk the matched bubbles.
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchIndex, setSearchIndex] = useState(0);
   const [darkMode, setDarkMode] = useState(false);
 
   const theme = darkMode ? WHATSAPP_THEMES.dark : WHATSAPP_THEMES.light;
@@ -312,6 +318,32 @@ export default function ChatScreen() {
     if (parseListMessage(latestBotMessage)) return [];
     return parseQuickReplies(latestBotMessage);
   }, [latestBotMessage]);
+
+  const searchMatches = useMemo(
+    () => (searchOpen ? findMessageMatches(messages, searchQuery) : []),
+    [messages, searchQuery, searchOpen]
+  );
+  // Keep the cursor on a real match when the query or the messages change.
+  const activeSearchIndex = searchMatches.length > 0 ? searchIndex % searchMatches.length : 0;
+  const activeMatchId = searchMatches.length > 0 ? searchMatches[activeSearchIndex] : null;
+
+  function handleSearchChange(text) {
+    setSearchQuery(text);
+    setSearchIndex(0);
+  }
+
+  function handleSearchStep(direction) {
+    if (searchMatches.length === 0) return;
+    setSearchIndex(
+      (activeSearchIndex + direction + searchMatches.length) % searchMatches.length
+    );
+  }
+
+  function handleSearchClose() {
+    setSearchOpen(false);
+    setSearchQuery('');
+    setSearchIndex(0);
+  }
 
   useEffect(() => {
     const unsubscribe = stateMachine.subscribe(
@@ -634,6 +666,23 @@ export default function ChatScreen() {
     const userMsgId = `u-${Date.now()}`;
     const timestamp = new Date().toISOString();
 
+    setMessages((prev) => [
+      ...prev,
+      {
+        id: `u-${Date.now()}`,
+        text: text,
+        attachment: attachment || undefined,
+        sender: 'user',
+        timestamp: new Date().toISOString(),
+        ...(quotedReply ? { replyTo: quotedReply } : {}),
+      },
+    ]);
+
+    if (attachment) {
+      handleClearAttachment();
+    } else {
+      setInputText('');
+    }
     if (!skipUserBubble) {
       setMessages((prev) => [...prev, {
         id: userMsgId,
@@ -1108,6 +1157,13 @@ export default function ChatScreen() {
             </Text>
           </Pressable>
           <Pressable
+            testID="search-toggle-button"
+            className={`border rounded-lg px-2.5 py-1 ${searchOpen ? 'border-yellow-500 bg-yellow-50' : 'border-gray-300'}`}
+            onPress={() => (searchOpen ? handleSearchClose() : setSearchOpen(true))}
+          >
+            <Text className="text-xs font-semibold text-gray-700">🔍 Search</Text>
+          </Pressable>
+          <Pressable
             testID="export-transcript-button"
             className="border rounded-lg px-2.5 py-1"
             style={{
@@ -1158,6 +1214,56 @@ export default function ChatScreen() {
         </View>
       </View>
 
+      {/* In-chat search bar (#786) */}
+      {searchOpen && (
+        <View
+          testID="search-bar"
+          className="flex-row items-center gap-2 px-3 py-2 bg-yellow-50/70 border-b border-yellow-200"
+        >
+          <TextInput
+            testID="search-input"
+            className="flex-1 border border-gray-300 rounded-lg px-3 py-1 text-sm bg-white"
+            placeholder="Search messages"
+            value={searchQuery}
+            onChangeText={handleSearchChange}
+            autoComplete="off"
+            autoCorrect={false}
+          />
+          <Text testID="search-counter" className="text-xs font-semibold text-gray-600">
+            {searchQuery.trim()
+              ? searchMatches.length > 0
+                ? `${activeSearchIndex + 1} of ${searchMatches.length}`
+                : 'No matches'
+              : ''}
+          </Text>
+          <Pressable
+            testID="search-up-button"
+            disabled={searchMatches.length === 0}
+            onPress={() => handleSearchStep(-1)}
+            className={`border border-gray-300 rounded-lg px-2 py-1 ${searchMatches.length === 0 ? 'opacity-40' : ''}`}
+          >
+            <Text className="text-xs font-bold text-gray-700">▲</Text>
+          </Pressable>
+          <Pressable
+            testID="search-down-button"
+            disabled={searchMatches.length === 0}
+            onPress={() => handleSearchStep(1)}
+            className={`border border-gray-300 rounded-lg px-2 py-1 ${searchMatches.length === 0 ? 'opacity-40' : ''}`}
+          >
+            <Text className="text-xs font-bold text-gray-700">▼</Text>
+          </Pressable>
+          <Pressable
+            testID="search-close-button"
+            onPress={handleSearchClose}
+            className="rounded-lg px-2 py-1"
+          >
+            <Text className="text-sm text-gray-500">✕</Text>
+          </Pressable>
+        </View>
+      )}
+
+      {/* Dev Mode / State Machine Inspector Toolbar */}
+      <View className="bg-gray-100 border-b border-gray-200 px-3 py-2 flex-row justify-between items-center">
       {/* Dev Mode Toolbar */}
       <View
         className="border-b px-3 py-2 flex-row justify-between items-center flex-wrap gap-2"
@@ -1346,6 +1452,8 @@ export default function ChatScreen() {
           disabledReplies={disabledReplies}
           sending={sending}
           onReply={setReplyTo}
+          searchQuery={searchOpen ? searchQuery : ''}
+          activeMatchId={searchOpen ? activeMatchId : null}
           darkMode={darkMode}
         />
       </View>
