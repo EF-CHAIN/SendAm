@@ -22,9 +22,8 @@ describe('Hero', () => {
   it('no longer references the PNG wallpaper through a CSS background', () => {
     const { container } = render(<Hero />);
     expect(container.innerHTML).not.toMatch(/bg-\[url/);
-import { describe, expect, it } from 'vitest';
-import { render, screen } from '@testing-library/react';
-import Hero from './Hero.jsx';
+  });
+});
 
 describe('Hero Component', () => {
   it('renders the top-level headline and key value propositions', () => {
