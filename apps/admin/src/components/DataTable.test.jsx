@@ -387,6 +387,9 @@ describe('compareValues', () => {
     expect(['100', '25.5', '9'].sort(compareValues)).toEqual(['9', '25.5', '100']);
     expect(compareValues('2026-01-02', '2026-01-01')).toBeGreaterThan(0);
     expect(compareValues('', '1')).toBe(1);
+  });
+});
+
 describe('DataTable column customization', () => {
   const cols = [
     { header: 'Name', accessor: 'name' },

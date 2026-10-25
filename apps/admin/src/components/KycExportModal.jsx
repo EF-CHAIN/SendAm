@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 
 /**
  * Modal to prompt operator for encryption passphrase and export options
@@ -14,25 +14,13 @@ export default function KycExportModal({
   const [confirmPassphrase, setConfirmPassphrase] = useState("");
   const [exportFormat, setExportFormat] = useState("encrypted"); // 'encrypted' | 'plaintext_csv'
   const [error, setError] = useState("");
-  const [isExporting, setIsExporting] = useState(false);
   const [exportProgress, setExportProgress] = useState(0);
   const [exportRecordCount, setExportRecordCount] = useState(0);
   const [dateFilter, setDateFilter] = useState({});
   const [cancelExport, setCancelExport] = useState(false);
 
-  useEffect(() => {
-    let mounted = true;
-    const handleCancel = () => {
-      setCancelExport(true);
-    };
-    return () => {
-      mounted = false;
-    };
-  }, []);
-
-  const handleDateFilterChange = (filter) => {
-    setDateFilter(filter);
-  };
+  // The parent owns the export lifecycle; the modal only mirrors it.
+  const isExporting = Boolean(exporting);
 
   if (!isOpen) return null;
 
@@ -53,12 +41,15 @@ export default function KycExportModal({
       }
     }
 
-    setIsExporting(true);
     setExportProgress(0);
     setExportRecordCount(0);
     setCancelExport(false);
 
-    onExport({\n      format: exportFormat,\n      passphrase: exportFormat === "encrypted" ? passphrase : null,\n      filters: { ...dateFilter },\n    });
+    onExport({
+      format: exportFormat,
+      passphrase: exportFormat === "encrypted" ? passphrase : null,
+      filters: { ...dateFilter },
+    });
   };
 
   return (
@@ -201,12 +192,12 @@ export default function KycExportModal({
           <div className="flex justify-end gap-3 pt-3 border-t border-gray-200 dark:border-gray-700">
             <button
               type="button"
-              onClick={() => setCancelExport(true)}
-              disabled={isExporting || cancelExport}
+              onClick={isExporting ? () => setCancelExport(true) : onClose}
+              disabled={cancelExport}
               className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200"
               data-testid="cancel-export-btn"
             >
-              Cancel Export
+              {isExporting ? "Cancel Export" : "Cancel"}
             </button>
             {isExporting && (
               <div className="flex items-center gap-2">
@@ -220,7 +211,7 @@ export default function KycExportModal({
               className="px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 disabled:opacity-50"
               data-testid="confirm-export-btn"
             >
-              {isExporting ? "Exporting…" : exporting ? "Generate Export" : "Generate Export"}
+              {isExporting ? "Exporting & Encrypting…" : "Generate Export"}
             </button>
           </div>
 
