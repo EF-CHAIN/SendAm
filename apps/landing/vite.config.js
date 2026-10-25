@@ -4,11 +4,6 @@ import path from 'node:path';
 import { visualizer } from 'rollup-plugin-visualizer';
 import { VitePWA } from 'vite-plugin-pwa';
 import offlinePage from './build/offlinePage.js';
-
-// https://vite.dev/config/
-export default defineConfig({
-  plugins: [react(), visualizer(), VitePWA({
-  plugins: [react(), offlinePage(), VitePWA({
 import criticalCss from './build/criticalCss.js';
 import { renderAboveTheFold } from './build/renderShell.js';
 
@@ -19,7 +14,7 @@ const alias = {
 
 // https://vite.dev/config/
 export default defineConfig({
-  plugins: [react(), criticalCss({
+  plugins: [react(), offlinePage(), visualizer(), criticalCss({
     // Inline the CSS used by the navbar + hero; load the rest of Tailwind async.
     renderMarkup: () => renderAboveTheFold({ root: __dirname, alias, plugins: [react()] }),
   }), VitePWA({

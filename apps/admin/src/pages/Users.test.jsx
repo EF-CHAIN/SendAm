@@ -22,6 +22,7 @@ const waitForTable = async () => {
 
 const confirmDeactivation = async () => {
   await userEvent.click(screen.getByRole('button', { name: /^deactivate$/i }));
+  await userEvent.type(screen.getByLabelText(/to confirm deactivation/i), 'CONFIRM');
   await userEvent.click(screen.getByRole('button', { name: /confirm deactivation/i }));
 };
 

@@ -17,7 +17,7 @@ import KycImageCompareModal from '@/components/KycImageCompareModal';
 import { encryptData, downloadEncryptedFile } from '@/lib/clientCrypto';
 import { REJECTION_REASONS } from '@/lib/rejectionReasons';
 import PasskeyPromptModal, { usePasskeyStepUp } from '@/components/PasskeyPromptModal';
-import { Clock, User, ChevronDown, ChevronUp } from 'lucide-react';
+import { Clock, ChevronUp } from 'lucide-react';
 
 export { REJECTION_REASONS };
 

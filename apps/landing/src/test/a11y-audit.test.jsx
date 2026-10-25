@@ -30,7 +30,8 @@ import {
 // The landing app has no MSW harness; OnboardingStatus is the only page that
 // talks to the API, so the shared axios instance is stubbed instead. A 401
 // makes the page fall back to its demo dataset, which is a real rendered state.
-vi.mock('@shared/api', () => ({
+vi.mock('@shared/api', async (importOriginal) => ({
+  ...(await importOriginal()),
   default: { get: vi.fn() },
 }));
 
@@ -64,7 +65,8 @@ const renderAt = (path) =>
 // Every route declared in App.jsx, including the catch-all.
 const AUDITED_ROUTES = [
   { path: '/', ready: () => screen.findByRole('heading', { level: 1 }) },
-  { path: '/onboarding', ready: () => screen.findByRole('heading', { name: /onboarding checkpoints/i }) },
+  // OnboardingStatus is a lazy chunk, so its first render includes the import.
+  { path: '/onboarding', ready: () => screen.findByRole('heading', { name: /onboarding checkpoints/i }, { timeout: 5000 }) },
   { path: '/no-such-landing-page', ready: () => screen.findByText(/404 - page not found/i) },
 ];
 

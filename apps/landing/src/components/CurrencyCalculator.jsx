@@ -1,5 +1,3 @@
-import { memo, useDeferredValue, useId, useMemo, useState, useTransition } from 'react';
-import { ArrowRight, CheckCircle2, TrendingDown, RefreshCw, Zap } from 'lucide-react';
 import { useState, useId } from 'react';
 import { ArrowRight, ArrowLeftRight, CheckCircle2, ChevronDown, TrendingDown, RefreshCw, Zap } from 'lucide-react';
 import { whatsappUrl } from '@/lib/links.js';
@@ -9,61 +7,6 @@ import {
   PRESET_AMOUNTS,
   getExchangeRate,
 } from '@/lib/currencyConstants.js';
-import {
-  computeQuote,
-  parseAmount,
-  SENDAM_FEE_PERCENT,
-  TRADITIONAL_FEE_PERCENT,
-} from '@/lib/quote.js';
-
-// The output panels below are memoised on the (deferred) quote, so a keystroke
-// only re-renders the cheap input column immediately. The fee maths and the
-// locale formatting run in a lower-priority render that React can interrupt
-// when the next keystroke arrives.
-const RecipientAmount = memo(function RecipientAmount({ quote, target }) {
-  return (
-    <div className="w-full px-3 py-2 text-2xl font-extrabold text-emerald-800 sm:text-3xl truncate">
-      {target.symbol} {quote.receivedAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-    </div>
-  );
-});
-
-const RateLine = memo(function RateLine({ rate, source, target }) {
-  return (
-    <span>
-      1 {source} = {rate.toLocaleString()} {target}
-    </span>
-  );
-});
-
-const FeeBreakdown = memo(function FeeBreakdown({ quote, source, target }) {
-  return (
-    <div className="rounded-xl border border-slate-100 bg-slate-50/80 p-3.5 space-y-2 text-xs">
-      <div className="flex justify-between text-slate-600">
-        <span>SendAm Fee ({SENDAM_FEE_PERCENT}%)</span>
-        <span className="font-semibold text-slate-800">{source.symbol}{quote.sendAmFee.toFixed(2)}</span>
-      </div>
-      <div className="flex justify-between text-slate-600">
-        <span>Traditional Wire (~{TRADITIONAL_FEE_PERCENT}%)</span>
-        <span className="line-through text-slate-400">{source.symbol}{quote.traditionalFee.toFixed(2)}</span>
-      </div>
-      <div className="pt-2 border-t border-slate-200 flex justify-between items-center text-emerald-700 font-semibold">
-        <span className="flex items-center gap-1">
-          <TrendingDown size={14} aria-hidden="true" />
-          Estimated Savings
-        </span>
-        <span className="text-sm">
-          {source.symbol}{quote.estimatedSavings.toFixed(2)} ({target.symbol}{Math.round(quote.estimatedSavingsInTarget).toLocaleString()})
-        </span>
-      </div>
-    </div>
-  );
-});
-  calculateQuote,
-  sendCommand,
-  SENDAM_FEE_PERCENT,
-  TRADITIONAL_FEE_PERCENT,
-} from '@/lib/calculator.js';
 
 // Every currency the calculator can display, so a swapped corridor can resolve
 // its flags and symbols even when a code leaves its original list.
@@ -83,34 +26,6 @@ export default function CurrencyCalculator() {
   const targetSelectId = useId();
   const breakdownId = useId();
 
-  // Typing stays urgent; everything derived from the amount follows a
-  // deferred copy so slider/typing input is never blocked by the quote render.
-  const [isTransitionPending, startTransition] = useTransition();
-  const deferredAmount = useDeferredValue(amount);
-  const deferredSource = useDeferredValue(sourceCurrency);
-  const deferredTarget = useDeferredValue(targetCurrency);
-
-  const quote = useMemo(
-    () => computeQuote(deferredAmount, deferredSource, deferredTarget),
-    [deferredAmount, deferredSource, deferredTarget],
-  );
-  const isStale =
-    isTransitionPending ||
-    deferredAmount !== amount ||
-    deferredSource !== sourceCurrency ||
-    deferredTarget !== targetCurrency;
-  const quote = calculateQuote({ amount, source: sourceCurrency, target: targetCurrency });
-  const parsedAmount = quote.amount;
-  const sendAmFeePercent = SENDAM_FEE_PERCENT;
-  const sendAmFee = quote.fee;
-  const traditionalFeePercent = TRADITIONAL_FEE_PERCENT;
-  const traditionalFee = quote.traditionalFee;
-  const currentRate = quote.rate;
-  const receivedAmount = quote.received;
-  const estimatedSavings = quote.savings;
-  const estimatedSavingsInTarget = quote.savingsInTarget;
-  const formatMoney = (value) =>
-    value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const parsedAmount = Math.max(0, parseFloat(amount) || 0);
 
   // SendAm fee is flat 1%
@@ -126,13 +41,10 @@ export default function CurrencyCalculator() {
   const currentRate = getExchangeRate(sourceCurrency, targetCurrency);
   const receivedAmount = netSendAmount * currentRate;
 
-  // Cheap, urgent values: preset highlight only needs the live amount.
-  const parsedAmount = parseAmount(amount);
+  // Estimated savings
+  const estimatedSavings = Math.max(0, traditionalFee - sendAmFee);
+  const estimatedSavingsInTarget = estimatedSavings * currentRate;
 
-  const currentSource = SOURCE_CURRENCIES.find((c) => c.code === deferredSource) || SOURCE_CURRENCIES[0];
-  const currentTarget = TARGET_CURRENCIES.find((c) => c.code === deferredTarget) || TARGET_CURRENCIES[0];
-  // Preset buttons follow the live source currency so symbols never lag the select.
-  const liveSource = SOURCE_CURRENCIES.find((c) => c.code === sourceCurrency) || SOURCE_CURRENCIES[0];
   const currentSource = currencyFor(sourceCurrency) || SOURCE_CURRENCIES[0];
   const currentTarget = currencyFor(targetCurrency) || TARGET_CURRENCIES[0];
 
@@ -157,19 +69,9 @@ export default function CurrencyCalculator() {
     }
   };
 
-  // Corridor tabs and presets are discrete clicks, so the whole update can be
-  // a transition: the press feedback paints first, the new quote renders after.
   const handleCorridorSwitch = (src, tgt) => {
-    startTransition(() => {
-      setSourceCurrency(src);
-      setTargetCurrency(tgt);
-    });
-  };
-
-  const handlePresetClick = (preset) => {
-    startTransition(() => {
-      setAmount(String(preset));
-    });
+    setSourceCurrency(src);
+    setTargetCurrency(tgt);
   };
 
   const handleSwap = () => {
@@ -279,14 +181,14 @@ export default function CurrencyCalculator() {
                     <button
                       key={preset}
                       type="button"
-                      onClick={() => handlePresetClick(preset)}
+                      onClick={() => setAmount(String(preset))}
                       className={`flex-1 py-1.5 rounded-lg text-xs font-semibold border transition ${
                         isSelected
                           ? 'border-primary bg-secondary text-primary'
                           : 'border-slate-200 bg-slate-50 text-slate-600 hover:bg-slate-100'
                       }`}
                     >
-                      {liveSource.symbol}{preset}
+                      {currentSource.symbol}{preset}
                     </button>
                   );
                 })}
@@ -296,20 +198,6 @@ export default function CurrencyCalculator() {
             {/* Exchange rate display */}
             <div className="flex items-center gap-2 text-xs font-medium text-slate-500 bg-slate-50 rounded-xl p-3 border border-slate-100">
               <RefreshCw size={14} className="text-primary shrink-0" aria-hidden="true" />
-              <RateLine rate={quote.rate} source={deferredSource} target={deferredTarget} />
-            </div>
-          </div>
-
-          {/* Target Column: follows the deferred quote, flagged busy while it catches up */}
-          <div
-            className="space-y-4"
-            aria-busy={isStale}
-            data-stale={isStale ? 'true' : 'false'}
-          >
-              <span data-testid="calculator-rate">
-                {currentRate === null
-                  ? `${sourceCurrency} to ${targetCurrency} is not available`
-                  : `1 ${sourceCurrency} = ${currentRate.toLocaleString()} ${targetCurrency}`}
               <span>
                 1 {sourceCurrency} = {rateLabel} {targetCurrency}
               </span>
@@ -337,13 +225,8 @@ export default function CurrencyCalculator() {
                 Recipient Gets (Est.)
               </label>
               <div className="relative flex rounded-2xl border-2 border-emerald-100 bg-emerald-50/50 p-2 focus-within:border-emerald-500 focus-within:ring-2 focus-within:ring-emerald-500/20">
-                <RecipientAmount quote={quote} target={currentTarget} />
-                <div
-                  data-testid="calculator-payout"
-                  aria-live="polite"
-                  className="w-full px-3 py-2 text-2xl font-extrabold text-emerald-800 sm:text-3xl truncate"
-                >
-                  {receivedAmount === null ? '—' : `${currentTarget.symbol} ${formatMoney(receivedAmount)}`}
+                <div className="w-full px-3 py-2 text-2xl font-extrabold text-emerald-800 sm:text-3xl truncate">
+                  {currentTarget.symbol} {receivedAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                 </div>
                 <div className="flex items-center gap-1 border-l border-emerald-200 pl-3 pr-2">
                   <span
@@ -370,25 +253,22 @@ export default function CurrencyCalculator() {
             </div>
 
             {/* Breakdown summary */}
-            <FeeBreakdown quote={quote} source={currentSource} target={currentTarget} />
             <div className="rounded-xl border border-slate-100 bg-slate-50/80 p-3.5 space-y-2 text-xs">
               <div className="flex justify-between text-slate-600">
                 <span>SendAm Fee ({sendAmFeePercent}%)</span>
-                <span data-testid="calculator-fee" className="font-semibold text-slate-800">{currentSource.symbol}{sendAmFee.toFixed(2)}</span>
+                <span className="font-semibold text-slate-800">{currentSource.symbol}{sendAmFee.toFixed(2)}</span>
               </div>
               <div className="flex justify-between text-slate-600">
                 <span>Traditional Wire (~{traditionalFeePercent}%)</span>
-                <span data-testid="calculator-traditional-fee" className="line-through text-slate-400">{currentSource.symbol}{traditionalFee.toFixed(2)}</span>
+                <span className="line-through text-slate-400">{currentSource.symbol}{traditionalFee.toFixed(2)}</span>
               </div>
               <div className="pt-2 border-t border-slate-200 flex justify-between items-center text-emerald-700 font-semibold">
                 <span className="flex items-center gap-1">
                   <TrendingDown size={14} aria-hidden="true" />
                   Estimated Savings
                 </span>
-                <span data-testid="calculator-savings" className="text-sm">
-                  {currentSource.symbol}{estimatedSavings.toFixed(2)}
-                  {estimatedSavingsInTarget !== null &&
-                    ` (${currentTarget.symbol}${Math.round(estimatedSavingsInTarget).toLocaleString()})`}
+                <span className="text-sm">
+                  {currentSource.symbol}{estimatedSavings.toFixed(2)} ({currentTarget.symbol}{Math.round(estimatedSavingsInTarget).toLocaleString()})
                 </span>
               </div>
 
@@ -480,8 +360,7 @@ export default function CurrencyCalculator() {
           </ul>
 
           <a
-            href={whatsappUrl(sendCommand(amount, sourceCurrency, targetCurrency))}
-            data-testid="calculator-whatsapp-link"
+            href={whatsappUrl(`send ${amount} ${sourceCurrency} to ${targetCurrency}`)}
             target="_blank"
             rel="noopener noreferrer"
             className="w-full sm:w-auto inline-flex items-center justify-center gap-2 rounded-xl bg-primary px-6 py-3 text-sm font-semibold text-white shadow-md shadow-primary/20 transition-all hover:bg-whatsapp"

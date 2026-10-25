@@ -25,8 +25,6 @@ const messages = [
   },
 ];
 
-// `priority` marks the wallpaper as above-the-fold (eager + high fetch priority).
-export default function ChatMockup({ priority = false }) {
 const TICK_TIMELINE = [
   { delay: 500, index: 0, status: 'sent' },
   { delay: 1100, index: 0, status: 'delivered' },
@@ -100,9 +98,11 @@ export function ReceiptTick({ status = 'read' }) {
   );
 }
 
+// `priority` marks the wallpaper as above-the-fold (eager + high fetch priority).
 export default function ChatMockup({
   autoAnimate = typeof import.meta !== 'undefined' && import.meta.env?.MODE !== 'test',
   loop = true,
+  priority = false,
 } = {}) {
   const isReducedMotion =
     typeof window !== 'undefined' &&

@@ -292,6 +292,7 @@ describe('admin WCAG 2.2 AAA audit', () => {
       const row = screen.getByText(maskPhoneNumber('+1234567890')).closest('tr');
       await user.click(within(row).getByRole('button', { name: /^deactivate$/i }));
       const dialog = await screen.findByRole('dialog');
+      await user.type(within(dialog).getByLabelText(/to confirm deactivation/i), 'CONFIRM');
       await user.click(within(dialog).getByRole('button', { name: /confirm deactivation/i }));
       const passkeyPrompt = await screen.findByTestId('passkey-prompt');
       await user.click(within(passkeyPrompt).getByRole('checkbox'));

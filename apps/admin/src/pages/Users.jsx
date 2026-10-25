@@ -464,8 +464,7 @@ export default function Users() {
                   }}
                   className="w-full text-left px-3.5 py-2 hover:bg-slate-50 flex items-center gap-2 text-blue-700 transition"
                 >
-                  <Download,
-  AlertTriangleclassName="w-3.5 h-3.5 text-blue-500" />
+                  <Download className="w-3.5 h-3.5 text-blue-500" />
                   <span>Export Audit Log</span>
                 </button>
               </div>
@@ -484,8 +483,7 @@ export default function Users() {
             type="button"
             onClick={() => handleDownloadEvidence(row.id)}
             className="text-xs px-2.5 py-1 bg-blue-50 hover:bg-blue-100 text-blue-700 font-medium rounded transition"
-            title="Download,
-  AlertTriangleJSON Compliance Evidence"
+            title="Download JSON Compliance Evidence"
           >
             Evidence
           </button>

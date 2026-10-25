@@ -10,7 +10,7 @@ import DataTable from '@/components/DataTable';
 import Loader from '@shared/Loader';
 import Pagination from '@/components/Pagination';
 import FilterBar from '@/components/FilterBar';
-import { ChevronDown, ChevronUp, Code, Plus, Minus } from 'lucide-react';
+import { ChevronUp, Code } from 'lucide-react';
 
 export default function AuditLogs() {
   const { params, getFilter, setFilter, resetFilters, goNext, goPrev } = useListQuery([

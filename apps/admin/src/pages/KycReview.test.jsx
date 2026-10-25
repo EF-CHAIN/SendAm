@@ -259,10 +259,14 @@ describe('KycReview Component', () => {
     const confirmExportBtn = screen.getByTestId('confirm-export-btn');
     await userEvent.click(confirmExportBtn);
 
-    await waitFor(() => {
-      expect(screen.queryByTestId('kyc-export-modal')).not.toBeInTheDocument();
-    });
-  });
+    // PBKDF2 key derivation is slow under jsdom, so allow more than the 1s default.
+    await waitFor(
+      () => {
+        expect(screen.queryByTestId('kyc-export-modal')).not.toBeInTheDocument();
+      },
+      { timeout: 15000 }
+    );
+  }, 30000);
 
   it('validates passphrase mismatch in export modal', async () => {
     renderKyc();
