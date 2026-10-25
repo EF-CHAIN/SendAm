@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from 'react';
-import { Animated, Pressable, ScrollView, Text, View } from 'react-native';
 import {
   AccessibilityInfo,
   Animated,
@@ -343,14 +342,19 @@ export function splitForHighlight(text, query) {
 }
 
 /** Bubble text with search matches highlighted in yellow. */
-function MessageText({ item, isUser, searchQuery, isActiveMatch }) {
+function MessageText({ item, isUser, searchQuery, isActiveMatch, darkMode = false }) {
   const base = isUser ? 'text-white' : 'text-gray-900';
+  const baseStyle = darkMode ? { color: '#e9edef' } : undefined;
   const segments = splitForHighlight(item.text, searchQuery);
   if (!searchQuery || segments.every((s) => !s.match)) {
-    return <Text className={base}>{item.text}</Text>;
+    return (
+      <Text style={baseStyle} className={base}>
+        {item.text}
+      </Text>
+    );
   }
   return (
-    <Text className={base} testID={`highlighted-text-${item.id}`}>
+    <Text style={baseStyle} className={base} testID={`highlighted-text-${item.id}`}>
       {segments.map((segment, idx) =>
         segment.match ? (
           <Text
@@ -369,6 +373,8 @@ function MessageText({ item, isUser, searchQuery, isActiveMatch }) {
       )}
     </Text>
   );
+}
+
 /**
  * Normalize a WhatsApp interactive list message out of a bot message, or
  * return null when the message isn't one.
@@ -503,8 +509,14 @@ function pointFromEvent(event) {
 // A message bubble that can be dragged horizontally to the right to quote it.
 // Swiping reveals a reply arrow; releasing past the threshold notifies the
 // parent and springs the bubble back into place.
-function SwipeableBubble({ item, isUser, onReply, searchQuery, isActiveMatch }) {
-function SwipeableBubble({ item, isUser, onReply, darkMode = false }) {
+function SwipeableBubble({
+  item,
+  isUser,
+  onReply,
+  darkMode = false,
+  searchQuery = '',
+  isActiveMatch = false,
+}) {
   const isVoice = item.type === 'voice' || item.isVoice;
   const translateX = useRef(new Animated.Value(0)).current;
   const startX = useRef(0);
@@ -623,23 +635,17 @@ function SwipeableBubble({ item, isUser, onReply, darkMode = false }) {
               )}
             </View>
           )}
-          {Boolean(item.text) && (
-            <MessageText
-              item={item}
-              isUser={isUser}
-              searchQuery={searchQuery}
-              isActiveMatch={isActiveMatch}
-            />
           {isVoice ? (
             <VoiceBubble item={item} isUser={isUser} />
           ) : (
             Boolean(item.text) && (
-              <Text
-                style={darkMode ? { color: '#e9edef' } : undefined}
-                className={isUser ? 'text-white' : 'text-gray-900'}
-              >
-                {item.text}
-              </Text>
+              <MessageText
+                item={item}
+                isUser={isUser}
+                darkMode={darkMode}
+                searchQuery={searchQuery}
+                isActiveMatch={isActiveMatch}
+              />
             )
           )}
           {hasMeta && (
@@ -737,6 +743,8 @@ export default function MessageList({
   disabledReplies = {},
   sending = false,
   onReply,
+  now,
+  darkMode = false,
   searchQuery = '',
   activeMatchId = null,
 }) {
@@ -754,17 +762,12 @@ export default function MessageList({
     }
   }, [activeMatchId]);
 
-  return (
-    <ScrollView ref={scrollRef} contentContainerClassName="px-3 py-2 gap-2">
-      {messages.map((item) => {
-  now,
-  darkMode = false,
-}) {
   const rows = buildRows(messages, now);
   const stickyHeaderIndices = rows.reduce((acc, row, i) => (row.type === 'date' ? [...acc, i] : acc), []);
 
   return (
     <ScrollView
+      ref={scrollRef}
       contentContainerClassName="px-3 py-2 gap-2"
       stickyHeaderIndices={stickyHeaderIndices}
     >
@@ -792,12 +795,6 @@ export default function MessageList({
             }
           : undefined;
 
-        const bubbleTextClass = darkMode
-          ? 'text-[#e9edef]'
-          : isUser
-            ? 'text-white'
-            : 'text-gray-900';
-
         return (
           <View
             key={item.id}
@@ -807,24 +804,12 @@ export default function MessageList({
               rowPositionsRef.current[item.id] = e.nativeEvent.layout.y;
             }}
           >
-            <SwipeableBubble
-              item={item}
-              isUser={isUser}
-              onReply={onReply}
-              searchQuery={searchQuery}
-              isActiveMatch={isActiveMatch}
-            />
-          <View key={item.id} className="gap-1.5">
-            <View
-              testID={`bubble-${item.sender}`}
-              style={bubbleStyle}
-              className={
-                isUser
-                  ? 'self-end bg-green-500 rounded-2xl px-3 py-2 max-w-[80%]'
-                  : 'self-start bg-gray-200 rounded-2xl px-3 py-2 max-w-[80%]'
-              }
-            >
-              {listMessage ? (
+            {listMessage ? (
+              <View
+                testID={`bubble-${item.sender}`}
+                style={bubbleStyle}
+                className="self-start bg-gray-200 rounded-2xl px-3 py-2 max-w-[80%]"
+              >
                 <View className="gap-1.5">
                   <Text
                     style={darkMode ? { color: '#e9edef' } : undefined}
@@ -847,16 +832,17 @@ export default function MessageList({
                     </Text>
                   </Pressable>
                 </View>
-              ) : (
-                <Text
-                  style={darkMode ? { color: '#e9edef' } : undefined}
-                  className={bubbleTextClass}
-                >
-                  {item.text}
-                </Text>
-              )}
-            </View>
-            <SwipeableBubble item={item} isUser={isUser} onReply={onReply} darkMode={darkMode} />
+              </View>
+            ) : (
+              <SwipeableBubble
+                item={item}
+                isUser={isUser}
+                onReply={onReply}
+                darkMode={darkMode}
+                searchQuery={searchQuery}
+                isActiveMatch={isActiveMatch}
+              />
+            )}
 
             {/* WhatsApp interactive quick-reply pill buttons */}
             {quickReplies.length > 0 && (

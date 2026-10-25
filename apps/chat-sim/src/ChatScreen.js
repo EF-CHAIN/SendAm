@@ -13,8 +13,11 @@ import {
   View,
   useWindowDimensions,
 } from 'react-native';
-import MessageList, { findMessageMatches, parseQuickReplies } from './MessageList';
-import MessageList, { parseListMessage, parseQuickReplies } from './MessageList';
+import MessageList, {
+  findMessageMatches,
+  parseListMessage,
+  parseQuickReplies,
+} from './MessageList';
 import EmojiPicker from './EmojiPicker';
 import usePolling from './usePolling';
 import {
@@ -666,23 +669,6 @@ export default function ChatScreen() {
     const userMsgId = `u-${Date.now()}`;
     const timestamp = new Date().toISOString();
 
-    setMessages((prev) => [
-      ...prev,
-      {
-        id: `u-${Date.now()}`,
-        text: text,
-        attachment: attachment || undefined,
-        sender: 'user',
-        timestamp: new Date().toISOString(),
-        ...(quotedReply ? { replyTo: quotedReply } : {}),
-      },
-    ]);
-
-    if (attachment) {
-      handleClearAttachment();
-    } else {
-      setInputText('');
-    }
     if (!skipUserBubble) {
       setMessages((prev) => [...prev, {
         id: userMsgId,
@@ -1262,8 +1248,6 @@ export default function ChatScreen() {
         </View>
       )}
 
-      {/* Dev Mode / State Machine Inspector Toolbar */}
-      <View className="bg-gray-100 border-b border-gray-200 px-3 py-2 flex-row justify-between items-center">
       {/* Dev Mode Toolbar */}
       <View
         className="border-b px-3 py-2 flex-row justify-between items-center flex-wrap gap-2"
