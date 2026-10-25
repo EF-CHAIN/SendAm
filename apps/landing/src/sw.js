@@ -1,107 +1,32 @@
-const CACHE_VERSION = 'sendam-v1';
-const ASSET_CACHE = `sendam-assets-${CACHE_VERSION}`;
-const DYNAMIC_CACHE = `sendam-dynamic-${CACHE_VERSION}`;
-const PAGE_CACHE = `sendam-pages-${CACHE_VERSION}`;
-const FONT_CACHE = `sendam-fonts-${CACHE_VERSION}`;
+// Landing service worker, built by vite-plugin-pwa (injectManifest) into
+// dist/sw.js. Strategies live in ./sw/core.js; see apps/landing/README.md.
+import { classifyRequest, cleanupCaches, handleAsset, handleNavigation, precache } from './sw/core.js';
 
-const PRECACHE_URLS = [
-  '/',
-  '/index.html',
-];
-
-const ASSET_PATTERN = /\.(?:png|jpg|jpeg|gif|svg|webp|ico|css|js|woff|woff2|ttf|eot)$/;
-const FONT_PATTERN = /^https:\/\/fonts\./;
-const JSON_PATTERN = /\.(?:json|xml)$/;
+// Replaced at build time with the list of hashed build files to precache.
+const MANIFEST = self.__WB_MANIFEST;
 
 self.addEventListener('install', (event) => {
-  event.waitUntil(
-    caches.open(ASSET_CACHE).then((cache) => {
-      return cache.addAll(PRECACHE_URLS);
-    }).then(() => self.skipWaiting())
-  );
+  // No skipWaiting here: an updated worker waits until the page asks it to
+  // take over (SKIP_WAITING below), so users are prompted instead of having a
+  // new bundle swapped in mid-session.
+  event.waitUntil(precache({ manifest: MANIFEST, caches: self.caches, fetch: self.fetch.bind(self) }));
 });
 
 self.addEventListener('activate', (event) => {
-  event.waitUntil(
-    caches.keys().then((cacheNames) => {
-      return Promise.all(
-        cacheNames
-          .filter((name) => !name.endsWith(CACHE_VERSION))
-          .map((name) => caches.delete(name))
-      );
-    }).then(() => self.clients.claim())
-  );
+  event.waitUntil(cleanupCaches({ manifest: MANIFEST, caches: self.caches }).then(() => self.clients.claim()));
 });
 
 self.addEventListener('fetch', (event) => {
-  const { request } = event;
-
-  if (request.mode === 'navigate') {
-    event.respondWith(networkFirst(request, PAGE_CACHE));
-    return;
-  }
-
-  if (FONT_PATTERN.test(request.url)) {
-    event.respondWith(cacheFirst(request, FONT_CACHE));
-    return;
-  }
-
-  if (ASSET_PATTERN.test(request.url)) {
-    event.respondWith(staleWhileRevalidate(request, ASSET_CACHE));
-    return;
-  }
-
-  if (JSON_PATTERN.test(request.url)) {
-    event.respondWith(networkFirst(request, DYNAMIC_CACHE));
-    return;
-  }
-
-  event.respondWith(staleWhileRevalidate(request, ASSET_CACHE));
+  const kind = classifyRequest(event.request, self.location.origin);
+  if (kind === 'bypass') return;
+  const deps = {
+    request: event.request,
+    caches: self.caches,
+    fetch: self.fetch.bind(self),
+    waitUntil: (promise) => event.waitUntil(promise),
+  };
+  event.respondWith(kind === 'navigation' ? handleNavigation(deps) : handleAsset(deps));
 });
-
-function staleWhileRevalidate(request, cacheName) {
-  return caches.open(cacheName).then((cache) => {
-    return cache.match(request).then((cached) => {
-      const fetched = fetch(request).then((response) => {
-        if (response && response.status === 200) {
-          cache.put(request, response.clone());
-        }
-        return response;
-      }).catch(() => cached);
-      return cached || fetched;
-    });
-  });
-}
-
-function networkFirst(request, cacheName) {
-  return caches.open(cacheName).then((cache) => {
-    return fetch(request).then((response) => {
-      if (response && response.status === 200) {
-        cache.put(request, response.clone());
-      }
-      return response;
-    }).catch(() => {
-      return cache.match(request).then((cached) => {
-        if (cached) return cached;
-        return caches.open(ASSET_CACHE).then((c) => c.match('/index.html'));
-      });
-    });
-  });
-}
-
-function cacheFirst(request, cacheName) {
-  return caches.open(cacheName).then((cache) => {
-    return cache.match(request).then((cached) => {
-      if (cached) return cached;
-      return fetch(request).then((response) => {
-        if (response && response.status === 200) {
-          cache.put(request, response.clone());
-        }
-        return response;
-      });
-    });
-  });
-}
 
 self.addEventListener('message', (event) => {
   if (event.data && event.data.type === 'SKIP_WAITING') {

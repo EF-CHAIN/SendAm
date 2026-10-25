@@ -16,7 +16,7 @@ describe('CurrencyCalculator Component', () => {
       minimumFractionDigits: 2,
       maximumFractionDigits: 2,
     });
-    expect(screen.getByText(new RegExp(expectedNgn))).toBeInTheDocument();
+    expect(screen.getAllByText(new RegExp(expectedNgn)).length).toBeGreaterThan(0);
     expect(screen.getByText('$1.00')).toBeInTheDocument(); // 1% fee
     expect(screen.getByText('$7.00')).toBeInTheDocument(); // 7% traditional fee
   });
@@ -33,7 +33,7 @@ describe('CurrencyCalculator Component', () => {
       minimumFractionDigits: 2,
       maximumFractionDigits: 2,
     });
-    expect(screen.getByText(new RegExp(expectedNgn))).toBeInTheDocument();
+    expect(screen.getAllByText(new RegExp(expectedNgn)).length).toBeGreaterThan(0);
     expect(screen.getByText('$5.00')).toBeInTheDocument();
   });
 
@@ -59,8 +59,8 @@ describe('CurrencyCalculator Component', () => {
       minimumFractionDigits: 2,
       maximumFractionDigits: 2,
     });
-    expect(screen.getByText(new RegExp(expectedKes))).toBeInTheDocument();
-    expect(screen.getByText(/1 USD = 129 KES/i)).toBeInTheDocument();
+    expect(screen.getAllByText(new RegExp(expectedKes)).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/1 USD = 129 KES/i).length).toBeGreaterThan(0);
   });
 
   it('updates rate when changing source currency to EUR or GBP', () => {
@@ -74,8 +74,61 @@ describe('CurrencyCalculator Component', () => {
       minimumFractionDigits: 2,
       maximumFractionDigits: 2,
     });
-    expect(screen.getByText(new RegExp(expectedNgn))).toBeInTheDocument();
-    expect(screen.getByText(/1 GBP = 1,980 NGN/i)).toBeInTheDocument();
+    expect(screen.getAllByText(new RegExp(expectedNgn)).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/1 GBP = 1,980 NGN/i).length).toBeGreaterThan(0);
+  });
+
+  it('toggles the fee breakdown drawer with correct ARIA wiring', () => {
+    render(<CurrencyCalculator />);
+
+    const toggle = screen.getByRole('button', { name: /view fee breakdown/i });
+
+    // Collapsed: hidden from the accessibility tree entirely.
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.queryByRole('region', { name: /fee breakdown/i })).not.toBeInTheDocument();
+
+    fireEvent.click(toggle);
+    expect(toggle).toHaveAttribute('aria-expanded', 'true');
+    const region = screen.getByRole('region', { name: /fee breakdown/i });
+    expect(toggle).toHaveAttribute('aria-controls', region.id);
+
+    fireEvent.click(toggle);
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+  });
+
+  it('itemizes fees that sum exactly to the net send amount', () => {
+    render(<CurrencyCalculator />);
+
+    fireEvent.click(screen.getByRole('button', { name: /view fee breakdown/i }));
+
+    // 100.00 sent − 1.00 service fee = 99.00 net; the network fee is covered
+    // by SendAm, so it never changes the sum.
+    expect(screen.getByText('You send').nextSibling).toHaveTextContent('$100.00');
+    expect(screen.getByText(/sendam service fee \(1%\)/i).nextSibling).toHaveTextContent('−$1.00');
+    expect(screen.getByText(/stellar network fee/i).nextSibling).toHaveTextContent('<$0.0001');
+    expect(screen.getByText('Net send amount').nextSibling).toHaveTextContent('$99.00');
+    expect(screen.getByText('Guaranteed FX rate').nextSibling).toHaveTextContent(
+      `1 USD = ${EXCHANGE_RATES.USD.NGN.toLocaleString()} NGN`
+    );
+
+    const expectedNgn = (99 * EXCHANGE_RATES.USD.NGN).toLocaleString(undefined, {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    });
+    expect(screen.getByText('Recipient gets').nextSibling).toHaveTextContent(`₦${expectedNgn}`);
+  });
+
+  it('keeps the breakdown itemization in sync with a changed amount', () => {
+    render(<CurrencyCalculator />);
+
+    fireEvent.click(screen.getByRole('button', { name: /view fee breakdown/i }));
+    fireEvent.change(screen.getByRole('textbox', { name: /send amount in usd/i }), {
+      target: { value: '250' },
+    });
+
+    expect(screen.getByText('You send').nextSibling).toHaveTextContent('$250.00');
+    expect(screen.getByText(/sendam service fee \(1%\)/i).nextSibling).toHaveTextContent('−$2.50');
+    expect(screen.getByText('Net send amount').nextSibling).toHaveTextContent('$247.50');
   });
 
   it('swaps currencies and carries the received amount over on swap', () => {
@@ -94,7 +147,8 @@ describe('CurrencyCalculator Component', () => {
 
     // 153,450 - 1% = 151,915.5 NGN at 1/1550 = 98.01 USD
     expect(screen.getByText(/1 NGN = 0\.000645 USD/i)).toBeInTheDocument();
-    expect(screen.getByText(/98\.01/)).toBeInTheDocument();
+    // The converted amount also appears in the fee breakdown, so match any.
+    expect(screen.getAllByText(/98\.01/).length).toBeGreaterThan(0);
   });
 
   it('round-trips the corridor back to the original direction', () => {

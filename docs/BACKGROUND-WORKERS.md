@@ -102,6 +102,74 @@ Alert on:
 - oldest waiting-job age above the user-response objective;
 - Redis connection, memory, eviction, or persistence alarms;
 - worker restart loops, stalled jobs, or shutdown timeouts.
+- `SendAmAlertDeliveryTestMissed` or `SendAmAlertDeliveryTestFailing` — see [Alert delivery test](#alert-delivery-test-poller) below.
+
+## Alert delivery test poller
+
+The worker runs a continuous synthetic end-to-end alert-delivery test
+(`startAlertDeliveryTestPoller` in `src/observability/alertDeliveryTest.service.js`).
+It fires immediately on startup and then on every `ALERT_DELIVERY_TEST_INTERVAL_MS`
+interval (default: 15 minutes).
+
+**What it does:**
+Each scheduled run generates a unique test ID, sends a clearly-marked synthetic
+message through every configured alert route, records the result in the
+`AlertDeliveryTest` Postgres table, and emits Prometheus gauges.
+
+**Alert routes exercised:**
+
+| Route | Condition | How it's identified as synthetic |
+|-------|-----------|----------------------------------|
+| WhatsApp (Meta) | `MESSAGE_TRANSPORT=meta` and `ALERT_DELIVERY_TEST_PHONE` is set | `Notification.type = synthetic_delivery_test`, no `userId` |
+| Operator webhook | `ERROR_MONITOR_WEBHOOK_URL` is configured | JSON payload includes `"type": "synthetic_delivery_test"` |
+
+**Fallback behaviour:** When the primary (WhatsApp) route fails, the operator
+webhook is automatically attempted. Result is `fallback_success` if the webhook
+succeeds. If both routes fail the overall result is `failure` and both per-route
+errors are logged and persisted.
+
+**Preventing customer impact:** Synthetic tests always use `ALERT_DELIVERY_TEST_PHONE`
+(an operator or test number, never a customer number) and are clearly labeled so
+they cannot be mistaken for real customer-facing incidents.
+
+**Configuration:**
+
+```text
+# Required to exercise the WhatsApp route
+ALERT_DELIVERY_TEST_PHONE=+15550001234
+
+# Optional tuning (these are the defaults)
+ALERT_DELIVERY_TEST_INTERVAL_MS=900000    # 15 minutes
+ALERT_DELIVERY_TEST_TIMEOUT_MS=10000      # 10 seconds per route
+ALERT_DELIVERY_TEST_MISSED_FACTOR=2       # flag as 'missed' after 2× interval
+```
+
+Set `ALERT_DELIVERY_TEST_INTERVAL_MS=0` to disable the poller entirely (e.g.
+in environments with no alert routes configured).
+
+**Operator visibility:**
+
+- `GET /api/admin/system-health` — the `alertDelivery` field shows `status`,
+  `lastTestAt`, `lastSuccessAt`, per-route results, and the current test ID.
+- `GET /metrics` — `sendam_alert_delivery_test_last_success_timestamp_seconds`
+  and `sendam_alert_delivery_test_last_run_timestamp_seconds` gauges for Prometheus rules.
+- Structured logs: `alert_delivery_test_completed` (info on success, error on failure).
+
+**Prometheus alert rules** (`observability/prometheus-rules.yml`):
+
+- `SendAmAlertDeliveryTestMissed` — fires (critical) when no successful test
+  has run in the past 30 minutes.
+- `SendAmAlertDeliveryTestFailing` — fires (warning) when more than 2 test
+  failures occur in a 30-minute window.
+
+**Investigating failures:**
+
+1. Check `GET /api/admin/system-health` for `alertDelivery.lastResult` and per-route errors.
+2. Search logs for `alert_delivery_test_completed` events near the failure time.
+3. WhatsApp failures: verify `ALERT_DELIVERY_TEST_PHONE`, `WHATSAPP_TOKEN`, and Meta API reachability.
+4. Webhook failures: verify `ERROR_MONITOR_WEBHOOK_URL` endpoint availability and TLS.
+5. To trigger a test immediately, restart the worker (the poller runs on startup).
+6. If all routes fail persistently, the alerting pipeline has no verified delivery path — escalate.
 
 Platform Engineering owns Redis, process scaling, alerts, and deploy drains.
 Backend owners own processor idempotency and failed-job diagnosis. Compliance

@@ -1,4 +1,6 @@
 import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest';
+vi.mock('@/lib/imageCompression.js', () => ({ compressImageForUpload: vi.fn() }));
+import { compressImageForUpload } from '@/lib/imageCompression.js';
 import { render, screen, fireEvent, act } from '@testing-library/react';
 import OnboardingWizard from './OnboardingWizard.jsx';
 
@@ -196,6 +198,8 @@ describe('OnboardingWizard identity document upload', () => {
     urlCounter = 0;
     URL.createObjectURL = vi.fn(() => `blob:mock-${++urlCounter}`);
     URL.revokeObjectURL = vi.fn();
+    compressImageForUpload.mockReset();
+    compressImageForUpload.mockResolvedValue(new Blob([new Uint8Array(1024)], { type: 'image/jpeg' }));
   });
 
   afterEach(() => {
@@ -282,5 +286,66 @@ describe('OnboardingWizard identity document upload', () => {
     expect(screen.queryByText('doc-4.png')).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: /browse files/i })).toBeDisabled();
     expect(screen.getByRole('button', { name: /take photo/i })).toBeDisabled();
+  });
+
+  it('compresses a chosen photo, shows progress, then reports it is ready', async () => {
+    compressImageForUpload.mockImplementation(async (_file, { onProgress }) => {
+      onProgress(40);
+      return new Blob([new Uint8Array(512 * 1024)], { type: 'image/jpeg' });
+    });
+    render(<OnboardingWizard />);
+
+    const input = screen.getByLabelText(/browse identity document files/i);
+    const photo = makeFile('id.jpg', 'image/jpeg');
+    fireEvent.change(input, { target: { files: [photo] } });
+
+    expect(compressImageForUpload).toHaveBeenCalledWith(photo, expect.objectContaining({ onProgress: expect.any(Function) }));
+    expect(await screen.findByRole('status')).toHaveTextContent('Photo ready to upload (512 KB)');
+    expect(screen.queryByRole('progressbar')).not.toBeInTheDocument();
+  });
+
+  it('shows the compression progress bar while the photo is being processed', async () => {
+    let finish;
+    compressImageForUpload.mockImplementation(
+      (_file, { onProgress }) =>
+        new Promise((resolve) => {
+          onProgress(35);
+          finish = () => resolve(new Blob([new Uint8Array(1024)]));
+        }),
+    );
+    render(<OnboardingWizard />);
+
+    fireEvent.change(screen.getByLabelText(/browse identity document files/i), {
+      target: { files: [makeFile('id.jpg', 'image/jpeg')] },
+    });
+
+    const bar = await screen.findByRole('progressbar', { name: /compressing identity photo/i });
+    expect(bar).toHaveAttribute('aria-valuenow', '35');
+
+    await act(async () => finish());
+    expect(await screen.findByRole('status')).toHaveTextContent('Photo ready to upload');
+  });
+
+  it('surfaces a compression failure to the visitor', async () => {
+    compressImageForUpload.mockRejectedValue(new Error('Please choose a photo file.'));
+    render(<OnboardingWizard />);
+
+    fireEvent.change(screen.getByLabelText(/browse identity document files/i), {
+      target: { files: [makeFile('scan.png', 'image/png')] },
+    });
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Please choose a photo file.');
+  });
+
+  it('does not compress PDFs', () => {
+    render(<OnboardingWizard />);
+
+    fireEvent.drop(screen.getByTestId('id-doc-dropzone'), {
+      dataTransfer: { files: [makeFile('id-card.pdf', 'application/pdf')] },
+    });
+
+    expect(screen.getByText('id-card.pdf')).toBeInTheDocument();
+    expect(compressImageForUpload).not.toHaveBeenCalled();
+    expect(screen.queryByRole('progressbar')).not.toBeInTheDocument();
   });
 });

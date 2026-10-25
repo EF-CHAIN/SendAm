@@ -64,7 +64,7 @@ export default function Hero() {
               data-testid="hero-skeleton-placeholder"
               className="pointer-events-none absolute inset-0 -z-10 rounded-[3.2rem] bg-gradient-to-b from-slate-100 via-slate-200 to-slate-100 motion-safe:animate-pulse"
             />
-            <ChatMockup />
+            <ChatMockup priority />
           </div>
         </div>
       </div>

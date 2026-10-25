@@ -1,4 +1,9 @@
-import { useId } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
+
+// Typing fires one query per keystroke without this quiet period, which makes
+// the table flicker and lets a slow response for an earlier keystroke land
+// after a later one (race condition). #750
+export const SEARCH_DEBOUNCE_MS = 300;
 
 // Local-time calendar day as yyyy-mm-dd — the value format <input type="date">
 // holds, and what the API's from/to filters read. Built from local date parts
@@ -27,6 +32,60 @@ const DATE_PRESETS = [
 ];
 
 const presetTestId = (label) => `filter-preset-${label.toLowerCase().replace(/ /g, '-')}`;
+
+// Draft state for a typed filter (text/date input). Keystrokes render into the
+// local draft immediately — typing stays responsive — while `commit` (and with
+// it the URL and the list query) only runs after `delay` ms of quiet typing.
+//
+// The draft re-syncs whenever the committed value changes somewhere else (chip
+// dismissal, Clear All, a date preset, back/forward, a shared URL load), and a
+// pending timer is cancelled at that point so a stale keystroke can never
+// overwrite the external change.
+function useDebouncedDraft(value, commit, delay = SEARCH_DEBOUNCE_MS) {
+  const [draft, setDraft] = useState(value);
+  const timerRef = useRef(null);
+  const committedRef = useRef(value);
+
+  useEffect(() => {
+    if (value === committedRef.current) return;
+    committedRef.current = value;
+    clearTimeout(timerRef.current);
+    setDraft(value);
+  }, [value]);
+
+  useEffect(() => () => clearTimeout(timerRef.current), []);
+
+  const changeDraft = (next) => {
+    setDraft(next);
+    clearTimeout(timerRef.current);
+    timerRef.current = setTimeout(() => {
+      // A draft that round-trips back to the committed value must not commit:
+      // setFilter would clear the cursor window for a filter that never changed.
+      if (next === committedRef.current) return;
+      committedRef.current = next;
+      commit(next);
+    }, delay);
+  };
+
+  return [draft, changeDraft];
+}
+
+// A single debounced text/date filter control. Kept as its own component so
+// each field owns its own draft and timer (hooks cannot live in the fields map).
+function FilterInput({ field, id, value, setFilter }) {
+  const [draft, changeDraft] = useDebouncedDraft(value, (next) => setFilter(field.key, next));
+  return (
+    <input
+      id={id}
+      type={field.type || 'text'}
+      className="text-sm rounded-lg border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-gray-900 dark:text-gray-100 px-3 py-1.5 shadow-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
+      placeholder={field.placeholder || ''}
+      value={draft}
+      onChange={(e) => changeDraft(e.target.value)}
+      data-testid={`filter-${field.key}`}
+    />
+  );
+}
 
 // Reusable filter bar for admin list pages. `fields` is an array of
 // { key, label, placeholder?, type?: 'text' | 'select', options?: string[] }.
@@ -118,15 +177,7 @@ export default function FilterBar({ fields = [], getFilter, setFilter, onReset }
                   ))}
                 </select>
               ) : (
-                <input
-                  id={id}
-                  type={field.type || 'text'}
-                  className={common}
-                  placeholder={field.placeholder || ''}
-                  value={value}
-                  onChange={(e) => setFilter(field.key, e.target.value)}
-                  data-testid={`filter-${field.key}`}
-                />
+                <FilterInput field={field} id={id} value={value} setFilter={setFilter} />
               )}
             </div>
           );
