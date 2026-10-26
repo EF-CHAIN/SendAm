@@ -6,7 +6,7 @@
 - **Date:** 2026-08-29
 - **Facilitator:** Security lead
 - **Participants:** Engineering lead, on-call engineer, compliance officer
-- **Runbook exercised:** [Key Management Incident Response §13](OPERATOR-RECOVERY-PLAYBOOK.md#13-key-management-incident-response) and [Credential Compromise Response §5d](OPERATOR-RECOVERY-PLAYBOOK.md#5d-credential-compromise-suspected)
+- **Runbook exercised:** [Key Management Incident Response §13](../../OPERATOR-RECOVERY-PLAYBOOK.md#13-key-management-incident-response) and [Credential Compromise Response §5d](../../OPERATOR-RECOVERY-PLAYBOOK.md#5d-credential-compromise-suspected)
 - **Duration:** 60 minutes
 
 ## Scenario

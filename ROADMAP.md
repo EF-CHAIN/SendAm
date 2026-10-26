@@ -100,7 +100,7 @@ Per-IP REST rate limiting and per-sender WhatsApp throttling share a single fixe
   Horizon/RPC submission failures, KYC provider failures, and webhook signature
   rejections. See [`docs/OBSERVABILITY.md`](docs/OBSERVABILITY.md) for the
   Prometheus / alerting setup already defined.
-- **Per-admin accounts and roles** — replace the single shared admin password.
+- ~~**Per-admin accounts and roles** — replace the single shared admin password.~~ **Built.** `AdminUser` / `AdminRole` / `AdminInvitation` models and permission-scoped admin routes (`admin.read`, `compliance.read/write`, `operations.write`); the shared `ADMIN_PASSWORD` only bootstraps the first administrator. Needs production configuration and review.
 - **Compliance review** (KYC/AML/custody) before any mainnet or real-money launch.
 - Add explicit sanctions and custody workflow requirements for deployment,
   including blocked/high-risk country screening, manual review state, and
@@ -111,7 +111,7 @@ Per-IP REST rate limiting and per-sender WhatsApp throttling share a single fixe
 The test suite uses Node's built-in `node:test` runner (no extra test framework
 dependency) and covers unit and integration scenarios across the backend.
 
-Built tests include:
+Built tests include (a representative subset; `apps/api/test/` holds the full suite, and the admin, landing and chat-sim apps have their own suites that run in CI):
 
 | Test file | Scope |
 |-----------|-------|
@@ -144,4 +144,4 @@ Remaining gaps (Planned):
 
 ## Open issues
 
-- #152 — This roadmap update (documentation audit and release-readiness).
+Open work is tracked in the [GitHub issue tracker](https://github.com/EF-CHAIN/SendAm/issues); this file does not duplicate it.

@@ -148,5 +148,6 @@ send 5 xlm GABC...
 - `fund` (retry Friendbot funding) is likewise copy-only right now.
 - No PIN-setup command in chat (see above).
 
-Each of these is a well-scoped contribution — check ISSUES.md before picking
-one up.
+Each of these is a well-scoped contribution — check the
+[issue tracker](https://github.com/EF-CHAIN/SendAm/issues) before picking one
+up.

@@ -115,7 +115,7 @@ This document describes the maintainer responsibilities, release process, and tr
 4. Bump patch version
 5. Fast-track review (single maintainer approval OK for critical fixes)
 6. Tag and release
-7. Cherry-pix to `main` if needed
+7. Cherry-pick to `main` if needed
 
 ### Rollback
 

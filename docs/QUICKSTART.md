@@ -104,4 +104,4 @@ example file) provisions the administrator.
 - [`COMMANDS.md`](COMMANDS.md) — what the bot understands
 - [`STELLAR.md`](STELLAR.md) — Stellar concepts this codebase leans on
 - [`../ARCHITECTURE.md`](../ARCHITECTURE.md) — how the backend is put together
-- [`../ISSUES.md`](../ISSUES.md) — the backlog, labeled by difficulty
+- [Open issues](https://github.com/EF-CHAIN/SendAm/issues) — the backlog; filter by the `good first issue` label

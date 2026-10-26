@@ -4,7 +4,7 @@ WhatsApp-first payments on Stellar with direct-custody wallets and voice-to-cash
 
 SendAm maps a WhatsApp phone number to a Stellar wallet and lets users send, receive, check balances, and request receipts from chat. The user experience hides blockchain complexity: the backend handles wallets, addresses, and settlement on Stellar so the user only ever talks to a chat assistant.
 
-> Current status: architecture refactor in progress. The project now has production-oriented module boundaries, queue scaffolding, managed-wallet abstractions, compliance models, and expanded admin surfaces. Live money movement still requires provider credentials, KYC onboarding, monitoring, and compliance review.
+> Current status: the payment flow, direct-custody Stellar wallets, compliance models, background workers and admin dashboard are built and tested, but nothing here is approved for real-money operation yet. Live money movement still requires provider credentials, production KYC onboarding, deployment, and compliance review. [`ROADMAP.md`](ROADMAP.md) tracks each item as Built, Configured, Deployed or Approved.
 
 ## Product Direction
 
@@ -33,25 +33,33 @@ The backend is organized toward:
 
 ```text
 src/
-  auth/
-  whatsapp/
-  wallet/
-  payment/
-  compliance/
-  voice/
-  notifications/
-  admin/
-  pricing/
-  blockchain/
-  queues/
-  jobs/
-  common/
+  admin/          admin DTOs and helpers
+  common/         audit and event services, Prisma client, validation
+  compliance/     KYC tiers, limits, PIN, risk scoring
+  config/         env validation, Stellar/Horizon, Redis, deployment manifest
+  controllers/    HTTP controllers (webhook, wallet, admin, sim, ...)
+  errors/         AppError, error catalog and response envelope
+  i18n/           reply message catalogs and formatters
+  jobs/           background job handlers (deposits, DLQ, retention, ...)
+  middlewares/    requireAdmin, rate limiting, error handling
+  observability/  metrics, alerting, worker health
+  payment/        payment orchestrator
+  pricing/        FX and quote service
+  queues/         BullMQ queue service
+  routes/         Express routers
+  services/       WhatsApp transport, crypto, REST auth, rate limits, ...
+  support/        privacy and wallet-troubleshooting services
+  utils/          logger, money, pagination and response helpers
+  voice/          voice-note download and transcription
+  wallet/         Stellar adapter and wallet service
+  webhooks/       webhook idempotency
+  whatsapp/       conversational assistant and webhook validation
 ```
 
 ## Backend Modules
 
 - `wallet`: Direct-custody Stellar adapter plus a `WalletService` abstraction for create/get wallet, send, balance, and transaction history. App code never imports the Stellar SDK directly — only `stellar.adapter.js` does.
-- `payment`: Payment Orchestrator for quotes, fees, rail selection, transaction execution, and receipts.
+- `payment`: Payment Orchestrator for quotes, fees, transaction execution, and receipts. Settlement is Stellar-only.
 - `whatsapp`: Conversational assistant for send money, receive money, balance, contacts, history, and receipts.
 - `voice`: WhatsApp audio download and Deepgram transcription pipeline.
 - `compliance`: KYC tiers, transaction limits, PIN verification, and risk scoring.
@@ -228,10 +236,16 @@ GET  /api/admin/transactions
 GET  /api/admin/kyc
 GET  /api/admin/audit-logs
 GET  /api/admin/system-health
-
+GET  /api/auth/challenge          SEP-10 style challenge for REST clients
+POST /api/auth/token
+POST /api/auth/logout
+GET  /api/receipts/:id            public receipt verification
+GET  /api/receipts/:id/verify
 GET  /webhook
 POST /webhook
 ```
+
+`/api/admin/*` has many more routes than listed here (exports, DLQ, privacy requests, legal holds, administrators, events, compliance evidence); they are permission-gated by `requireAdmin(<permission>)` in `apps/api/src/routes/admin.routes.js`, which is the source of truth. `/api/sim/*` exists only when `ENABLE_CHAT_SIM=true` (dev harness, see [`docs/CHAT-SIM.md`](docs/CHAT-SIM.md)).
 
 ## Infrastructure Target
 
@@ -299,7 +313,7 @@ example `https://admin.your-domain.com`.
 
 ### Prerequisites
 
-- Node.js 18 or newer
+- Node.js 20.19 or newer (see `.nvmrc`; Prisma 7 needs 20.19+). The Expo simulator in `apps/chat-sim` needs 22.13+.
 - npm
 - A PostgreSQL connection string for `DATABASE_URL` — either a local Postgres
   via Docker Compose (below) or a cloud database (e.g. Neon)
@@ -417,9 +431,9 @@ Two things that trip people up:
 - ~~Support non-native Stellar assets via `changeTrust` (USDC and anchor-issued assets)~~ — **Done.** XLM and USDC are both built; `resolveAsset('USDC')`, `getBalances()`, and `establishTrustline()` are in the adapter and wallets auto-open the USDC trustline at creation. See [`ROADMAP.md`](ROADMAP.md#usdc--non-native-asset-support--built).
 - Wire Smile ID or Dojah production KYC callbacks.
 - Apply the Prisma migration to the Neon database and run provider-level smoke tests.
-- Split background workers from the API process in deployment.
+- ~~Split background workers from the API process in deployment~~ — **Done.** The root `Procfile` declares separate `web` and `worker` processes; see [`docs/BACKGROUND-WORKERS.md`](docs/BACKGROUND-WORKERS.md) for the rollout order.
 - Expand automated test coverage for the payment orchestrator, voice, and compliance flows (webhook and auth integration tests exist — see [`ROADMAP.md`](ROADMAP.md#test-coverage)).
-- Add monitoring, alerting, audit review workflows, and admin RBAC.
+- Wire alerting (`queueAlerting.service.js`, [`docs/OBSERVABILITY.md`](docs/OBSERVABILITY.md)) to a real on-call channel and add audit review workflows. Admin accounts and role-based permissions (`AdminUser`, `AdminRole`) are already built.
 - Build real per-user authentication for the compliance PIN and KYC-start endpoints — they're gated off in production by default (`ENABLE_WALLET_REST_API`, same as the wallet REST API) until then, so they have no working production path yet.
 
 ### Run The Tests
@@ -430,6 +444,17 @@ The backend uses Node's built-in `node:test` runner (no extra test framework dep
 npm test                            # from the repo root
 npm run test --workspace=apps/api   # equivalently
 ```
+
+The other workspaces have their own suites. CI runs the admin, landing and chat-sim ones; `test:shared` and the Playwright suites are run locally (`test:visual` has its own workflow):
+
+```bash
+npm run test:admin       # admin dashboard (Vitest + jest-axe)
+npm run test:landing     # landing site (Vitest + jest-axe)
+npm run test:shared      # packages/shared
+npm test --workspace=apps/chat-sim   # chat simulator (Jest + jest-expo)
+```
+
+Playwright suites: `npm run test:e2e:landing`, `test:e2e:admin`, `test:e2e:chat-sim`, and `npm run test:visual`.
 
 CI also fails a PR that touches `apps/api/src/**` without touching `apps/api/test/**` (see the `api-test-coverage` job in `.github/workflows/ci.yml`). It's a crude heuristic — maintainers can override — meant to catch untested backend changes before merge.
 
@@ -499,7 +524,7 @@ Routes are declared in `apps/landing/src/App.jsx` and `apps/admin/src/App.jsx`.
 This project is a work-in-progress platform expansion. Some hardening is already in place:
 
 - Real backend admin authentication (HMAC-signed session tokens); the API refuses to start without `ADMIN_PASSWORD` and `JWT_SECRET`.
-- Admin API routes protected server-side by the `requireAdmin` middleware.
+- Admin API routes protected server-side by the `requireAdmin` middleware, with per-administrator accounts and role-based permissions (`admin.read`, `compliance.read/write`, `operations.write`).
 - Wallet private keys encrypted with authenticated AES-256-GCM (tamper-detecting); the server fails fast at startup without a valid `ENCRYPTION_KEY`.
 - WhatsApp webhook POSTs verified against the `X-Hub-Signature-256` header (fail-closed in production).
 - Inbound message idempotency to prevent duplicate transfers from webhook retries.
@@ -514,7 +539,6 @@ Still required before a real-money launch:
 - Add secure, managed secret/key management (KMS/HSM) instead of a single static `ENCRYPTION_KEY` for wallet private keys; support key rotation.
 - Add audit-log coverage for all sensitive admin and compliance actions, plus monitoring/alerting.
 - Expand the automated test suite to cover the payment orchestrator, wallet, webhook, voice, and compliance flows.
-- Replace the single shared admin password with real admin accounts and roles.
 - Complete legal, compliance, KYC, AML, and custody review where required.
 
 ## License

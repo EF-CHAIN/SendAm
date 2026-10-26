@@ -392,7 +392,7 @@ provider secret suspected of exposure.
 1. Do **not** run `prisma migrate reset` in production — this drops all data.
 2. Check the migration state:
    ```bash
-   npm run prisma:studio --workspace=apps/api
+   npm exec --workspace=apps/api -- prisma migrate status
    ```
    Or query directly:
    ```sql
@@ -442,7 +442,7 @@ provider secret suspected of exposure.
    ```
 2. Restart the worker:
    ```bash
-   npm run worker --workspace=apps/api
+   npm run start:worker --workspace=apps/api
    ```
 3. If the worker crashes immediately, check for missing env vars —
    the worker requires the same env as the API.
