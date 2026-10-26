@@ -563,4 +563,44 @@ describe('SystemHealth — data fetch error', () => {
     expect(await screen.findByText('System Health')).toBeInTheDocument();
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
+
+  it('groups health metrics and exposes refresh controls', async () => {
+    server.use(
+      http.get('*/api/admin/system-health', () => {
+        return HttpResponse.json({
+          data: {
+            api: 'ok',
+            database: 'ok',
+            redis: 'degraded',
+            workers: 'ok',
+            stellarHorizon: 'ok',
+            ramps: 'down',
+            uptime: '99.98%',
+            memory: '71%',
+            timestamp: new Date().toISOString(),
+          },
+        });
+      })
+    );
+
+    render(
+      <MemoryRouter>
+        <SystemHealth />
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByText('System Health')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { level: 2, name: 'Core Services' })).toBeInTheDocument();
+    // Each card sits under the heading of its own subsystem.
+    const group = (title) => screen.getByRole('heading', { level: 2, name: title }).closest('section');
+    expect(group('Core Services')).toContainElement(screen.getByTestId('health-card-database'));
+    expect(group('Core Services')).toContainElement(screen.getByTestId('health-card-redis'));
+    expect(group('Payment Rails')).toContainElement(screen.getByTestId('health-card-stellarHorizon'));
+    expect(group('Payment Rails')).toContainElement(screen.getByTestId('health-card-ramps'));
+    expect(group('Process Metrics')).toContainElement(screen.getByTestId('health-card-uptime'));
+    expect(screen.getByTestId('health-card-ramps')).toHaveAttribute('data-status', 'down');
+    expect(screen.getByTestId('health-card-redis')).toHaveAttribute('data-status', 'degraded');
+    expect(screen.getByRole('button', { name: 'Refresh now' })).toBeInTheDocument();
+    expect(screen.getByLabelText('Auto-refresh interval')).toBeInTheDocument();
+  });
 });

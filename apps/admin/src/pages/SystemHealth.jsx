@@ -12,6 +12,41 @@ const INTERVAL_OPTIONS = [
   { label: 'Paused', value: 0 },
 ];
 
+// Subsystem groups for the health grid (#503). Keys not listed here fall into
+// "Other" so a new probe added to the API still shows up.
+const HEALTH_GROUPS = [
+  {
+    title: 'Core Services',
+    keys: ['api', 'database', 'db', 'redis', 'queues', 'queue', 'workers', 'worker'],
+  },
+  {
+    title: 'Payment Rails',
+    keys: [
+      'settlementRail',
+      'custodyModel',
+      'stellar',
+      'stellarHorizon',
+      'stellar_horizon',
+      'horizon',
+      'ramps',
+      'ramp',
+    ],
+  },
+  { title: 'Process Metrics', keys: ['uptime', 'memory'] },
+];
+
+function groupHealthEntries(health) {
+  const entries = Object.entries(health || {});
+  const claimed = new Set();
+  const groups = HEALTH_GROUPS.map(({ title, keys }) => {
+    const items = entries.filter(([key]) => keys.includes(key));
+    items.forEach(([key]) => claimed.add(key));
+    return { title, items };
+  });
+  groups.push({ title: 'Other', items: entries.filter(([key]) => !claimed.has(key)) });
+  return groups.filter((group) => group.items.length > 0);
+}
+
 function getComponentHealth(value) {
   const str = String(value).toLowerCase();
   if (/down|unavailable|failed|error/i.test(str) || value === false) {
@@ -250,32 +285,42 @@ export default function SystemHealth() {
         </div>
       )}
 
-      {/* Grid of Components with Degraded / Critical Visual Highlighting */}
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-        {Object.entries(health || {}).map(([key, value]) => {
-          const { status, cardClass, badgeClass, label, Icon } = getComponentHealth(value);
+      {/* Components grouped by subsystem, with Degraded / Critical highlighting */}
+      {groupHealthEntries(health).map((group) => (
+        <section key={group.title} aria-labelledby={`health-group-${group.title}`}>
+          <h2
+            id={`health-group-${group.title}`}
+            className="mb-3 text-sm font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400"
+          >
+            {group.title}
+          </h2>
+          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+            {group.items.map(([key, value]) => {
+              const { status, cardClass, badgeClass, label, Icon } = getComponentHealth(value);
 
-          return (
-            <div
-              key={key}
-              data-testid={`health-card-${key}`}
-              data-status={status}
-              className={`rounded-xl border p-5 shadow-xs transition-colors flex flex-col justify-between ${cardClass}`}
-            >
-              <div className="flex items-center justify-between gap-2 mb-3">
-                <span className={`inline-flex items-center gap-1 text-[11px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider ${badgeClass}`}>
-                  <Icon className="w-3 h-3" />
-                  <span>{label}</span>
-                </span>
-              </div>
-              <p className="text-xs font-semibold uppercase text-gray-400">{key}</p>
-              <p className="mt-2 break-words text-sm font-medium text-gray-800 dark:text-gray-200">
-                {String(value)}
-              </p>
-            </div>
-          );
-        })}
-      </div>
+              return (
+                <div
+                  key={key}
+                  data-testid={`health-card-${key}`}
+                  data-status={status}
+                  className={`rounded-xl border p-5 shadow-xs transition-colors flex flex-col justify-between ${cardClass}`}
+                >
+                  <div className="flex items-center justify-between gap-2 mb-3">
+                    <span className={`inline-flex items-center gap-1 text-[11px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider ${badgeClass}`}>
+                      <Icon className="w-3 h-3" />
+                      <span>{label}</span>
+                    </span>
+                  </div>
+                  <p className="text-xs font-semibold uppercase text-gray-400">{key}</p>
+                  <p className="mt-2 break-words text-sm font-medium text-gray-800 dark:text-gray-200">
+                    {String(value)}
+                  </p>
+                </div>
+              );
+            })}
+          </div>
+        </section>
+      ))}
     </div>
   );
 }
