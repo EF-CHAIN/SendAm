@@ -138,6 +138,8 @@ const PIPELINE_NODES = [
   PaymentState.PARSING_VOICE,
   PaymentState.RATE_QUOTED,
   PaymentState.AWAITING_PIN,
+  PaymentState.AUTHORIZING,
+  PaymentState.SUBMITTING,
   PaymentState.SETTLING_STELLAR,
   PaymentState.RECEIPT_DELIVERED,
   PaymentState.COMPLETED,
