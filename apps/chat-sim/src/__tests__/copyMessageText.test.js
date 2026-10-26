@@ -3,6 +3,12 @@ import * as Clipboard from 'expo-clipboard';
 import { copyMessageText } from '../copyMessageText';
 
 jest.mock('expo-clipboard', () => ({ setStringAsync: jest.fn() }));
+// Node 20 (the CI runtime) has no global navigator; Node 21+ does.
+const hadNavigator = typeof globalThis.navigator !== 'undefined';
+if (!hadNavigator) globalThis.navigator = {};
+afterAll(() => {
+  if (!hadNavigator) delete globalThis.navigator;
+});
 const originalOS = Platform.OS;
 const originalClipboard = Object.getOwnPropertyDescriptor(navigator, 'clipboard');
 afterEach(() => {
