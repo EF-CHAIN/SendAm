@@ -64,7 +64,7 @@ Larger areas include:
 
 ### Prerequisites
 
-- Node.js 20 or newer (see `.nvmrc`).
+- Node.js 20.19 or newer (see `.nvmrc`; Prisma 7 needs 20.19+).
 - npm.
 - A PostgreSQL database for `DATABASE_URL` — not needed just to run the unit
   tests, which are fully offline. Run `docker compose up -d` from the repo
@@ -287,7 +287,7 @@ Do not open public issues for serious security vulnerabilities involving:
 - Transaction-signing vulnerabilities.
 - Production credential leaks.
 
-Instead, contact the maintainers privately if a security contact is available. If not, open a minimal issue saying you found a security concern and avoid posting exploit details publicly.
+Instead, report it privately as described in [`SECURITY.md`](SECURITY.md) (a private GitHub security advisory). Never post exploit details in a public issue.
 
 ## Stellar-Specific Contribution Notes
 

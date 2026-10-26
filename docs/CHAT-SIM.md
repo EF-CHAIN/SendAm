@@ -1,11 +1,12 @@
 # Chat simulator
 
-> **Status: SPEC.** WhatsApp onboarding is delayed on Meta's side, so the
-> conversational surface is tested through a simulator. This document is the
-> agreed interface for the implementation tracked in ISSUES.md **Epic 1**
-> (backend, issues #5–#10) and **Epic 2** (Expo client, issues #11–#13).
-> When those land, this page becomes the usage guide; until then, treat it
-> as the contract implementers build against.
+> **Status: implemented, with one known gap.** WhatsApp onboarding is delayed
+> on Meta's side, so the conversational surface is tested through a simulator.
+> The API side (`/api/sim/*` and the `MESSAGE_TRANSPORT=sim` seam) and the Expo
+> client in `apps/chat-sim` both exist. The gap: `GET /api/sim/messages/:phone`
+> reads an interim in-memory store instead of the `SimMessage` table, so history
+> resets on restart and async pushes such as deposit alerts are not returned yet
+> (see [Known limitation](../apps/chat-sim/README.md#known-limitation)).
 
 ## Why it exists
 
@@ -63,7 +64,9 @@ POST /api/sim/message
 
 GET /api/sim/messages/:phone?since=<ISO date or message id>
   → 200 { "messages": [ { direction, text, createdAt }, ... ] }
-  → includes async pushes; poll this to render the conversation
+  → the conversation held by the interim in-memory store; poll this to render it
+    (async pushes written to `SimMessage` are not included yet — see the status
+    note at the top)
 ```
 
 The phone number in the body is the identity — deliberately identical to how
@@ -85,8 +88,9 @@ Config: API base URL in one config file — point it at
 
 ## Run it locally
 
-Run the API and the simulator on your machine. Node.js 18+ and npm are
-required (the steps below were checked on Node 24). Docker is only needed for
+Run the API and the simulator on your machine. Node.js 20.19+ and npm are
+required (22.13+ for the Expo app, see `apps/chat-sim/README.md`; the steps
+below were checked on Node 24). Docker is only needed for
 the optional local Postgres.
 
 1. **Install dependencies** once, from the repo root (this is an npm
@@ -205,7 +209,8 @@ runners do not pick up each other's files.
 3. Device A: `send 5 xlm <B's address>` (or `+234...02` once phone-recipients
    land) → PIN → sent.
 4. Device B: deposit alert appears via polling — loop closed, no Meta
-   involved.
+   involved. (Not working end to end until the conversation store gap above is
+   closed; today Device B sees the alert only in the `SimMessage` table.)
 
 ## Testing rules for implementers
 
@@ -216,4 +221,5 @@ runners do not pick up each other's files.
 - Poller-visible pushes: async sends land in `SimMessage` with
   `direction: "out"`.
 
-See ISSUES.md for the per-issue test checklists.
+The matching tests are `apps/api/test/sim.controller.test.js`, `sim.routes.test.js`,
+`simMessage.test.js` and `requireChatSimEnabled.test.js`.

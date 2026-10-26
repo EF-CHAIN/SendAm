@@ -5,7 +5,7 @@
 - **Date:** 2026-08-29
 - **Facilitator:** Engineering lead
 - **Participants:** Payments lead, on-call engineer, compliance officer (observer)
-- **Runbook exercised:** [Payment Outage Response §4](OPERATOR-RECOVERY-PLAYBOOK.md#4-payment-outage-response) and [Duplicate Payment Response §4d](OPERATOR-RECOVERY-PLAYBOOK.md#4d-duplicate-payment-detected)
+- **Runbook exercised:** [Payment Outage Response §4](../../OPERATOR-RECOVERY-PLAYBOOK.md#4-payment-outage-response) and [Duplicate Payment Response §4d](../../OPERATOR-RECOVERY-PLAYBOOK.md#4d-duplicate-payment-detected)
 - **Duration:** 60 minutes
 
 ## Scenario

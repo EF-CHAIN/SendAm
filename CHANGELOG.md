@@ -66,6 +66,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Documentation audit: `README.md` status, backend module tree, API summary, Node requirement (20.19+) and production-readiness lists now match the code (admin RBAC, per-administrator accounts and the `web`/`worker` process split are built, not open gaps); `docs/CHAT-SIM.md` is marked implemented and documents the interim in-memory conversation store; `ROADMAP.md` marks per-admin accounts built; broken links in the incident drill files, the `ISSUES.md` links, and two non-existent npm scripts in `docs/OPERATOR-RECOVERY-PLAYBOOK.md` were fixed; `CODE_OF_CONDUCT.md` no longer points at the previous repository owner.
 - Admin dashboard accessibility fixes: `main` landmarks on the layout and
   login page, label/control associations on the login form, heading structure
   (stat values and welcome heading no longer skip levels), and live-region
@@ -81,6 +82,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Repository comparison links corrected to `EF-CHAIN/SendAm`.
   - Monorepo structure updated to include `apps/chat-sim`.
   - ROADMAP status vocabulary extended with `Configured` and `Approved` stages.
+
+### Removed
+
+- Draft issue backlogs that duplicated the GitHub issue tracker: `ISSUES.md`, `ISSUES_291_340.md`, `apps/api/docs/ISSUES_323_320_319_317.md`, `docs/GITHUB_READY_ISSUES.md` and `docs/FRONTEND_120_ISSUES.md`.
+- `walkthrough.md`, a stray pull-request description for #197.
 
 ## [1.0.0]
 
