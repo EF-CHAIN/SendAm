@@ -138,6 +138,21 @@ jobs:
       # rendered home page. No live services required (jsdom + MemoryRouter).
       - run: npm run test:landing
 
+  chat-sim-tests:
+    name: Chat simulator tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      # The simulator had no CI job, so merges could leave ChatScreen.js or
+      # MessageList.js unparsable without any check failing. Jest (jest-expo +
+      # react-test-renderer) needs no emulator or live services.
+      - run: npm test --workspace=apps/chat-sim -- --ci
+
   accessibility-audit:
     name: WCAG 2.2 AAA audit
     runs-on: ubuntu-latest

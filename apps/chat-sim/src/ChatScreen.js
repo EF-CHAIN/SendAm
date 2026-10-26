@@ -887,6 +887,7 @@ export default function ChatScreen() {
           onSubmitEditing={handleStart}
         />
         <Pressable
+          testID="start-button"
           className="w-full rounded-lg py-2 items-center"
           style={{ backgroundColor: theme.sendButtonBg }}
           onPress={handleStart}

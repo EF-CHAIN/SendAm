@@ -1,4 +1,3 @@
-import { describe, it, expect } from 'vitest';
 import { WHATSAPP_THEMES } from '../theme';
 
 function hexToRgb(hex) {

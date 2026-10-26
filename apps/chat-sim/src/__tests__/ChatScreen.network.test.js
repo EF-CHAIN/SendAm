@@ -53,9 +53,9 @@ describe('ChatScreen Network Latency Simulator', () => {
       phoneInput.props.onChangeText('+2348000000001');
     });
 
-    const startButton = renderer.root.findByProps({
-      className: 'w-full bg-green-500 rounded-lg py-2 items-center',
-    });
+    const startButton = renderer.root.findAllByProps({ testID: 'start-button' }).find(
+      (node) => typeof node.props.onPress === 'function'
+    );
     await act(async () => {
       startButton.props.onPress();
     });
@@ -112,9 +112,9 @@ describe('ChatScreen Network Latency Simulator', () => {
     await act(async () => {
       phoneInput.props.onChangeText('+2348000000001');
     });
-    const startButton = renderer.root.findByProps({
-      className: 'w-full bg-green-500 rounded-lg py-2 items-center',
-    });
+    const startButton = renderer.root.findAllByProps({ testID: 'start-button' }).find(
+      (node) => typeof node.props.onPress === 'function'
+    );
     await act(async () => {
       startButton.props.onPress();
     });
