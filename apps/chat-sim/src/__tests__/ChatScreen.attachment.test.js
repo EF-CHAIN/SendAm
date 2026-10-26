@@ -33,7 +33,9 @@ describe('ChatScreen Attachment Picker and Media Preview', () => {
       phoneInput.props.onChangeText('+2348000000001');
     });
 
-    const startButton = root.findByProps({ className: 'w-full bg-green-500 rounded-lg py-2 items-center' });
+    const startButton = root.findAllByProps({ testID: 'start-button' }).find(
+      (node) => typeof node.props.onPress === 'function'
+    );
     await act(async () => {
       startButton.props.onPress();
     });
@@ -69,7 +71,9 @@ describe('ChatScreen Attachment Picker and Media Preview', () => {
       phoneInput.props.onChangeText('+2348000000001');
     });
 
-    const startButton = root.findByProps({ className: 'w-full bg-green-500 rounded-lg py-2 items-center' });
+    const startButton = root.findAllByProps({ testID: 'start-button' }).find(
+      (node) => typeof node.props.onPress === 'function'
+    );
     await act(async () => {
       startButton.props.onPress();
     });

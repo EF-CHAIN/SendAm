@@ -55,9 +55,9 @@ describe('ChatScreen Reset Confirmation Dialog', () => {
     });
 
     // 2. Click Start chatting button
-    const startButton = renderer.root.findByProps({
-      className: 'w-full bg-green-500 rounded-lg py-2 items-center',
-    });
+    const startButton = renderer.root.findAllByProps({ testID: 'start-button' }).find(
+      (node) => typeof node.props.onPress === 'function'
+    );
     await act(async () => {
       startButton.props.onPress();
     });

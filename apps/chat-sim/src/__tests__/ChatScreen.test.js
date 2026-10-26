@@ -1,4 +1,5 @@
 import React from 'react';
+import { Alert } from 'react-native';
 import { act, create } from 'react-test-renderer';
 import ChatScreen, { MessageStatus } from '../ChatScreen';
 
@@ -15,7 +16,7 @@ describe('ChatScreen message receipt lifecycle & edge cases', () => {
 
   afterEach(() => {
     jest.useRealTimers();
-    jest.resetAllMocks();
+    jest.clearAllMocks();
   });
 
   function findByTestId(tree, testId) {
@@ -40,7 +41,11 @@ describe('ChatScreen message receipt lifecycle & edge cases', () => {
     const phoneInput = renderer.root.findByProps({ placeholder: '+2348000000001' });
     await act(async () => {
       phoneInput.props.onChangeText('+2348000000001');
-      phoneInput.props.onSubmitEditing();
+    });
+    // Submit in a second act: handleStart reads the phone state from the
+    // render that follows the change, not from the one that created the handler.
+    await act(async () => {
+      renderer.root.findByProps({ placeholder: '+2348000000001' }).props.onSubmitEditing();
     });
   }
 
@@ -48,7 +53,11 @@ describe('ChatScreen message receipt lifecycle & edge cases', () => {
     const messageInput = renderer.root.findByProps({ placeholder: 'Type a message or use speech' });
     await act(async () => {
       messageInput.props.onChangeText(text);
-      messageInput.props.onSubmitEditing();
+    });
+    await act(async () => {
+      renderer.root
+        .findByProps({ placeholder: 'Type a message or use speech' })
+        .props.onSubmitEditing();
     });
   }
 
@@ -227,10 +236,17 @@ describe('ChatScreen message receipt lifecycle & edge cases', () => {
     await sendMessage(renderer, 'to be reset');
 
     // Reset session while timers are active
+    const alertSpy = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
     const resetButton = renderer.root.findByProps({ testID: 'reset-session-button' });
     await act(async () => {
       resetButton.props.onPress();
     });
+    // Reset asks for confirmation first; confirm it.
+    const confirmButton = alertSpy.mock.calls[0][2].find((b) => b.text === 'Reset');
+    await act(async () => {
+      confirmButton.onPress();
+    });
+    alertSpy.mockRestore();
 
     // Advance time past all timer delays
     await act(async () => {
@@ -238,7 +254,8 @@ describe('ChatScreen message receipt lifecycle & edge cases', () => {
     });
 
     // Screen is back to enter phone number, no messages rendered
-    expect(renderer.root.findAllByProps({ placeholder: '+2348000000001' }).length).toBe(1);
+    expect(renderer.root.findAllByProps({ placeholder: '+2348000000001' }).length).toBeGreaterThan(0);
+    expect(renderer.root.findAllByProps({ placeholder: 'Type a message or use speech' })).toHaveLength(0);
   });
 
   it('10. unmount cancels timers cleanly without leaking updates', async () => {

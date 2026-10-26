@@ -1,4 +1,3 @@
-import { describe, it, expect } from 'vitest';
 import {
   ACTIVE_POLL_INTERVAL_MS,
   BACKGROUND_POLL_INTERVAL_MS,
