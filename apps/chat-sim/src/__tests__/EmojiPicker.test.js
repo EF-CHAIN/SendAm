@@ -8,6 +8,8 @@ jest.mock('../MessageList', () => ({
   __esModule: true,
   default: () => null,
   parseQuickReplies: jest.requireActual('../MessageList').parseQuickReplies,
+  parseListMessage: jest.requireActual('../MessageList').parseListMessage,
+  findMessageMatches: jest.requireActual('../MessageList').findMessageMatches,
 }));
 jest.mock('../engine/voiceService', () => ({
   voiceService: { speak: jest.fn(), isSpeechRecognitionSupported: () => false },
