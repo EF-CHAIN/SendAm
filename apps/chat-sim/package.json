@@ -5,6 +5,7 @@
   "dependencies": {
     "@expo/metro-runtime": "~57.0.14",
     "expo": "~57.0.7",
+    "expo-clipboard": "~57.0.2",
     "expo-modules-core": "~57.0.6",
     "expo-status-bar": "~57.0.1",
     "nativewind": "^4.2.6",
@@ -29,13 +30,19 @@
   "private": true,
   "devDependencies": {
     "@playwright/test": "^1.63.0",
+    "@react-native/jest-preset": "0.86.0",
     "babel-preset-expo": "^57.0.3",
-    "jest-expo": "^57.0.2",
-    "react-test-renderer": "^19.2.3",
+    "jest": "^29.7.0",
+    "jest-expo": "57.0.2",
+    "react-test-renderer": "19.2.3",
     "tailwindcss": "^3.4.19"
   },
   "jest": {
     "preset": "jest-expo",
+    "moduleNameMapper": {
+      "^react$": "<rootDir>/node_modules/react",
+      "^react/(.*)$": "<rootDir>/node_modules/react/$1"
+    },
     "testPathIgnorePatterns": [
       "/node_modules/",
       "/e2e/"

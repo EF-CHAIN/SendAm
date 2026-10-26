@@ -2,11 +2,13 @@ import { useEffect, useRef, useState } from 'react';
 import {
   AccessibilityInfo,
   Animated,
+  Platform,
   Pressable,
   ScrollView,
   Text,
   View,
 } from 'react-native';
+import MessageCopyButton from './MessageCopyButton';
 
 function VectorCheckmark({ color, size = 11 }) {
   return (
@@ -344,7 +346,12 @@ export function splitForHighlight(text, query) {
 /** Bubble text with search matches highlighted in yellow. */
 function MessageText({ item, isUser, searchQuery, isActiveMatch, darkMode = false }) {
   const base = isUser ? 'text-white' : 'text-gray-900';
-  const baseStyle = darkMode ? { color: '#e9edef' } : undefined;
+  const baseStyle = {
+    flexShrink: 1,
+    minWidth: 0,
+    paddingTop: 12,
+    ...(darkMode ? { color: '#e9edef' } : null),
+  };
   const segments = splitForHighlight(item.text, searchQuery);
   if (!searchQuery || segments.every((s) => !s.match)) {
     return (
@@ -516,8 +523,10 @@ function SwipeableBubble({
   darkMode = false,
   searchQuery = '',
   isActiveMatch = false,
+  hoverOnly = false,
 }) {
   const isVoice = item.type === 'voice' || item.isVoice;
+  const [hovered, setHovered] = useState(false);
   const translateX = useRef(new Animated.Value(0)).current;
   const startX = useRef(0);
   const startY = useRef(0);
@@ -528,6 +537,8 @@ function SwipeableBubble({
     outputRange: [0, 0.45, 1],
     extrapolate: 'clamp',
   });
+
+  useEffect(() => () => translateX.stopAnimation(), [translateX]);
 
   const resetBubble = () => {
     distance.current = 0;
@@ -573,11 +584,17 @@ function SwipeableBubble({
   const hasMeta = Boolean(item.timestamp || (isUser && item.status));
 
   return (
-    <View className={`relative ${isUser ? 'self-end' : 'self-start'} max-w-[80%]`}>
+    <View className={`relative ${isUser ? 'self-end' : 'self-start'} ${isVoice ? 'max-w-[85%]' : 'max-w-[80%]'}`}>
       <Animated.View
         testID={`swipe-row-${item.id}`}
         style={{ transform: [{ translateX }] }}
         onTouchStart={handleTouchStart}
+        onStartShouldSetResponderCapture={(event) => {
+          // Capture the origin for mouse as well as touch before a child copy
+          // button takes the responder. Recording it must not claim the press.
+          handleTouchStart(event);
+          return false;
+        }}
         onStartShouldSetResponder={() => false}
         onMoveShouldSetResponder={handleMoveShouldSetResponder}
         onResponderMove={handleResponderMove}
@@ -587,6 +604,8 @@ function SwipeableBubble({
       >
         <View
           testID={`bubble-${item.sender}`}
+          onPointerEnter={() => setHovered(true)}
+          onPointerLeave={() => setHovered(false)}
           className={
             isUser
               ? 'bg-green-500 rounded-2xl px-3 py-2'
@@ -612,6 +631,7 @@ function SwipeableBubble({
                   <img
                     src={item.attachment.uri}
                     alt={item.attachment.name || 'Photo attachment'}
+                    draggable={false}
                     style={{ width: '100%', maxHeight: 200, objectFit: 'cover', borderRadius: 8 }}
                   />
                 </View>
@@ -639,13 +659,16 @@ function SwipeableBubble({
             <VoiceBubble item={item} isUser={isUser} />
           ) : (
             Boolean(item.text) && (
-              <MessageText
-                item={item}
-                isUser={isUser}
-                darkMode={darkMode}
-                searchQuery={searchQuery}
-                isActiveMatch={isActiveMatch}
-              />
+              <View className="flex-row items-start gap-2">
+                <MessageText
+                  item={item}
+                  isUser={isUser}
+                  darkMode={darkMode}
+                  searchQuery={searchQuery}
+                  isActiveMatch={isActiveMatch}
+                />
+                <MessageCopyButton text={item.text} isUser={isUser} visible={!hoverOnly || hovered} />
+              </View>
             )
           )}
           {hasMeta && (
@@ -748,6 +771,15 @@ export default function MessageList({
   searchQuery = '',
   activeMatchId = null,
 }) {
+  const [hoverOnly, setHoverOnly] = useState(false);
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined' || typeof window.matchMedia !== 'function') return;
+    const query = window.matchMedia('(hover: hover) and (pointer: fine)');
+    const update = () => setHoverOnly(query.matches);
+    update();
+    query.addEventListener('change', update);
+    return () => query.removeEventListener('change', update);
+  }, []);
   const scrollRef = useRef(null);
   const rowPositionsRef = useRef({});
 
@@ -841,6 +873,7 @@ export default function MessageList({
                 darkMode={darkMode}
                 searchQuery={searchQuery}
                 isActiveMatch={isActiveMatch}
+                hoverOnly={hoverOnly}
               />
             )}
 
