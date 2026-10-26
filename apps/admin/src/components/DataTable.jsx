@@ -11,12 +11,13 @@ import {
   RotateCcw,
 } from 'lucide-react';
 import { useSearchParams } from 'react-router-dom';
+import { compareValues, sortFromSearchParams, DIRECTION_TO_DIR } from './dataTableSort';
 
 const FOCUSABLE_HEADER = 'focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary';
 
 // Pagination cursors and page size are not filters — they must not trigger the
 // "Reset Filters" recovery action in the empty state.
-const NON_FILTER_PARAMS = new Set(['after', 'before', 'limit']);
+const NON_FILTER_PARAMS = new Set(['after', 'before', 'limit', 'sort', 'dir']);
 
 // Single-line content + vertical padding + the row's 1px border. An explicit
 // rowHeight remains the Default density's minimum; the other modes track it.
@@ -25,20 +26,6 @@ const DENSITIES = {
   default: { label: 'Default', className: 'py-3 text-sm', height: 45 },
   comfortable: { label: 'Comfortable', className: 'py-5 text-base', height: 65 },
 };
-
-function compareValues(a, b) {
-  if (a === b) return 0;
-  if (a === null || a === undefined || a === '') return 1;
-  if (b === null || b === undefined || b === '') return -1;
-  if (typeof a === 'number' && typeof b === 'number') return a - b;
-  if (typeof a === 'boolean' && typeof b === 'boolean') return Number(a) - Number(b);
-
-  const aTime = Date.parse(a);
-  const bTime = Date.parse(b);
-  if (!Number.isNaN(aTime) && !Number.isNaN(bTime)) return aTime - bTime;
-
-  return String(a).localeCompare(String(b), undefined, { numeric: true, sensitivity: 'base' });
-}
 
 // Sort state is an ordered list of { key, direction }: the first entry is the
 // primary sort and each later entry only breaks ties left by the ones before it.
@@ -116,9 +103,10 @@ export default function DataTable({
   maxHeight = 600,
   overscan = 5,
   virtualizeThreshold = 50,
+  syncSortWithUrl = false,
   storageKey,
 }) {
-  const [sort, setSort] = useState(() => normalizeSort(defaultSort));
+  const [localSort, setLocalSort] = useState(() => normalizeSort(defaultSort));
 
   // Column visibility/order preferences, scoped to this table by storageKey or
   // the caption so different tables do not share a saved layout.
@@ -140,6 +128,12 @@ export default function DataTable({
     measuredHeights[density] || 0
   );
   const [searchParams, setSearchParams] = useSearchParams();
+  // With URL sync the query string is the single source of truth, so a sorted
+  // view survives reloads, shared links and back/forward navigation. Unknown
+  // keys or directions fall back to `defaultSort`.
+  const sort = syncSortWithUrl
+    ? normalizeSort(sortFromSearchParams(searchParams, columns) ?? defaultSort)
+    : localSort;
   const hasActiveFilters =
     filtersActive ??
     Array.from(searchParams.keys()).some((key) => !NON_FILTER_PARAMS.has(key));
@@ -150,9 +144,30 @@ export default function DataTable({
   // Plain click: sort by this column alone, flipping direction if it already
   // leads the sort. Shift+click: add it as a secondary key, or flip its direction
   // when it is already part of the sort. Plain clicks clear any secondary keys.
+  // With URL sync the sort is a single key kept in the query string, so
+  // shift+click behaves like a plain click there.
   const handleSort = (column, event) => {
     const key = sortKeyOf(column);
-    setSort((current) => {
+
+    if (syncSortWithUrl) {
+      const primary = sort[0];
+      const next =
+        primary?.key === key
+          ? { key, direction: flipDirection(primary.direction) }
+          : { key, direction: 'ascending' };
+      setSearchParams(
+        (prev) => {
+          const params = new URLSearchParams(prev);
+          params.set('sort', next.key);
+          params.set('dir', DIRECTION_TO_DIR[next.direction]);
+          return params;
+        },
+        { replace: true }
+      );
+      return;
+    }
+
+    setLocalSort((current) => {
       const existing = current.findIndex((entry) => entry.key === key);
       if (event?.shiftKey) {
         if (existing === -1) return [...current, { key, direction: 'ascending' }];
@@ -639,18 +654,21 @@ export default function DataTable({
         style={containerStyles}
         data-testid="datatable-container"
         data-virtualized={isVirtualized}
+        data-virtual-total={totalRows}
+        data-virtual-rendered={visibleRows.length}
         data-density={density}
         className="w-full max-w-full overflow-x-auto bg-white dark:bg-slate-900 rounded-xl border border-gray-100 dark:border-slate-800 shadow-sm focus:outline-none"
         tabIndex={isVirtualized ? 0 : undefined}
-        // A keyboard-focusable scroll container needs a role and a name so
-        // screen readers announce what receives focus (WCAG 2.1.1, 4.1.2).
         role={isVirtualized ? 'region' : undefined}
         aria-label={isVirtualized ? `${caption || 'Table'} scrollable view` : undefined}
       >
-      <table className="min-w-max w-full text-sm text-left text-gray-600 dark:text-gray-300 border-collapse">
+      <table
+        className="min-w-max w-full text-sm text-left text-gray-600 dark:text-gray-300 border-collapse"
+        aria-rowcount={isVirtualized ? totalRows + 1 : undefined}
+      >
         {caption && <caption className="sr-only">{caption}</caption>}
         <thead ref={headerRef} className="text-xs text-gray-500 dark:text-gray-400 uppercase bg-gray-50 dark:bg-slate-800/60 border-b border-gray-100 dark:border-slate-800 sticky top-0 z-10">
-          <tr>
+          <tr aria-rowindex={isVirtualized ? 1 : undefined}>
             {visibleColumns.map((col, idx) => (
               <th
                 key={idx}
@@ -689,6 +707,7 @@ export default function DataTable({
                   else rowRefs.current.delete(absoluteIdx);
                 }}
                 data-row-index={absoluteIdx}
+                aria-rowindex={isVirtualized ? absoluteIdx + 2 : undefined}
                 style={{ height: `${effectiveRowHeight}px` }}
                 className={`border-b border-gray-50 dark:border-slate-800/60 hover:bg-gray-50/50 dark:hover:bg-slate-800/50 transition-colors focus:outline-none focus:ring-2 focus:ring-primary/40 focus:bg-gray-100 dark:focus:bg-slate-800 ${rowClassName}`}
                 onClick={isClickable ? () => onRowClick(row) : undefined}

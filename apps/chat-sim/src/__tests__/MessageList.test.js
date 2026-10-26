@@ -1,7 +1,7 @@
 import { act, create } from 'react-test-renderer';
 import MessageCopyButton from '../MessageCopyButton';
 import * as Clipboard from 'expo-clipboard';
-import MessageList, { parseQuickReplies } from '../MessageList';
+import MessageList, { parseListMessage, parseQuickReplies } from '../MessageList';
 
 jest.mock('expo-clipboard', () => ({ setStringAsync: jest.fn().mockResolvedValue(true) }));
 
@@ -187,6 +187,93 @@ it.each([
   expect(onQuickReply).not.toHaveBeenCalled();
   act(() => renderer.unmount());
 });
+
+describe('parseListMessage', () => {
+  const cloudApiPayload = {
+    type: 'list',
+    body: { text: 'What would you like to do?' },
+    action: {
+      button: 'Main menu',
+      sections: [
+        {
+          title: 'Payments',
+          rows: [
+            { id: 'send', title: 'Send money', description: 'Send XLM to a phone number' },
+            { id: 'balance', title: 'Check balance' },
+          ],
+        },
+        {
+          title: 'Account',
+          rows: [{ id: 'history', title: 'Transaction history', description: 'Last 10 payments' }],
+        },
+      ],
+    },
+  };
+
+  it('normalizes a Cloud API interactive payload on the message', () => {
+    const list = parseListMessage({ id: 'b1', sender: 'bot', interactive: cloudApiPayload });
+    expect(list.body).toBe('What would you like to do?');
+    expect(list.buttonLabel).toBe('Main menu');
+    expect(list.sections).toHaveLength(2);
+    expect(list.sections[0].title).toBe('Payments');
+    expect(list.sections[0].rows[0]).toEqual({
+      id: 'send',
+      title: 'Send money',
+      description: 'Send XLM to a phone number',
+    });
+    expect(list.sections[0].rows[1].description).toBe('');
+  });
+
+  it('parses the same payload carried as a JSON reply string', () => {
+    const list = parseListMessage({
+      id: 'b1',
+      sender: 'bot',
+      text: JSON.stringify(cloudApiPayload),
+    });
+    expect(list).not.toBeNull();
+    expect(list.buttonLabel).toBe('Main menu');
+    expect(list.sections[1].rows[0].id).toBe('history');
+  });
+
+  it('returns null for user messages, plain text and empty lists', () => {
+    expect(parseListMessage({ id: 'u1', sender: 'user', interactive: cloudApiPayload })).toBeNull();
+    expect(parseListMessage({ id: 'b1', sender: 'bot', text: 'hello' })).toBeNull();
+    expect(parseListMessage({ id: 'b1', sender: 'bot', text: '{"not":"json' })).toBeNull();
+    expect(
+      parseListMessage({
+        id: 'b1',
+        sender: 'bot',
+        interactive: { type: 'list', action: { button: 'Menu', sections: [{ title: 'x', rows: [] }] } },
+      })
+    ).toBeNull();
+  });
+
+  it('renders a list bubble with the menu opener instead of raw JSON', async () => {
+    const opened = [];
+    const botMsg = { id: 'b1', sender: 'bot', text: JSON.stringify(cloudApiPayload) };
+    let renderer;
+    await act(async () => {
+      renderer = create(
+        <MessageList messages={[botMsg]} onOpenList={(list, id) => opened.push([list, id])} />
+      );
+    });
+
+    const root = renderer.root;
+    const opener = root.findByProps({ testID: 'list-message-button-b1' });
+    await act(async () => {
+      opener.props.onPress();
+    });
+
+    expect(opened).toHaveLength(1);
+    expect(opened[0][0].buttonLabel).toBe('Main menu');
+    expect(opened[0][1]).toBe('b1');
+    // The bubble shows the body text, never the JSON payload.
+    expect(JSON.stringify(renderer.toJSON())).not.toContain('"sections"');
+    // And its JSON text must not leak numbered quick-reply pills.
+    expect(root.findAllByProps({ testID: 'quick-replies-container' })).toHaveLength(0);
+  });
+});
+
 function findByTestID(tree, testID) {
   if (Array.isArray(tree)) {
     for (const node of tree) {

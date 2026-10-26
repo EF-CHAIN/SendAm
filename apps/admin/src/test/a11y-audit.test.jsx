@@ -292,6 +292,7 @@ describe('admin WCAG 2.2 AAA audit', () => {
       const row = screen.getByText(maskPhoneNumber('+1234567890')).closest('tr');
       await user.click(within(row).getByRole('button', { name: /^deactivate$/i }));
       const dialog = await screen.findByRole('dialog');
+      await user.type(within(dialog).getByLabelText(/to confirm deactivation/i), 'CONFIRM');
       await user.click(within(dialog).getByRole('button', { name: /confirm deactivation/i }));
       const passkeyPrompt = await screen.findByTestId('passkey-prompt');
       await user.click(within(passkeyPrompt).getByRole('checkbox'));
@@ -531,8 +532,8 @@ describe('admin WCAG 2.2 AAA audit', () => {
       expectClean(summary, focusOffenders, 'sortable DataTable');
     });
 
-    it('never emits aria-sort on the production tables, which are not sortable', async () => {
-      for (const path of ['/users', '/wallets', '/transactions', '/kyc', '/audit-logs']) {
+    it('never emits aria-sort on the production tables that are not sortable', async () => {
+      for (const path of ['/users', '/wallets', '/kyc', '/audit-logs']) {
         const { unmount } = renderAt(path);
         await screen.findByRole('table');
         for (const th of screen.getAllByRole('columnheader')) {
@@ -541,6 +542,22 @@ describe('admin WCAG 2.2 AAA audit', () => {
         }
         unmount();
       }
+    });
+
+    it('emits aria-sort only on the sortable Transactions columns', async () => {
+      const { unmount } = renderAt('/transactions');
+      await screen.findByRole('table');
+      const sortable = ['Type', 'Amount', 'Status', 'Date'];
+      for (const th of screen.getAllByRole('columnheader')) {
+        expect(th).toHaveAttribute('scope', 'col');
+        if (sortable.includes(th.textContent.trim())) {
+          expect(th, `column "${th.textContent}"`).toHaveAttribute('aria-sort', 'none');
+          expect(th.querySelector('button')).not.toBeNull();
+        } else {
+          expect(th, `column "${th.textContent}"`).not.toHaveAttribute('aria-sort');
+        }
+      }
+      unmount();
     });
   });
 

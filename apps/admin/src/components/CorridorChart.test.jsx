@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, act } from '@testing-library/react';
-import CorridorChart, { generateSampleCorridorData, prepareCorridorData } from './CorridorChart';
+import CorridorChart, { generateSampleCorridorData, prepareCorridorData, formatLatency } from './CorridorChart';
 
 const now = new Date(2026, 9, 18, 12, 30);
 const row = (timestamp, volume = 100, corridor = 'NGN') => ({ timestamp, volume, txCount: 2, fees: 1, corridor });
@@ -92,5 +92,46 @@ describe('CorridorChart ranges', () => {
     unmount();
     expect(cancel).toHaveBeenCalled();
     cancel.mockRestore();
+  });
+});
+
+describe('CorridorChart tooltip', () => {
+  const latencyRow = (timestamp, volume, txCount, avgLatencyMs) => ({ timestamp, volume, txCount, fees: 1, corridor: 'NGN', avgLatencyMs });
+
+  it('weights bucket latency by transaction count and leaves it null when unreported', () => {
+    const data = prepareCorridorData([
+      latencyRow(new Date(2026, 9, 18, 9), 100, 1, 2000),
+      latencyRow(new Date(2026, 9, 18, 10), 100, 3, 6000),
+      row(new Date(2026, 9, 17)),
+    ], '7D', 'ALL', now);
+    expect(data.at(-1).avgLatencyMs).toBe(5000);
+    expect(data.at(-2).avgLatencyMs).toBeNull();
+  });
+
+  it('includes a full date in every bucket', () => {
+    const data = generateSampleCorridorData('7D', 'NGN', now);
+    expect(data.at(-1).fullLabel).toContain('2026');
+    expect(data.every(point => Number.isFinite(point.avgLatencyMs))).toBe(true);
+  });
+
+  it.each([[undefined, 'N/A'], [null, 'N/A'], [450, '450 ms'], [4500, '4.5 s'], [90000, '1.5 min']])('formats latency %s as %s', (ms, text) => {
+    expect(formatLatency(ms)).toBe(text);
+  });
+
+  it('shows date, volume, transaction count and average settlement on hover and hides on leave', () => {
+    const widthSpy = vi.spyOn(HTMLCanvasElement.prototype, 'clientWidth', 'get').mockReturnValue(800);
+    render(<CorridorChart data={[latencyRow(now, 250, 4, 3000)]} />);
+    const canvas = screen.getByLabelText('Interactive Canvas Financial Chart');
+    canvas.getBoundingClientRect = () => ({ left: 0, top: 0, right: 800, bottom: 320, width: 800, height: 320 });
+    expect(screen.queryByTestId('corridor-chart-tooltip')).not.toBeInTheDocument();
+    fireEvent.mouseMove(canvas, { clientX: 740, clientY: 100 });
+    const tooltip = screen.getByTestId('corridor-chart-tooltip');
+    expect(tooltip).toHaveTextContent('2026');
+    expect(tooltip).toHaveTextContent('$250');
+    expect(tooltip).toHaveTextContent('4 txs');
+    expect(tooltip).toHaveTextContent('Avg Settlement:3.0 s');
+    fireEvent.mouseLeave(canvas);
+    expect(screen.queryByTestId('corridor-chart-tooltip')).not.toBeInTheDocument();
+    widthSpy.mockRestore();
   });
 });

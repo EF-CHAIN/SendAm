@@ -112,6 +112,15 @@ body {
   max-width: 100%;
 }
 
+/* Headings use the self-hosted Outfit display face; body text stays Inter. */
+@layer base {
+  h1,
+  h2,
+  h3 {
+    @apply font-display;
+  }
+}
+
 html {
   scroll-behavior: smooth;
 }

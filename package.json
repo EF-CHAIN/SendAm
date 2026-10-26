@@ -35,7 +35,10 @@
     "test": "npm run test --workspace=apps/api",
     "test:admin": "npm run test --workspace=apps/admin",
     "test:landing": "npm run test --workspace=apps/landing",
+    "test:shared": "npm run test --workspace=packages/shared",
     "test:e2e:landing": "npm run test:e2e --workspace=apps/landing",
+    "test:e2e:chat-sim": "npm run test:e2e --workspace=apps/chat-sim",
+    "test:e2e:admin": "npm run test:e2e --workspace=apps/admin",
     "a11y:report": "node scripts/a11y-report.mjs",
     "test:visual": "playwright test",
     "load": "npm run load --workspace=apps/api --",
@@ -44,7 +47,9 @@
   "devDependencies": {
     "lru-cache": "^11.5.2",
     "prisma": "^7.8.0",
-    "vite": "^6.2.0"
+    "vite": "^6.2.0",
+    "dotenv": "^16.3.1",
+    "@playwright/test": "^1.45.0"
   },
   "optionalDependencies": {
     "@rollup/rollup-linux-x64-gnu": "4.62.4",
