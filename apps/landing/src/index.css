@@ -12,9 +12,113 @@ body {
   background: var(--background);
 }
 
+/*
+ * Dark theme (toggled by the `dark` class on <html>, see src/lib/theme.js).
+ * The landing sections use light Tailwind utilities throughout, so instead of
+ * editing every component this layer remaps the neutral palette they share.
+ */
+.dark {
+  color-scheme: dark;
+  --background: #020617;
+  --foreground: #f1f5f9;
+}
+
+.dark .bg-white {
+  background-color: #0f172a;
+}
+
+.dark .bg-white\/90 {
+  background-color: rgb(15 23 42 / 0.9);
+}
+
+.dark .bg-slate-50,
+.dark .bg-gray-50 {
+  background-color: #020617;
+}
+
+.dark .bg-slate-100,
+.dark .hover\:bg-slate-100:hover {
+  background-color: #1e293b;
+}
+
+.dark .bg-slate-200 {
+  background-color: #334155;
+}
+
+.dark .bg-secondary {
+  background-color: rgb(19 78 74 / 0.5);
+}
+
+.dark .bg-emerald-100 {
+  background-color: rgb(6 78 59 / 0.6);
+}
+
+.dark .bg-amber-50 {
+  background-color: rgb(69 26 3 / 0.4);
+}
+
+.dark .text-dark,
+.dark .text-slate-900,
+.dark .text-slate-950,
+.dark .text-gray-800 {
+  color: #f1f5f9;
+}
+
+.dark .text-slate-800 {
+  color: #e2e8f0;
+}
+
+.dark .text-slate-700 {
+  color: #cbd5e1;
+}
+
+.dark .text-slate-600,
+.dark .text-slate-500,
+.dark .text-slate-400,
+.dark .text-gray-500 {
+  color: #94a3b8;
+}
+
+.dark .text-primary {
+  color: #2dd4bf;
+}
+
+.dark .text-emerald-700,
+.dark .text-emerald-800,
+.dark .text-emerald-900 {
+  color: #a7f3d0;
+}
+
+.dark .text-amber-700,
+.dark .text-amber-800,
+.dark .text-amber-900 {
+  color: #fcd34d;
+}
+
+.dark .border-slate-100,
+.dark .border-slate-200,
+.dark .border-slate-200\/60,
+.dark .border-slate-200\/80,
+.dark .border-slate-300 {
+  border-color: #1e293b;
+}
+
+.dark .hover\:text-primary:hover {
+  color: #2dd4bf;
+}
+
 html,
 body {
   max-width: 100%;
+}
+
+/* Headings use the self-hosted Outfit display face; body text stays Inter. */
+@layer base {
+  h1,
+  h2,
+  h3 {
+    @apply font-display;
+  }
 }
 
 html {

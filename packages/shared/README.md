@@ -9,6 +9,10 @@ Part of the [SendAm](../../README.md) monorepo.
 | File | Export | Purpose |
 | --- | --- | --- |
 | `src/Loader.jsx` | `default` | Inline loading spinner |
+| `src/ToastProvider.jsx` | `default`, `useToast` | Shared toast notification provider with auto-dismiss timers and stacked bottom-right alerts |
+| `src/ModalPortal.jsx` | `default` | Accessible modal backdrop portal rendering to `#modal-root` with layout-shift-free scroll lock |
+| `src/Tooltip.jsx` | `default` | Floating UI tooltip with collision detection, boundary clamping, and automated flip |
+| `src/Skeleton.jsx` | `default` | Shared placeholder skeleton with configurable shimmer and multiple variants |
 | `src/ErrorBoundary.jsx` | `default` | React error boundary that renders a safe recovery UI |
 | `src/ErrorFallback.jsx` | `default` | Recovery UI shown by `ErrorBoundary` |
 | `src/formatDate.js` | `formatDate`, `formatRelativeTime`, `subscribeRelativeTime`, `getNextRelativeTimeUpdateDelay` | Locale-aware date/time formatting and live relative time |
@@ -16,6 +20,7 @@ Part of the [SendAm](../../README.md) monorepo.
 | `src/StellarAddress.jsx` | `default` | Truncated Stellar public key with tooltip and copy button |
 | `src/normalizeError.js` | `normalizeError` | Turns any thrown value (HTTP, network, Stellar) into `{ title, message, code }` plus safe metadata |
 | `src/logger.js` | `logger`, `redact`, `LOG_BUFFER_SIZE` | Structured console logging with secret redaction and a 100-entry in-memory buffer |
+| `src/formatCurrency.js` | `formatCurrency` | Fiat and Stellar asset display amounts |
 | `src/api.js` | `default` | Pre-configured Axios instance |
 
 This package has no build step. Workspaces consume the source files directly
@@ -78,6 +83,138 @@ if (loading) return <Loader />;
 // Compact, muted variant for inline or table-cell use
 if (loading) return <Loader size={16} className="text-gray-400" />;
 ```
+
+### `ToastProvider` and `useToast`
+
+Unified non-intrusive toast notification system supporting `success`, `error`, `warning`, and `info` toasts with auto-dismiss timers, click-to-dismiss, and smooth exit animations. Toasts stack gracefully in the bottom-right corner of the viewport.
+
+#### Provider Setup
+
+```jsx
+import { ToastProvider } from '@shared/ToastProvider.jsx';
+
+function App() {
+  return (
+    <ToastProvider defaultDuration={4000}>
+      <RootRouter />
+    </ToastProvider>
+  );
+}
+```
+
+#### Hook Usage
+
+```jsx
+import { useToast } from '@shared/ToastProvider.jsx';
+
+function SubmitButton() {
+  const { toast } = useToast();
+
+  const handleAction = async () => {
+    try {
+      await save();
+      toast.success('Settings saved successfully');
+    } catch (err) {
+      toast.error('Failed to save settings');
+    }
+  };
+
+  return <button onClick={handleAction}>Save</button>;
+}
+```
+
+| Method / Prop | Signature | Description |
+| --- | --- | --- |
+| `toast.success(message, options)` | `(string, options?) => string` | Success toast with `role="status"` and `aria-live="polite"` |
+| `toast.error(message, options)` | `(string, options?) => string` | Error toast with `role="alert"` and `aria-live="assertive"` |
+| `toast.warning(message, options)` | `(string, options?) => string` | Warning toast with `role="status"` |
+| `toast.info(message, options)` | `(string, options?) => string` | Info toast with `role="status"` |
+| `toast.dismiss(id)` | `(string) => void` | Triggers smooth exit animation and dismisses toast |
+| `toast.clear()` | `() => void` | Dismisses all active toasts |
+
+### `ModalPortal`
+
+Accessible backdrop modal rendered using `createPortal` to `#modal-root`. Locks `document.body` scroll while open without layout shift (by offsetting scrollbar width), provides Tab key focus trapping, Escape key listener, and backdrop click dismissal.
+
+```jsx
+import ModalPortal from '@shared/ModalPortal.jsx';
+
+function ConfirmDialog({ isOpen, onClose, onConfirm }) {
+  return (
+    <ModalPortal
+      isOpen={isOpen}
+      onClose={onClose}
+      ariaLabel="Confirm deletion"
+      role="alertdialog"
+    >
+      <div className="bg-white dark:bg-slate-900 rounded-lg p-6 max-w-md shadow-xl border border-gray-200 dark:border-slate-800">
+        <h3 className="text-lg font-bold">Are you sure?</h3>
+        <p className="mt-2 text-sm text-gray-600 dark:text-gray-400">This action cannot be undone.</p>
+        <div className="mt-4 flex justify-end gap-2">
+          <button onClick={onClose}>Cancel</button>
+          <button onClick={onConfirm} className="bg-red-600 text-white px-4 py-2 rounded">Delete</button>
+        </div>
+      </div>
+    </ModalPortal>
+  );
+}
+```
+
+| Prop | Type | Default | Description |
+| --- | --- | --- | --- |
+| `isOpen` | `boolean` | `true` | Controls modal visibility and body scroll lock |
+| `onClose` | `() => void` | — | Called on Escape or backdrop click |
+| `closeOnEsc` | `boolean` | `true` | Closes modal on Escape key press |
+| `closeOnBackdropClick` | `boolean` | `true` | Closes modal when clicking backdrop |
+| `role` | `'dialog' \| 'alertdialog'` | `'dialog'` | Accessible dialog role |
+| `ariaLabel` / `ariaLabelledBy` | `string` | — | Accessible naming |
+| `rootId` | `string` | `'modal-root'` | Portal target element ID (created automatically if missing) |
+
+### `Tooltip`
+
+Lightweight floating tooltip with automated boundary collision detection, screen-edge clamping, and auto-flip positioning. Stays fully visible regardless of scroll position or screen edge proximity, and is accessible via keyboard focus and hover.
+
+```jsx
+import Tooltip from '@shared/Tooltip.jsx';
+
+<Tooltip content="Export all settlement records as CSV" placement="top">
+  <button type="button">Export</button>
+</Tooltip>
+```
+
+| Prop | Type | Default | Description |
+| --- | --- | --- | --- |
+| `content` | `React.ReactNode` | — | Tooltip body content |
+| `placement` | `'top' \| 'bottom' \| 'left' \| 'right'` | `'top'` | Preferred initial placement; flips automatically on collision |
+| `delay` | `number` | `100` | Delay before showing tooltip (ms) |
+| `offset` | `number` | `8` | Distance in pixels between trigger and tooltip bubble |
+| `padding` | `number` | `8` | Viewport edge padding margin in pixels |
+| `disabled` | `boolean` | `false` | Disables tooltip display when true |
+
+### `Skeleton`
+
+Shared skeleton placeholder component with configurable shimmer effect, supporting `text`, `circular`, and `rectangular` variants to replace custom loading placeholders.
+
+```jsx
+import Skeleton from '@shared/Skeleton.jsx';
+
+// Text lines
+<Skeleton variant="text" count={3} />
+
+// Circular avatar
+<Skeleton variant="circular" width={40} height={40} />
+
+// Rectangular card placeholder with shimmer
+<Skeleton variant="rectangular" height={160} animation="shimmer" />
+```
+
+| Prop | Type | Default | Description |
+| --- | --- | --- | --- |
+| `variant` | `'text' \| 'circular' \| 'rectangular'` | `'rectangular'` | Shape variant |
+| `animation` | `'shimmer' \| 'pulse' \| 'none'` | `'shimmer'` | Animation style |
+| `width` | `string \| number` | — | Custom width (e.g. `100`, `'100%'`, `'4rem'`) |
+| `height` | `string \| number` | — | Custom height (e.g. `20`, `'2.5rem'`) |
+| `count` | `number` | `1` | Number of skeleton elements stacked together |
 
 ### `ErrorBoundary`
 
@@ -158,6 +295,42 @@ import StellarAddress from '@shared/StellarAddress.jsx';
 ```
 
 ## Utilities
+
+### `formatCurrency(amount, currencyCode)`
+
+Formats a finite number or plain decimal string with `Intl.NumberFormat` in
+`en-US`, matching the fixed locale used by `formatDate`. ISO currencies use
+their standard minor units: USD, EUR, GBP and NGN have exactly two decimals,
+and NGN uses the ₦ symbol. Other alphanumeric Stellar asset codes (1–12
+characters, including XLM and USDC) use up to seven decimals, omit trailing
+zeroes, and appear after the amount. ISO currency codes take precedence over
+custom asset codes with the same name. Codes are trimmed; ISO currency codes
+are normalized to uppercase, while other asset codes keep their original case
+because Stellar asset codes are case-sensitive.
+
+```js
+import { formatCurrency } from '@shared/formatCurrency.js';
+
+formatCurrency(1234.5, 'USD');           // "$1,234.50"
+formatCurrency(1234.5, 'NGN');           // "₦1,234.50"
+formatCurrency('0.0000001', 'XLM');      // "0.0000001 XLM"
+formatCurrency('1.12345675', 'USDC');    // "1.1234568 USDC"
+```
+
+This is a display utility, not transaction validation or arithmetic. Extra
+fractional digits are rounded by Intl (half away from zero), and negative
+amounts are allowed. For exact large balances, pass decimal strings directly
+from the API; precision already lost in a JavaScript number cannot be recovered.
+This requires Intl support for exact decimal-string formatting and
+`Intl.supportedValuesOf` (available in modern browsers and Node 20+). Amounts
+that round to zero are displayed without a minus sign.
+Invalid amounts or codes throw `TypeError` rather than silently displaying a
+zero balance. Strings must use plain decimals (no grouping, currency symbols,
+or exponent notation); null, empty strings, booleans, NaN and infinity are rejected.
+Transaction limits and backend money rules are unchanged.
+
+The formatter tests run in the existing admin CI suite through the shared alias:
+`npm run test:admin -- src/lib/formatCurrency.test.js`.
 
 ### `formatDate(dateString)`
 

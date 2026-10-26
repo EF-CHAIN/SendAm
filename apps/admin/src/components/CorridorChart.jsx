@@ -31,8 +31,22 @@ function buckets(range, now) {
     const label = interval === 'hourly'
       ? timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
       : timestamp.toLocaleDateString([], interval === 'monthly' ? { month: 'short', year: 'numeric' } : { month: 'short', day: 'numeric' });
-    return { timestamp, label, volume: 0, txCount: 0, fees: 0 };
+    const fullLabel = interval === 'hourly'
+      ? timestamp.toLocaleString([], { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+      : timestamp.toLocaleDateString([], interval === 'monthly'
+        ? { month: 'long', year: 'numeric' }
+        : { weekday: 'short', year: 'numeric', month: 'short', day: 'numeric' });
+    return { timestamp, label, fullLabel, volume: 0, txCount: 0, fees: 0, latencyWeightedSum: 0, latencyWeight: 0, avgLatencyMs: null };
   });
+}
+
+/** Formats an average settlement latency (milliseconds) for display. */
+// eslint-disable-next-line react-refresh/only-export-components -- helper shared with tests
+export function formatLatency(ms) {
+  if (!Number.isFinite(ms)) return 'N/A';
+  if (ms < 1000) return `${Math.round(ms)} ms`;
+  if (ms < 60000) return `${(ms / 1000).toFixed(1)} s`;
+  return `${(ms / 60000).toFixed(1)} min`;
 }
 
 /** Sample fallback only; supplied empty datasets must never become mock payments. */
@@ -41,7 +55,14 @@ export function generateSampleCorridorData(range = '7D', corridor = 'ALL', now =
   const base = corridor === 'NGN' ? 15000 : corridor === 'KES' ? 8000 : corridor === 'GHS' ? 5000 : 28000;
   return buckets(range, now).map((point, index) => {
     const volume = Math.round(base * (1 + Math.sin(index / 3) * 0.3));
-    return { ...point, volume, txCount: Math.round(volume / 125), fees: +(volume * 0.0045).toFixed(2), corridor };
+    return {
+      ...point,
+      volume,
+      txCount: Math.round(volume / 125),
+      fees: +(volume * 0.0045).toFixed(2),
+      avgLatencyMs: Math.round(4500 + Math.cos(index / 2) * 1200),
+      corridor,
+    };
   });
 }
 
@@ -62,6 +83,17 @@ export function prepareCorridorData(data, range, corridor, now = Date.now()) {
       const value = Number(point[key]);
       if (Number.isFinite(value)) bucket[key] += value;
     }
+    // Latency is averaged weighted by transaction count (falls back to 1 per record).
+    const latency = Number(point.avgLatencyMs);
+    if (point.avgLatencyMs != null && Number.isFinite(latency) && latency >= 0) {
+      const txs = Number(point.txCount);
+      const weight = Number.isFinite(txs) && txs > 0 ? txs : 1;
+      bucket.latencyWeightedSum += latency * weight;
+      bucket.latencyWeight += weight;
+    }
+  }
+  for (const bucket of result) {
+    if (bucket.latencyWeight > 0) bucket.avgLatencyMs = bucket.latencyWeightedSum / bucket.latencyWeight;
   }
   return matched ? result : [];
 }
@@ -454,14 +486,16 @@ export default function CorridorChart({ data: propData, loading = false, title =
         {/* Floating Tooltip */}
         {!isLoading && hoveredPoint && (
           <div
-            className="absolute z-10 pointer-events-none bg-gray-900/90 backdrop-blur-md text-white px-3 py-2.5 rounded-xl text-xs shadow-xl border border-gray-800 transition-transform duration-75 min-w-[160px]"
+            role="tooltip"
+            data-testid="corridor-chart-tooltip"
+            className="absolute z-10 pointer-events-none bg-gray-900/90 backdrop-blur-md text-white px-3 py-2.5 rounded-xl text-xs shadow-xl border border-gray-800 transition-transform duration-75 min-w-[190px]"
             style={{
-              left: `${Math.min(Math.max(hoveredPoint.screenX - 80, 10), hoveredPoint.canvasWidth - 170 || 200)}px`,
+              left: `${Math.min(Math.max(hoveredPoint.screenX - 95, 10), hoveredPoint.canvasWidth - 200 || 200)}px`,
               top: '20px',
             }}
           >
-            <div className="font-semibold text-gray-300 pb-1 mb-1.5 border-b border-gray-700 flex justify-between">
-              <span>{hoveredPoint.label}</span>
+            <div className="font-semibold text-gray-300 pb-1 mb-1.5 border-b border-gray-700 flex justify-between gap-3">
+              <span>{hoveredPoint.fullLabel || hoveredPoint.label}</span>
               <span className="text-indigo-400 font-mono">{hoveredPoint.corridor || selectedCorridor}</span>
             </div>
             <div className="space-y-1">
@@ -485,6 +519,13 @@ export default function CorridorChart({ data: propData, loading = false, title =
                   Fees (0.45%):
                 </span>
                 <span className="font-bold font-mono">${hoveredPoint.fees}</span>
+              </div>
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-amber-400 flex items-center gap-1">
+                  <span className="w-2 h-2 rounded-full bg-amber-500 inline-block" />
+                  Avg Settlement:
+                </span>
+                <span className="font-bold font-mono">{formatLatency(hoveredPoint.avgLatencyMs)}</span>
               </div>
             </div>
           </div>

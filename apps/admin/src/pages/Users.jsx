@@ -4,12 +4,14 @@ import {
   getUserOnboardingStatus, 
   deactivateUserAccount, 
   reactivateUserAccount, 
-  downloadUserEvidencePackage 
+  downloadUserEvidencePackage,
+  revealAdminFields
 } from '@/lib/adminApi';
 import { useListQuery } from '@/lib/useListQuery';
 import { formatDate } from '@shared/formatDate';
 import DataTable from '@/components/DataTable';
 import Loader from '@shared/Loader';
+import MaskedPhone from '@shared/MaskedPhone';
 import StatusBadge from '@/components/StatusBadge';
 import Pagination from '@/components/Pagination';
 import FilterBar from '@/components/FilterBar';
@@ -20,7 +22,8 @@ import {
   FileText, 
   UserX, 
   UserCheck, 
-  Download 
+  Download,
+  AlertTriangle
 } from 'lucide-react';
 
 // Anything that can hold focus inside a dialog, in DOM order.
@@ -132,6 +135,7 @@ export default function Users() {
   const [deactivateReason, setDeactivateReason] = useState('risk_score_exceeded');
   const [deactivateNotes, setDeactivateNotes] = useState('');
   const [deactivateForce, setDeactivateForce] = useState(false);
+  const [deactivateConfirmValue, setDeactivateConfirmValue] = useState('');
   const [submittingAction, setSubmittingAction] = useState(false);
 
   const [reactivateModalUser, setReactivateModalUser] = useState(null);
@@ -150,7 +154,10 @@ export default function Users() {
     setOnboardingUser(null);
     setOnboardingData(null);
   }, []);
-  const closeDeactivate = useCallback(() => setDeactivateModalUser(null), []);
+  const closeDeactivate = useCallback(() => {
+    setDeactivateModalUser(null);
+    setDeactivateConfirmValue('');
+  }, []);
   const closeReactivate = useCallback(() => setReactivateModalUser(null), []);
   const closeResetPin = useCallback(() => {
     setResetPinModalUser(null);
@@ -237,10 +244,20 @@ export default function Users() {
 
   // Manual account deactivation is irreversible for the customer, so the
   // passkey challenge runs between the confirmation form and the mutation.
+  const isDeactivateConfirmed =
+    deactivateConfirmValue === deactivateModalUser?.phoneNumber ||
+    deactivateConfirmValue === 'CONFIRM';
+
   const handleDeactivate = (e) => {
     e.preventDefault();
     if (!deactivateModalUser) return;
     const target = deactivateModalUser;
+    if (!isDeactivateConfirmed) {
+      setActionError(
+        `Type the user's phone number (${target.phoneNumber}) or 'CONFIRM' to confirm this destructive action.`
+      );
+      return;
+    }
     const payload = {
       reason: deactivateReason,
       notes: deactivateNotes,
@@ -315,7 +332,12 @@ export default function Users() {
   };
 
   const columns = [
-    { header: 'Phone Number', accessor: 'phoneNumber' },
+    {
+      header: 'Phone Number',
+      render: (row) => (
+        <MaskedPhone phone={row.phoneNumber} onReveal={() => revealAdminFields('user', row.id)} />
+      ),
+    },
     { header: 'WhatsApp Name', render: (row) => row.whatsappName || <span className="text-gray-400 italic">Unknown</span> },
     { 
       header: 'Status', 
@@ -612,6 +634,14 @@ export default function Users() {
               Disables wallet and payment operations for <strong>{deactivateModalUser.phoneNumber}</strong>.
             </p>
 
+            <div className="p-3 mb-4 bg-amber-50 rounded-lg border border-amber-200 text-xs text-amber-800 flex items-start gap-2">
+              <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
+              <span>
+                This action permanently disables the customer&apos;s ability to send money. You must type the
+                user&apos;s phone number or &lsquo;CONFIRM&rsquo; below before the deactivation button is enabled.
+              </span>
+            </div>
+
             <div className="space-y-4">
               <div>
                 <label htmlFor="deactivate-reason" className="block text-xs font-medium text-slate-700 mb-1">Deactivation Reason *</label>
@@ -656,6 +686,29 @@ export default function Users() {
                   Force override (skip pending KYC warning)
                 </label>
               </div>
+
+              <div>
+                <label
+                  htmlFor="deactivate-confirm"
+                  className="block text-xs font-medium text-slate-700 mb-1"
+                >
+                  Type phone number or &lsquo;CONFIRM&rsquo; to confirm deactivation *
+                </label>
+                <input
+                  id="deactivate-confirm"
+                  value={deactivateConfirmValue}
+                  onChange={(e) => setDeactivateConfirmValue(e.target.value)}
+                  placeholder={deactivateModalUser?.phoneNumber}
+                  className="w-full text-sm rounded-lg border border-slate-300 p-2 focus:ring-2 focus:ring-red-500 outline-none"
+                  required
+                  maxLength={64}
+                />
+                {deactivateConfirmValue && !isDeactivateConfirmed && (
+                  <p className="mt-1 text-xs text-red-600">
+                    Does not match. Enter the phone number exactly or type &lsquo;CONFIRM&rsquo;.
+                  </p>
+                )}
+              </div>
             </div>
 
             <p className="mt-4 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-600">
@@ -673,7 +726,7 @@ export default function Users() {
               </button>
               <button
                 type="submit"
-                disabled={submittingAction}
+                disabled={submittingAction || !isDeactivateConfirmed}
                 className="px-4 py-2 text-xs font-semibold text-white bg-red-600 hover:bg-red-700 rounded-lg transition disabled:opacity-50"
               >
                 {submittingAction ? 'Deactivating…' : 'Confirm Deactivation'}

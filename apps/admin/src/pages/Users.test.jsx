@@ -1,3 +1,4 @@
+import { maskPhoneNumber } from '@shared/maskPhoneNumber.js';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
@@ -21,6 +22,7 @@ const waitForTable = async () => {
 
 const confirmDeactivation = async () => {
   await userEvent.click(screen.getByRole('button', { name: /^deactivate$/i }));
+  await userEvent.type(screen.getByLabelText(/to confirm deactivation/i), 'CONFIRM');
   await userEvent.click(screen.getByRole('button', { name: /confirm deactivation/i }));
 };
 
@@ -40,7 +42,7 @@ describe('Users Component', () => {
 
     await waitForTable();
 
-    expect(screen.getByText('+1234567890')).toBeInTheDocument();
+    expect(screen.getByText(maskPhoneNumber('+1234567890'))).toBeInTheDocument();
     expect(screen.getAllByText(/Total: 1/).length).toBeGreaterThan(0);
   });
 

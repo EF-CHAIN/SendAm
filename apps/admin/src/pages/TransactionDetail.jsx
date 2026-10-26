@@ -4,9 +4,10 @@ import { ChevronDown, ChevronUp, Copy, Check, Code } from 'lucide-react';
 import { getAdminTransaction } from '@/lib/adminApi';
 import { formatDate } from '@shared/formatDate';
 import StatusBadge from '@/components/StatusBadge';
+import PaymentPathVisualizer from '@/components/PaymentPathVisualizer';
 import Loader from '@shared/Loader';
 import { exportReceiptPdf } from '@/lib/receiptPdf';
-import { Download, FileCode } from 'lucide-react';
+import { Download, FileCode, ExternalLink } from 'lucide-react';
 
 // @stellar/stellar-sdk (~900 KB) is only needed once an operator opens the decoder,
 // so keep it out of the TransactionDetail route chunk.
@@ -166,6 +167,23 @@ export default function TransactionDetail() {
     tx.txEnvelope ||
     '';
 
+  const isTestnet =
+    tx.network === 'testnet' ||
+    tx.metadata?.network === 'testnet' ||
+    (typeof tx.explorerUrl === 'string' && tx.explorerUrl.includes('testnet')) ||
+    import.meta.env?.VITE_STELLAR_NETWORK === 'testnet';
+
+  const networkPath = isTestnet ? 'testnet' : 'public';
+  const horizonHost = isTestnet ? 'horizon-testnet.stellar.org' : 'horizon.stellar.org';
+
+  const stellarExpertUrl = tx.txHash
+    ? `https://stellar.expert/explorer/${networkPath}/tx/${tx.txHash}`
+    : tx.explorerUrl || null;
+
+  const horizonUrl = tx.txHash
+    ? `https://${horizonHost}/transactions/${tx.txHash}`
+    : null;
+
   return (
     <div className="min-w-0">
       {/* Header */}
@@ -185,7 +203,31 @@ export default function TransactionDetail() {
           <StatusBadge status={tx.status} />
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
+          {stellarExpertUrl && (
+            <a
+              href={stellarExpertUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs sm:text-sm font-semibold text-slate-700 bg-white border border-slate-200 rounded-lg shadow-sm hover:bg-slate-50 transition"
+              aria-label="View on Stellar.Expert"
+            >
+              <ExternalLink className="w-4 h-4 text-slate-500" />
+              <span>View on Stellar.Expert</span>
+            </a>
+          )}
+          {horizonUrl && (
+            <a
+              href={horizonUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs sm:text-sm font-semibold text-slate-700 bg-white border border-slate-200 rounded-lg shadow-sm hover:bg-slate-50 transition"
+              aria-label="View Horizon JSON"
+            >
+              <ExternalLink className="w-4 h-4 text-slate-500" />
+              <span>View Horizon JSON</span>
+            </a>
+          )}
           <button
             type="button"
             onClick={() => setIsDecoderOpen(true)}
@@ -229,16 +271,34 @@ export default function TransactionDetail() {
           <Field label="Tx Hash" value={tx.txHash} mono />
           <Field label="Provider Tx ID" value={tx.providerTransactionId} mono />
           <Field label="Explorer">
-            {tx.explorerUrl ? (
-              <a
-                href={tx.explorerUrl}
-                target="_blank"
-                rel="noreferrer"
-                className="text-primary hover:underline break-all"
-              >
-                {tx.explorerUrl}
-              </a>
-            ) : <span className="text-gray-400">—</span>}
+            <div className="flex flex-wrap items-center gap-2">
+              {stellarExpertUrl ? (
+                <a
+                  href={stellarExpertUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1 text-primary hover:underline break-all"
+                  aria-label="View on Stellar.Expert"
+                >
+                  <span>Stellar.Expert ({networkPath})</span>
+                  <ExternalLink className="w-3.5 h-3.5 flex-shrink-0" />
+                </a>
+              ) : null}
+              {stellarExpertUrl && horizonUrl ? <span className="text-gray-300 dark:text-slate-600">·</span> : null}
+              {horizonUrl ? (
+                <a
+                  href={horizonUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1 text-primary hover:underline break-all"
+                  aria-label="View Horizon JSON"
+                >
+                  <span>Horizon API</span>
+                  <ExternalLink className="w-3.5 h-3.5 flex-shrink-0" />
+                </a>
+              ) : null}
+              {!stellarExpertUrl && !horizonUrl && <span className="text-gray-400">—</span>}
+            </div>
           </Field>
         </dl>
 
@@ -260,6 +320,8 @@ export default function TransactionDetail() {
           </Field>
           <Field label="Quote ID" value={tx.quoteId} mono />
         </dl>
+
+        <PaymentPathVisualizer tx={tx} />
 
         {/* Routing */}
         <div className="px-4 py-3 bg-gray-50 dark:bg-slate-800/60 border-t border-b border-gray-200 dark:border-slate-800">

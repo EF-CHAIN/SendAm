@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+// Jest provides describe, it, expect, beforeEach, and jest globally
 import {
   PaymentStateMachine,
   PaymentState,
@@ -68,9 +68,13 @@ describe("PaymentStateMachine Engine", () => {
     sm.transition(PaymentEvent.SUBMIT_PIN);
     expect(sm.getState()).toBe(PaymentState.AWAITING_PIN);
 
-    // 4. PIN Validated -> SettlingStellar
+    // 4. PIN Validated -> Authorizing
     sm.transition(PaymentEvent.PIN_VALIDATED);
-    expect(sm.getState()).toBe(PaymentState.SETTLING_STELLAR);
+    expect(sm.getState()).toBe(PaymentState.AUTHORIZING);
+
+    // 4b. Submitted to the network -> Submitting
+    sm.transition(PaymentEvent.SUBMIT);
+    expect(sm.getState()).toBe(PaymentState.SUBMITTING);
 
     // 5. Stellar Success -> ReceiptDelivered
     sm.transition(PaymentEvent.STELLAR_SUCCESS, { txHash: "0xstellar_abc123" });
@@ -80,6 +84,30 @@ describe("PaymentStateMachine Engine", () => {
     // 6. Receipt Sent -> Completed
     sm.transition(PaymentEvent.RECEIPT_SENT);
     expect(sm.getState()).toBe(PaymentState.COMPLETED);
+  });
+
+  it("keeps the typing-indicator states reachable and lets both exit to ERROR", () => {
+    const reachAuthorizing = () => {
+      sm.transition(PaymentEvent.QUOTE_GENERATED, { amount: 50, recipient: "Bob" });
+      sm.transition(PaymentEvent.SUBMIT_PIN);
+      sm.transition(PaymentEvent.AUTHORIZE);
+      expect(sm.getState()).toBe(PaymentState.AUTHORIZING);
+    };
+
+    // A failed authorization surfaces its error
+    reachAuthorizing();
+    sm.transition(PaymentEvent.STELLAR_FAILED, { error: "Declined" });
+    expect(sm.getState()).toBe(PaymentState.ERROR);
+    expect(sm.getContext().errorMessage).toBe("Declined");
+
+    // A failed broadcast surfaces its error too
+    sm = new PaymentStateMachine();
+    reachAuthorizing();
+    sm.transition(PaymentEvent.STELLAR_SUBMITTED);
+    expect(sm.getState()).toBe(PaymentState.SUBMITTING);
+    sm.transition(PaymentEvent.STELLAR_FAILED, { error: "Broadcast failed" });
+    expect(sm.getState()).toBe(PaymentState.ERROR);
+    expect(sm.getContext().errorMessage).toBe("Broadcast failed");
   });
 
   it("handles invalid PIN attempts and locks after 3 tries", () => {

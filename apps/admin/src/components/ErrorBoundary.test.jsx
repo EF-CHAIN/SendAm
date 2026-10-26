@@ -590,12 +590,17 @@ describe('SystemHealth — data fetch error', () => {
     );
 
     expect(await screen.findByText('System Health')).toBeInTheDocument();
-    expect(screen.getByText('Core Services')).toBeInTheDocument();
-    expect(screen.getByText('Payment Rails')).toBeInTheDocument();
-    expect(screen.getByText('Process Metrics')).toBeInTheDocument();
-    expect(screen.getByText('Database')).toBeInTheDocument();
-    expect(screen.getByText('Refresh')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /auto refresh/i })).toBeInTheDocument();
-    expect(screen.getByLabelText(/refresh interval/i)).toBeInTheDocument();
+    expect(screen.getByRole('heading', { level: 2, name: 'Core Services' })).toBeInTheDocument();
+    // Each card sits under the heading of its own subsystem.
+    const group = (title) => screen.getByRole('heading', { level: 2, name: title }).closest('section');
+    expect(group('Core Services')).toContainElement(screen.getByTestId('health-card-database'));
+    expect(group('Core Services')).toContainElement(screen.getByTestId('health-card-redis'));
+    expect(group('Payment Rails')).toContainElement(screen.getByTestId('health-card-stellarHorizon'));
+    expect(group('Payment Rails')).toContainElement(screen.getByTestId('health-card-ramps'));
+    expect(group('Process Metrics')).toContainElement(screen.getByTestId('health-card-uptime'));
+    expect(screen.getByTestId('health-card-ramps')).toHaveAttribute('data-status', 'down');
+    expect(screen.getByTestId('health-card-redis')).toHaveAttribute('data-status', 'degraded');
+    expect(screen.getByRole('button', { name: 'Refresh now' })).toBeInTheDocument();
+    expect(screen.getByLabelText('Auto-refresh interval')).toBeInTheDocument();
   });
 });

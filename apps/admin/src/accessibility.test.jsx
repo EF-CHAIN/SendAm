@@ -1,5 +1,5 @@
-import { describe, it, expect, afterEach } from 'vitest';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { describe, it, expect, afterEach, vi } from 'vitest';
+import { configure, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import App from './App.jsx';
@@ -8,6 +8,11 @@ import { setToken, removeToken } from './lib/auth';
 import { axe } from './test/axe';
 import { server } from './mocks/server';
 import { http, HttpResponse } from 'msw';
+
+// Routes are lazy-loaded, so the first render pays for importing the page tree;
+// give async queries and tests room for that cold start.
+configure({ asyncUtilTimeout: 5000 });
+vi.setConfig({ testTimeout: 30000 });
 
 // Accessibility coverage for the critical admin dashboard workflows:
 // navigation, tables, pagination, forms, status indicators, keyboard
@@ -60,11 +65,11 @@ describe('admin dashboard accessibility', () => {
       renderAdmin('/');
       await waitFor(() => {
         expect(screen.getByRole('heading', { name: 'Dashboard Overview' })).toBeInTheDocument();
-      });
+      }, { timeout: 5000 });
       expect(screen.getByRole('navigation')).toBeInTheDocument();
       expect(screen.getByRole('main')).toBeInTheDocument();
       expect(screen.getAllByRole('main')).toHaveLength(1);
-    });
+    }, 15000);
 
     it('gives every sidebar link and the logout button a meaningful accessible name', async () => {
       renderAdmin('/');
@@ -87,19 +92,22 @@ describe('admin dashboard accessibility', () => {
     it('renders exactly one top-level h1 on every dashboard page', async () => {
       for (const path of ['/', '/users', '/transactions', '/kyc', '/audit-logs']) {
         const { unmount } = renderAdmin(path);
-        await waitFor(() => {
-          expect(screen.getAllByRole('heading', { level: 1 })).toHaveLength(1);
-        });
+        await waitFor(
+          () => {
+            expect(screen.getAllByRole('heading', { level: 1 })).toHaveLength(1);
+          },
+          { timeout: 5000 }
+        );
         expectNoSkippedHeadingLevels();
         unmount();
       }
-    });
+    }, 30000);
 
     it('reaches every nav link and the logout button via the keyboard in DOM order', async () => {
       renderAdmin('/');
       await waitFor(() => {
         expect(screen.getByRole('heading', { name: 'Dashboard Overview' })).toBeInTheDocument();
-      });
+      }, { timeout: 5000 });
       const user = userEvent.setup();
       await user.tab();
       expect(screen.getByRole('link', { name: 'Overview' })).toHaveFocus();
@@ -115,7 +123,7 @@ describe('admin dashboard accessibility', () => {
       renderAdmin('/');
       await waitFor(() => {
         expect(screen.getByRole('heading', { name: 'Dashboard Overview' })).toBeInTheDocument();
-      });
+      }, { timeout: 5000 });
       const user = userEvent.setup();
       await user.tab(); // Overview
       await user.tab(); // Users
@@ -130,13 +138,15 @@ describe('admin dashboard accessibility', () => {
     it('announces the loading state and renders stats with a logical heading structure', async () => {
       const { container } = renderAdmin('/');
       // Synchronously after mount the shared Loader exposes a live status region.
-      expect(screen.getByRole('status')).toBeInTheDocument();
+      const loadingStatus = screen.getByRole('status');
+      expect(loadingStatus).toHaveAttribute('aria-live', 'polite');
+      expect(loadingStatus).toHaveTextContent('Loading data, please wait...');
       const loadingResults = await axe(container);
       expect(loadingResults).toHaveNoViolations();
 
       await waitFor(() => {
         expect(screen.getByRole('heading', { name: 'Dashboard Overview' })).toBeInTheDocument();
-      });
+      }, { timeout: 5000 });
       expect(screen.queryByRole('status')).not.toBeInTheDocument();
       expectNoSkippedHeadingLevels();
 
@@ -283,7 +293,9 @@ describe('admin dashboard accessibility', () => {
 
     it('gives KYC row actions meaningful names and announces list loading', async () => {
       renderAdmin('/kyc');
-      expect(screen.getByRole('status')).toBeInTheDocument();
+      // findByRole throws unless the loading status appears; it may already be
+      // gone again by the time an assertion on the element would run.
+      await screen.findByRole('status');
       await waitForTable();
       expect(screen.getByRole('button', { name: /approve/i })).toBeEnabled();
       expect(screen.getByRole('button', { name: /reject/i })).toBeEnabled();
@@ -318,7 +330,7 @@ describe('admin dashboard accessibility', () => {
       const { container } = renderAdmin('/');
       await waitFor(() => {
         expect(screen.getByRole('heading', { name: 'Dashboard Overview' })).toBeInTheDocument();
-      });
+      }, { timeout: 5000 });
       const results = await axe(container);
       expect(results).toHaveNoViolations();
     }, 20000);

@@ -14,6 +14,13 @@ export default function KycExportModal({
   const [confirmPassphrase, setConfirmPassphrase] = useState("");
   const [exportFormat, setExportFormat] = useState("encrypted"); // 'encrypted' | 'plaintext_csv'
   const [error, setError] = useState("");
+  const [exportProgress, setExportProgress] = useState(0);
+  const [exportRecordCount, setExportRecordCount] = useState(0);
+  const [dateFilter, setDateFilter] = useState({});
+  const [cancelExport, setCancelExport] = useState(false);
+
+  // The parent owns the export lifecycle; the modal only mirrors it.
+  const isExporting = Boolean(exporting);
 
   if (!isOpen) return null;
 
@@ -34,9 +41,14 @@ export default function KycExportModal({
       }
     }
 
+    setExportProgress(0);
+    setExportRecordCount(0);
+    setCancelExport(false);
+
     onExport({
       format: exportFormat,
       passphrase: exportFormat === "encrypted" ? passphrase : null,
+      filters: { ...dateFilter },
     });
   };
 
@@ -71,6 +83,38 @@ export default function KycExportModal({
         )}
 
         <form onSubmit={handleSubmit} className="space-y-4">
+          <div className="mb-4">
+            <label className="block text-xs font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wider mb-1">
+              Date Range Filter
+            </label>
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <input
+                  type="date"
+                  value={dateFilter.startDate || ''}
+                  onChange={(e) => {
+                    const start = e.target.value;
+                    setDateFilter({ ...dateFilter, startDate: start });
+                  }}
+                  className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none dark:border-gray-700 dark:bg-gray-900 dark:text-white"
+                  placeholder="Start date"
+                />
+              </div>
+              <div>
+                <input
+                  type="date"
+                  value={dateFilter.endDate || ''}
+                  onChange={(e) => {
+                    const end = e.target.value;
+                    setDateFilter({ ...dateFilter, endDate: end });
+                  }}
+                  className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none dark:border-gray-700 dark:bg-gray-900 dark:text-white"
+                  placeholder="End date"
+                />
+              </div>
+            </div>
+          </div>
+
           <div>
             <label className="block text-xs font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wider mb-1">
               Export Type
@@ -148,22 +192,37 @@ export default function KycExportModal({
           <div className="flex justify-end gap-3 pt-3 border-t border-gray-200 dark:border-gray-700">
             <button
               type="button"
-              onClick={onClose}
-              disabled={exporting}
+              onClick={isExporting ? () => setCancelExport(true) : onClose}
+              disabled={cancelExport}
               className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200"
               data-testid="cancel-export-btn"
             >
-              Cancel
+              {isExporting ? "Cancel Export" : "Cancel"}
             </button>
+            {isExporting && (
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-gray-500">{exportProgress}%</span>
+                <span className="text-xs text-gray-500">({exportRecordCount} records)</span>
+              </div>
+            )}
             <button
               type="submit"
-              disabled={exporting}
+              disabled={isExporting || cancelExport}
               className="px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 disabled:opacity-50"
               data-testid="confirm-export-btn"
             >
-              {exporting ? "Exporting & Encrypting…" : "Generate Export"}
+              {isExporting ? "Exporting & Encrypting…" : "Generate Export"}
             </button>
           </div>
+
+          {isExporting && (
+            <div
+              className="mt-4 p-4 bg-indigo-50 border-l-4 border-indigo-600 rounded-lg text-sm"
+            >
+              <p className="font-medium text-indigo-800">Export in progress</p>
+              <p className="text-indigo-700">Processing {exportRecordCount} records...</p>
+            </div>
+          )}
         </form>
       </div>
     </div>

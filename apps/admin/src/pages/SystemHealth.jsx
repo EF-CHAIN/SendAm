@@ -1,177 +1,173 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { getAdminSystemHealth } from '@/lib/adminApi';
 import Loader from '@shared/Loader';
 import { normalizeError } from '@shared/normalizeError.js';
+import { RefreshCw, Pause, AlertTriangle, CheckCircle2, XCircle } from 'lucide-react';
 
-const REFRESH_OPTIONS = [15, 30, 60];
+const INTERVAL_OPTIONS = [
+  { label: '5s', value: 5 },
+  { label: '15s', value: 15 },
+  { label: '30s', value: 30 },
+  { label: '1m', value: 60 },
+  { label: 'Paused', value: 0 },
+];
 
-const statusClasses = {
-  operational: 'border border-emerald-200 bg-emerald-100 text-emerald-700',
-  degraded: 'border border-amber-200 bg-amber-100 text-amber-700',
-  down: 'border border-red-200 bg-red-100 text-red-700',
-  unknown: 'border border-slate-200 bg-slate-100 text-slate-600',
-};
+// Subsystem groups for the health grid (#503). Keys not listed here fall into
+// "Other" so a new probe added to the API still shows up.
+const HEALTH_GROUPS = [
+  {
+    title: 'Core Services',
+    keys: ['api', 'database', 'db', 'redis', 'queues', 'queue', 'workers', 'worker'],
+  },
+  {
+    title: 'Payment Rails',
+    keys: [
+      'settlementRail',
+      'custodyModel',
+      'stellar',
+      'stellarHorizon',
+      'stellar_horizon',
+      'horizon',
+      'ramps',
+      'ramp',
+    ],
+  },
+  { title: 'Process Metrics', keys: ['uptime', 'memory'] },
+];
 
-const pickValue = (source, keys) => {
-  if (!source || typeof source !== 'object') return undefined;
+function groupHealthEntries(health) {
+  const entries = Object.entries(health || {});
+  const claimed = new Set();
+  const groups = HEALTH_GROUPS.map(({ title, keys }) => {
+    const items = entries.filter(([key]) => keys.includes(key));
+    items.forEach(([key]) => claimed.add(key));
+    return { title, items };
+  });
+  groups.push({ title: 'Other', items: entries.filter(([key]) => !claimed.has(key)) });
+  return groups.filter((group) => group.items.length > 0);
+}
 
-  for (const key of keys) {
-    if (source[key] !== undefined && source[key] !== null && source[key] !== '') {
-      return source[key];
-    }
+function getComponentHealth(value) {
+  const str = String(value).toLowerCase();
+  if (/down|unavailable|failed|error/i.test(str) || value === false) {
+    return {
+      status: 'down',
+      cardClass: 'border-red-300 dark:border-red-800 bg-red-50/70 dark:bg-red-950/40 text-red-900 dark:text-red-200',
+      badgeClass: 'bg-red-100 text-red-800 dark:bg-red-900/60 dark:text-red-200 border border-red-200 dark:border-red-800',
+      label: 'Critical / Down',
+      Icon: XCircle,
+    };
   }
-
-  return undefined;
-};
-
-const normalizeValue = (value) => {
-  if (value === undefined || value === null || value === '') return 'Unknown';
-
-  if (typeof value === 'object') {
-    if (value.status !== undefined) return normalizeValue(value.status);
-    if (value.state !== undefined) return normalizeValue(value.state);
-    if (value.value !== undefined) return normalizeValue(value.value);
-    if (value.message !== undefined) return normalizeValue(value.message);
-    return JSON.stringify(value);
+  if (/degraded|slow|warning|timeout/i.test(str)) {
+    return {
+      status: 'degraded',
+      cardClass: 'border-amber-300 dark:border-amber-800 bg-amber-50/70 dark:bg-amber-950/40 text-amber-900 dark:text-amber-200',
+      badgeClass: 'bg-amber-100 text-amber-800 dark:bg-amber-900/60 dark:text-amber-200 border border-amber-200 dark:border-amber-800',
+      label: 'Degraded',
+      Icon: AlertTriangle,
+    };
   }
-
-  if (typeof value === 'number' || typeof value === 'boolean') {
-    return String(value);
-  }
-
-  return String(value).trim();
-};
-
-const classifyStatus = (value) => {
-  const raw = normalizeValue(value).toLowerCase();
-
-  if (!raw || raw === 'unknown' || raw === 'n/a') {
-    return { label: 'Unknown', tone: 'unknown' };
-  }
-
-  if (
-    ['ok', 'healthy', 'ready', 'available', 'online', 'running', 'success', 'operational', 'up', 'active', 'connected', 'configured', 'pass', 'passed', 'stable'].some((token) => raw.includes(token))
-  ) {
-    return { label: 'Operational', tone: 'operational' };
-  }
-
-  if (
-    ['warning', 'degraded', 'partial', 'slow', 'limited', 'stale', 'retrying', 'degraded', 'unstable'].some((token) => raw.includes(token))
-  ) {
-    return { label: 'Degraded', tone: 'degraded' };
-  }
-
-  if (
-    ['down', 'error', 'failed', 'offline', 'unavailable', 'disconnected', 'timeout', 'critical', 'blocked', 'not configured'].some((token) => raw.includes(token))
-  ) {
-    return { label: 'Down', tone: 'down' };
-  }
-
-  return { label: 'Operational', tone: 'operational' };
-};
-
-const getHealthGroups = (payload) => {
-  const source = payload && typeof payload === 'object' && payload.data && typeof payload.data === 'object' ? payload.data : payload || {};
-  const groups = [
-    {
-      title: 'Core Services',
-      metrics: [
-        { label: 'Database', keys: ['database', 'db'] },
-        { label: 'Redis', keys: ['redis', 'queue', 'queues'] },
-        { label: 'Workers', keys: ['workers', 'worker', 'queue', 'queues'] },
-      ],
-    },
-    {
-      title: 'Payment Rails',
-      metrics: [
-        { label: 'Stellar Horizon', keys: ['stellarHorizon', 'stellar_horizon', 'horizon', 'stellar'] },
-        { label: 'Ramps', keys: ['ramps', 'ramp'] },
-      ],
-    },
-    {
-      title: 'Process Metrics',
-      metrics: [
-        { label: 'Uptime', keys: ['uptime'] },
-        { label: 'Memory', keys: ['memory'] },
-      ],
-    },
-  ];
-
-  return groups.map((group) => ({
-    ...group,
-    metrics: group.metrics.map((metric) => {
-      const value = pickValue(source, metric.keys);
-      const safeValue = value === undefined ? 'Unknown' : value;
-      const status = classifyStatus(safeValue);
-
-      return {
-        label: metric.label,
-        value: normalizeValue(safeValue),
-        status,
-      };
-    }),
-  }));
-};
+  return {
+    status: 'ok',
+    cardClass: 'border-gray-100 dark:border-slate-800 bg-white dark:bg-slate-900',
+    badgeClass: 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800',
+    label: 'Operational',
+    Icon: CheckCircle2,
+  };
+}
 
 export default function SystemHealth() {
   const [health, setHealth] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState(null);
   const [retryCount, setRetryCount] = useState(0);
-  const [autoRefresh, setAutoRefresh] = useState(false);
-  const [refreshInterval, setRefreshInterval] = useState(15);
+
+  // Auto-refresh interval (default: 15s) and countdown ring state (#774)
+  const [intervalSeconds, setIntervalSeconds] = useState(15);
+  const [secondsRemaining, setSecondsRemaining] = useState(15);
+
+  const initialFetchDoneRef = useRef(false);
 
   useEffect(() => {
     let active = true;
-
     const fetchHealth = async () => {
-      setLoading(true);
+      if (initialFetchDoneRef.current) {
+        setRefreshing(true);
+      }
       try {
         const res = await getAdminSystemHealth();
-        if (active) setHealth(res?.data ?? res ?? null);
+        if (active) {
+          setHealth(res.data);
+          setError(null);
+        }
       } catch (err) {
         if (active) setError(normalizeError(err));
       } finally {
-        if (active) setLoading(false);
+        if (active) {
+          setLoading(false);
+          setRefreshing(false);
+          initialFetchDoneRef.current = true;
+        }
       }
     };
-
     fetchHealth();
-    return () => { active = false; };
+    return () => {
+      active = false;
+    };
   }, [retryCount]);
 
+  // Interval timer for auto-refresh
   useEffect(() => {
-    if (!autoRefresh || !REFRESH_OPTIONS.includes(refreshInterval)) return undefined;
+    if (intervalSeconds <= 0) return undefined;
 
-    const timer = window.setInterval(() => {
-      setRetryCount((count) => count + 1);
-    }, refreshInterval * 1000);
+    const timer = setInterval(() => {
+      setSecondsRemaining((prev) => {
+        if (prev <= 1) {
+          setRetryCount((c) => c + 1);
+          return intervalSeconds;
+        }
+        return prev - 1;
+      });
+    }, 1000);
 
-    return () => window.clearInterval(timer);
-  }, [autoRefresh, refreshInterval]);
+    return () => clearInterval(timer);
+  }, [intervalSeconds]);
 
-  const handleRefresh = useCallback(() => {
-    setRetryCount((count) => count + 1);
+  const handleIntervalChange = useCallback((e) => {
+    const val = Number(e.target.value);
+    setIntervalSeconds(val);
+    setSecondsRemaining(val);
   }, []);
+
+  const handleManualRefresh = useCallback(() => {
+    setSecondsRemaining(intervalSeconds);
+    setRetryCount((c) => c + 1);
+  }, [intervalSeconds]);
 
   const handleRetry = useCallback(() => {
     setLoading(true);
     setError(null);
-    setRetryCount((count) => count + 1);
+    setRetryCount((c) => c + 1);
   }, []);
 
-  const healthGroups = getHealthGroups(health);
-  const lastUpdated = health?.timestamp ? new Date(health.timestamp).toLocaleString() : null;
-
-  if (loading) {
-    return <div className="flex justify-center py-20"><Loader size={32} /></div>;
+  if (loading && !health && !error) {
+    return (
+      <div className="flex justify-center py-20">
+        <Loader size={32} />
+      </div>
+    );
   }
 
-  if (error) {
+  // Safe error state when no health data is available
+  if (error && !health) {
     return (
       <div>
         <h1 className="mb-6 text-2xl font-bold">System Health</h1>
-        <div role="alert" className="rounded-lg border border-red-100 bg-red-50 p-6 text-center">
+        <div
+          role="alert"
+          className="rounded-lg border border-red-100 bg-red-50 p-6 text-center"
+        >
           <p className="mb-4 font-medium text-red-700">{error.userMessage}</p>
           <button
             type="button"
@@ -185,81 +181,146 @@ export default function SystemHealth() {
     );
   }
 
+  const isPaused = intervalSeconds === 0;
+  // Circular progress: dashoffset ranges from 0 (full) to 100 (depleted)
+  const strokeDashoffset =
+    !isPaused && intervalSeconds > 0
+      ? (100 * (intervalSeconds - secondsRemaining)) / intervalSeconds
+      : 0;
+
   return (
     <div className="space-y-6">
-      <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+      {/* Top Header with Auto-refresh Interval Selector & Countdown Ring (#774) */}
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold">System Health</h1>
-          {lastUpdated && (
-            <p className="mt-1 text-sm text-slate-500">Last checked {lastUpdated}</p>
-          )}
+          <h1 className="text-2xl font-bold text-gray-900 dark:text-white">System Health</h1>
+          <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+            Real-time infrastructure probes, settlement rails, and custodial node availability.
+          </p>
         </div>
 
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-          <button
-            type="button"
-            aria-pressed={autoRefresh}
-            onClick={() => setAutoRefresh((value) => !value)}
-            className={`inline-flex items-center justify-center rounded-lg border px-3 py-2 text-sm font-medium transition-colors ${autoRefresh ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'}`}
+        {/* Auto-Refresh Controls */}
+        <div className="flex items-center gap-3 bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 p-2 px-3 rounded-xl shadow-xs">
+          {/* Circular Countdown Ring */}
+          <div
+            className="relative flex items-center justify-center w-7 h-7 flex-shrink-0"
+            data-testid="countdown-ring"
+            title={isPaused ? 'Auto-refresh paused' : `Reloads in ${secondsRemaining}s`}
           >
-            Auto Refresh
-          </button>
-
-          <label className="flex items-center gap-2 text-sm text-slate-600">
-            <span className="sr-only">Refresh interval</span>
-            <select
-              aria-label="Refresh interval"
-              value={refreshInterval}
-              onChange={(event) => setRefreshInterval(Number(event.target.value))}
-              disabled={!autoRefresh}
-              className="rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-sm text-slate-700 outline-none focus:border-primary disabled:cursor-not-allowed disabled:bg-slate-100"
+            <svg
+              className="w-7 h-7 -rotate-90 transform"
+              viewBox="0 0 36 36"
+              aria-hidden="true"
             >
-              {REFRESH_OPTIONS.map((option) => (
-                <option key={option} value={option}>{option}s</option>
+              <path
+                className="text-gray-200 dark:text-slate-800"
+                strokeWidth="3.5"
+                stroke="currentColor"
+                fill="none"
+                d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
+              />
+              {!isPaused && (
+                <path
+                  className="text-teal-600 dark:text-teal-400 transition-all duration-500 ease-linear"
+                  strokeDasharray="100, 100"
+                  strokeDashoffset={strokeDashoffset}
+                  strokeWidth="3.5"
+                  strokeLinecap="round"
+                  stroke="currentColor"
+                  fill="none"
+                  d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
+                />
+              )}
+            </svg>
+            <div className="absolute inset-0 flex items-center justify-center text-[10px] font-mono font-bold text-gray-700 dark:text-gray-200">
+              {isPaused ? (
+                <Pause className="w-3 h-3 text-gray-400" />
+              ) : (
+                <span>{secondsRemaining}</span>
+              )}
+            </div>
+          </div>
+
+          {/* Refresh Dropdown Interval Selector */}
+          <div className="flex items-center gap-1.5">
+            <label htmlFor="refresh-interval-select" className="text-xs text-gray-500 font-medium">
+              Refresh:
+            </label>
+            <select
+              id="refresh-interval-select"
+              value={intervalSeconds}
+              onChange={handleIntervalChange}
+              data-testid="refresh-interval-selector"
+              aria-label="Auto-refresh interval"
+              className="text-xs font-semibold bg-gray-50 dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-lg px-2 py-1 text-gray-800 dark:text-gray-200 focus:outline-hidden focus:ring-2 focus:ring-teal-500 cursor-pointer"
+            >
+              {INTERVAL_OPTIONS.map((opt) => (
+                <option key={opt.value} value={opt.value}>
+                  {opt.label}
+                </option>
               ))}
             </select>
-          </label>
+          </div>
 
+          {/* Manual Refresh Button */}
           <button
             type="button"
-            onClick={handleRefresh}
-            className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 shadow-sm transition-colors hover:bg-slate-50"
+            onClick={handleManualRefresh}
+            aria-label="Refresh now"
+            title="Refresh now"
+            className="p-1.5 text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-slate-800 rounded-lg transition"
           >
-            Refresh
+            <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? 'animate-spin text-teal-600' : ''}`} />
           </button>
         </div>
       </div>
 
-      <div className="space-y-6">
-        {healthGroups.length === 0 ? (
-          <div className="rounded-xl border border-slate-200 bg-white p-6 text-sm text-slate-600">
-            No health metrics are available yet.
-          </div>
-        ) : (
-          healthGroups.map((group) => (
-            <section key={group.title} className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-              <div className="mb-4 flex items-center justify-between gap-3">
-                <h2 className="text-lg font-semibold text-slate-900">{group.title}</h2>
-                <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Status overview</span>
-              </div>
+      {/* Inline Banner Error if background refetch failed */}
+      {error && (
+        <div
+          role="alert"
+          className="rounded-lg border border-red-200 bg-red-50 p-4 text-center text-sm text-red-700"
+        >
+          {error.userMessage}
+        </div>
+      )}
 
-              <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-                {group.metrics.map((metric) => (
-                  <div key={metric.label} className="rounded-xl border border-slate-200 bg-slate-50 p-4">
-                    <div className="flex items-center justify-between gap-3">
-                      <p className="text-sm font-medium text-slate-700">{metric.label}</p>
-                      <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-semibold ${statusClasses[metric.status.tone] || statusClasses.unknown}`}>
-                        {metric.status.label}
-                      </span>
-                    </div>
-                    <p className="mt-3 break-words text-sm text-slate-600">{metric.value}</p>
+      {/* Components grouped by subsystem, with Degraded / Critical highlighting */}
+      {groupHealthEntries(health).map((group) => (
+        <section key={group.title} aria-labelledby={`health-group-${group.title}`}>
+          <h2
+            id={`health-group-${group.title}`}
+            className="mb-3 text-sm font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400"
+          >
+            {group.title}
+          </h2>
+          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+            {group.items.map(([key, value]) => {
+              const { status, cardClass, badgeClass, label, Icon } = getComponentHealth(value);
+
+              return (
+                <div
+                  key={key}
+                  data-testid={`health-card-${key}`}
+                  data-status={status}
+                  className={`rounded-xl border p-5 shadow-xs transition-colors flex flex-col justify-between ${cardClass}`}
+                >
+                  <div className="flex items-center justify-between gap-2 mb-3">
+                    <span className={`inline-flex items-center gap-1 text-[11px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider ${badgeClass}`}>
+                      <Icon className="w-3 h-3" />
+                      <span>{label}</span>
+                    </span>
                   </div>
-                ))}
-              </div>
-            </section>
-          ))
-        )}
-      </div>
+                  <p className="text-xs font-semibold uppercase text-gray-400">{key}</p>
+                  <p className="mt-2 break-words text-sm font-medium text-gray-800 dark:text-gray-200">
+                    {String(value)}
+                  </p>
+                </div>
+              );
+            })}
+          </div>
+        </section>
+      ))}
     </div>
   );
 }
