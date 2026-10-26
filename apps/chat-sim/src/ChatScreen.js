@@ -209,7 +209,7 @@ function TypingIndicator({ darkMode }) {
   };
 
   return (
-    <View className="flex-row items-center gap-2 px-3 py-2">
+    <View testID="typing-indicator" className="flex-row items-center gap-2 px-3 py-2">
       <Text
         style={darkMode ? { color: '#8696a0' } : undefined}
         className="text-sm text-gray-500"
@@ -347,6 +347,14 @@ export default function ChatScreen() {
     setSearchQuery('');
     setSearchIndex(0);
   }
+
+  const isTyping =
+    sending ||
+    machineSnapshot.state === 'AUTHORIZING' ||
+    machineSnapshot.state === 'SUBMITTING' ||
+    machineSnapshot.state === PaymentState.AUTHORIZING ||
+    machineSnapshot.state === PaymentState.SUBMITTING ||
+    machineSnapshot.state === PaymentState.SETTLING_STELLAR;
 
   useEffect(() => {
     const unsubscribe = stateMachine.subscribe(
@@ -699,8 +707,11 @@ export default function ChatScreen() {
       machineSnapshot.state === PaymentState.RATE_QUOTED
     ) {
       if (/^\d{4,6}$/.test(text)) {
-        stateMachine.transition(PaymentEvent.PIN_VALIDATED);
+        stateMachine.transition(PaymentEvent.AUTHORIZE);
         // Simulate immediate stellar settlement progression
+        setTimeout(() => {
+          stateMachine.transition(PaymentEvent.SUBMIT);
+        }, 400);
         setTimeout(() => {
           stateMachine.transition(PaymentEvent.STELLAR_SUCCESS, {
             txHash: `${Date.now().toString(16).padEnd(64, '0')}`,
@@ -738,6 +749,17 @@ export default function ChatScreen() {
       // Bot replied: mark user message as read (double blue ticks)
       updateMessageStatus(userMsgId, MessageStatus.READ);
       appendBotReplies(replies);
+      if (
+        machineSnapshot.state === 'AUTHORIZING' ||
+        machineSnapshot.state === 'SUBMITTING' ||
+        machineSnapshot.state === PaymentState.AUTHORIZING ||
+        machineSnapshot.state === PaymentState.SUBMITTING ||
+        machineSnapshot.state === PaymentState.SETTLING_STELLAR
+      ) {
+        stateMachine.transition(PaymentEvent.STELLAR_SUCCESS, {
+          txHash: `0x${Date.now().toString(16)}`,
+        });
+      }
     } catch (error) {
       const errorReply = `Couldn't reach SendAm: ${error.message}`;
       const errTimestamp = new Date().toISOString();
@@ -1441,7 +1463,7 @@ export default function ChatScreen() {
           darkMode={darkMode}
         />
       </View>
-      {sending ? <TypingIndicator darkMode={darkMode} /> : null}
+      {isTyping ? <TypingIndicator darkMode={darkMode} /> : null}
 
       {/* WhatsApp interactive quick-reply suggestions bar above input */}
       {latestQuickReplies.length > 0 && !disabledReplies[latestBotMessage?.id] && (
