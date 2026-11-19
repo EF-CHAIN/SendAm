@@ -16,6 +16,8 @@
     "db:provision": "prisma migrate deploy && node scripts/validate-production-db.js",
     "whatsapp:webhook:configure": "node scripts/configure-whatsapp-webhook.js",
     "test": "node --test",
+    "deploy:contracts:testnet": "node ../../scripts/deploy-soroban.js --network testnet",
+    "deploy:contracts:mainnet": "node ../../scripts/deploy-soroban.js --network mainnet",
     "db:verify-restore": "node scripts/verify-restore-drill.js"
   },
   "dependencies": {
