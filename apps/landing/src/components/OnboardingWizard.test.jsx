@@ -14,17 +14,70 @@ describe('OnboardingWizard Component', () => {
 
   it('allows user to advance to Step 2 (PIN) and Step 3 (Transfer)', async () => {
     render(<OnboardingWizard />);
-    
+
     // Move to step 2
     const nextBtn = screen.getByRole('button', { name: /Next Step/i });
     fireEvent.click(nextBtn);
     expect(screen.getByText(/Set your 4-digit security PIN/i)).toBeInTheDocument();
+
+    // Fill 4-digit PIN before moving to step 3
+    const pinInputs = screen.getAllByPlaceholderText('•');
+    pinInputs.forEach((input, idx) => {
+      fireEvent.change(input, { target: { value: String(idx + 1) } });
+    });
 
     // Move to step 3
     fireEvent.click(screen.getByRole('button', { name: /Next Step/i }));
     expect(screen.getByText(/Simulate your first transfer/i)).toBeInTheDocument();
     expect(screen.getByLabelText(/Transfer Amount \(USDC\)/i)).toBeInTheDocument();
     expect(screen.getByLabelText(/Recipient Phone/i)).toBeInTheDocument();
+  });
+
+  it('blocks advancing from Step 1 when phone number is invalid', () => {
+    render(<OnboardingWizard />);
+    const phoneInput = screen.getByLabelText(/WhatsApp Phone Number/i);
+    fireEvent.change(phoneInput, { target: { value: '123' } });
+
+    fireEvent.click(screen.getByRole('button', { name: /Next Step/i }));
+
+    expect(screen.getByTestId('wizard-step-error')).toHaveTextContent(/valid Nigeria phone number/i);
+    expect(screen.getByText(/Enter your WhatsApp phone number/i)).toBeInTheDocument();
+  });
+
+  it('blocks advancing from Step 2 when PIN is incomplete', () => {
+    render(<OnboardingWizard />);
+    fireEvent.click(screen.getByRole('button', { name: /Next Step/i }));
+    expect(screen.getByText(/Set your 4-digit security PIN/i)).toBeInTheDocument();
+
+    // Only fill 2 digits
+    const pinInputs = screen.getAllByPlaceholderText('•');
+    fireEvent.change(pinInputs[0], { target: { value: '1' } });
+    fireEvent.change(pinInputs[1], { target: { value: '2' } });
+
+    fireEvent.click(screen.getByRole('button', { name: /Next Step/i }));
+
+    expect(screen.getByTestId('wizard-step-error')).toHaveTextContent(/enter all 4 digits/i);
+    expect(screen.getByText(/Set your 4-digit security PIN/i)).toBeInTheDocument();
+  });
+
+  it('blocks executing simulation on Step 3 with invalid amount or recipient', () => {
+    render(<OnboardingWizard />);
+    fireEvent.click(screen.getByRole('button', { name: /Next Step/i }));
+    screen.getAllByPlaceholderText('•').forEach((input, idx) => {
+      fireEvent.change(input, { target: { value: String(idx + 1) } });
+    });
+    fireEvent.click(screen.getByRole('button', { name: /Next Step/i }));
+
+    const amountInput = screen.getByLabelText(/Transfer Amount \(USDC\)/i);
+    fireEvent.change(amountInput, { target: { value: '0' } });
+    fireEvent.click(screen.getByRole('button', { name: /Execute Simulation/i }));
+    expect(screen.getByTestId('wizard-step-error')).toHaveTextContent(/valid transfer amount/i);
+
+    fireEvent.change(amountInput, { target: { value: '25.00' } });
+    const recipientInput = screen.getByLabelText(/Recipient Phone/i);
+    fireEvent.change(recipientInput, { target: { value: '123' } });
+    fireEvent.click(screen.getByRole('button', { name: /Execute Simulation/i }));
+    expect(screen.getByTestId('wizard-step-error')).toHaveTextContent(/valid recipient phone/i);
   });
 
   it('allows user to navigate back via Back button', () => {
@@ -44,6 +97,10 @@ describe('OnboardingWizard Component', () => {
 
     // Step 1 -> Step 2
     fireEvent.click(screen.getByRole('button', { name: /Next Step/i }));
+    // Enter 4-digit PIN
+    screen.getAllByPlaceholderText('•').forEach((input, idx) => {
+      fireEvent.change(input, { target: { value: String(idx + 1) } });
+    });
     // Step 2 -> Step 3
     fireEvent.click(screen.getByRole('button', { name: /Next Step/i }));
 
