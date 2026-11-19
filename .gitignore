@@ -1,6 +1,10 @@
 # Dependencies
 node_modules/
 
+# Rust / Soroban build artifacts
+target/
+test_snapshots/
+
 # Environment files
 .env
 .env.*
