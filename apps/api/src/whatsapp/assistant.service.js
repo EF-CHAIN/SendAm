@@ -9,11 +9,17 @@ const { claimPendingSend } = require('./pendingClaim');
 const { createRecipientResolver } = require('./recipientResolver');
 const { createQuote } = require('../pricing/pricing.service');
 const defaultPrisma = require('../common/prisma');
-const { canonicalizePhoneNumber } = require('../utils/validators');
+const { canonicalizePhoneNumber, isValidPhoneNumber } = require('../utils/validators');
 const { parseConsentCommand, applyConsentKeyword, isMessageAllowed } = require('../compliance/consent.service');
 const { t, SUPPORTED_LOCALES } = require('../i18n/messages');
 const { formatAmountByLocale } = require('../i18n/formatters');
 const { buildStandardReceipt, formatChannelReceiptMessage } = require('../services/receipt.service');
+
+const { matchContacts } = require('../services/contactMatcher');
+const { sendMetaMessage } = require('../services/whatsappMedia');
+const { sendVoiceReceipt } = require('../voice/voiceReceipt');
+const config = require('../config/env');
+const logger = require('../utils/logger');
 
 const PENDING_SEND_TTL_MS = 10 * 60 * 1000;
 const NATIVE_ASSET = 'XLM';
@@ -71,10 +77,67 @@ const parsePaymentIntent = (text) => {
   };
 };
 
-const requestConfirmation = async ({ phoneNumber, user, intent, notify, db = defaultPrisma }) => {
+const requestConfirmation = async ({ phoneNumber, user, intent, notify, selectedContact, db = defaultPrisma }) => {
   const resolveRecipient = createRecipientResolver({ prisma: db, walletService });
-  const recipient = await resolveRecipient(user, intent.recipient);
+  let recipient;
+  if (selectedContact) {
+    const { label, target } = selectedContact;
+    const destination = validateAddress(target) ? target
+      : (await walletService.createOrGetWallet({ phoneNumber: canonicalizePhoneNumber(target) })).publicKey;
+    recipient = { destination, label };
+  } else {
+    recipient = await resolveRecipient(user, intent.recipient);
+  }
   const locale = user.locale || 'en';
+
+  if (!selectedContact && recipient.destination === intent.recipient && !validateAddress(recipient.destination)) {
+    const [aliases, contacts] = await Promise.all([
+      db.alias.findMany?.({ where: { userId: user.id }, select: { alias: true, target: true } }) || [],
+      db.contact?.findMany({ where: { ownerId: user.id, displayName: { not: null } },
+        select: { displayName: true, phoneNumber: true } }) || [],
+    ]);
+    const namedContacts = [
+      ...aliases.map(({ alias, target }) => ({ label: alias, target })),
+      ...contacts.map(({ displayName, phoneNumber }) => ({ label: displayName, target: phoneNumber })),
+    ].filter(({ target }) => validateAddress(target) || isValidPhoneNumber(target));
+    const candidates = matchContacts(intent.recipient, namedContacts);
+    if (candidates.length) {
+      const token = crypto.randomBytes(12).toString('hex');
+      await db.user.update({
+        where: { id: user.id },
+        data: { pendingSend: {
+          step: 'AWAITING_CONTACT', token, intent, candidates,
+          expiresAt: new Date(Date.now() + PENDING_SEND_TTL_MS).toISOString(),
+        } },
+      });
+      if (candidates.length === 1) {
+        await notify(phoneNumber, `Did you mean ${candidates[0].label}? Reply yes to select or no to cancel.`);
+        return;
+      }
+      if (notify === sendTextMessage && config.messageTransport === 'meta') {
+        try {
+          await sendMetaMessage(phoneNumber, 'interactive', {
+            type: 'list',
+            body: { text: 'Which saved contact did you mean?' },
+            action: {
+              button: 'Choose contact',
+              sections: [{ rows: candidates.map(({ label, target }, i) => ({
+                id: `contact:${token}:${i + 1}`,
+                title: Array.from(label).slice(0, 24).join(''),
+                description: `Destination ending in ${target.slice(-4)}`,
+              })) }],
+            },
+          }, AbortSignal.timeout(3000));
+          return;
+        } catch {
+          logger.warn('whatsapp_contact_picker_failed');
+        }
+      }
+      const choices = candidates.map(({ label, target }, i) => `${i + 1}. ${label} (ends in ${target.slice(-4)})`);
+      await notify(phoneNumber, ['Which saved contact did you mean? Reply with its number or no to cancel.', ...choices].join('\n'));
+      return;
+    }
+  }
 
   if (!validateAddress(String(recipient.destination || '').trim())) {
     await notify(
@@ -177,11 +240,12 @@ const requestConfirmation = async ({ phoneNumber, user, intent, notify, db = def
 };
 
 const handlePendingPin = async ({ phoneNumber, user, text, notify, db = defaultPrisma }) => {
-  if (!user.pendingSend?.destination) return false;
+  if (!user.pendingSend?.destination && user.pendingSend?.step !== 'AWAITING_CONTACT') return false;
 
   const locale = user.locale || 'en';
   const pendingState = user.pendingSend;
   const lowered = String(text).trim().toLowerCase();
+  if (lowered.startsWith('contact:') && pendingState.step !== 'AWAITING_CONTACT') return true;
 
   if (lowered === 'no' || lowered === 'cancel') {
     await db.user.update({ where: { id: user.id }, data: { pendingSend: Prisma.DbNull } });
@@ -196,6 +260,22 @@ const handlePendingPin = async ({ phoneNumber, user, text, notify, db = defaultP
   if (Date.now() > expireTime) {
     await db.user.update({ where: { id: user.id }, data: { pendingSend: Prisma.DbNull } });
     await notify(phoneNumber, t('payment_expired', {}, locale));
+    return true;
+  }
+
+  if (pendingState.step === 'AWAITING_CONTACT') {
+    const { candidates, token, intent } = pendingState;
+    let index = 0;
+    if (candidates.length === 1 && ['yes', 'oui', 'si'].includes(lowered)) index = 1;
+    if (candidates.length > 1 && /^([1-9]|10)$/.test(lowered)) index = Number(lowered);
+    if (lowered.startsWith(`contact:${token}:`)) index = Number(lowered.split(':')[2]);
+    const selectedContact = Number.isInteger(index) && candidates[index - 1];
+    if (!selectedContact) {
+      await notify(phoneNumber, 'Select a contact from the current prompt or reply no to cancel.');
+      return true;
+    }
+    await db.user.update({ where: { id: user.id }, data: { pendingSend: Prisma.DbNull } });
+    await requestConfirmation({ phoneNumber, user, intent, selectedContact, notify, db });
     return true;
   }
 
@@ -272,9 +352,16 @@ const handlePendingPin = async ({ phoneNumber, user, text, notify, db = defaultP
   const standardReceipt = buildStandardReceipt(result.transaction, { mask: true });
   const receiptMsg = `${t('payment_success', {
     status: result.transaction.status,
-    receiptId: result.receipt.transactionId,
+    receiptId: result.receipt?.transactionId || standardReceipt.transactionId,
   }, locale)}\n\n${formatChannelReceiptMessage(standardReceipt)}`;
 
+  const voiceReceipt = notify === sendTextMessage
+    ? sendVoiceReceipt({
+        phoneNumber, transaction: result.transaction, label: pending.alias, ledgerConfirmed: result.ledgerConfirmed,
+      }).catch(() => {
+        logger.warn('whatsapp_voice_receipt_failed', { transactionId: result.transaction.id });
+      })
+    : Promise.resolve();
   await notify(phoneNumber, receiptMsg, {
     notification: {
       userId: user.id,
@@ -283,6 +370,7 @@ const handlePendingPin = async ({ phoneNumber, user, text, notify, db = defaultP
       referenceId: result.transaction.id,
     },
   });
+  await voiceReceipt;
   return true;
 };
 
@@ -329,6 +417,7 @@ const processMessage = async (phoneNumber, whatsappName, text, options = {}) => 
   }
 
   if (await handlePendingPin({ phoneNumber, user, text, notify, db })) return;
+  if (normalized.startsWith('contact:')) return;
 
   if (['hi', 'hello', 'help', 'menu'].includes(normalized)) {
     if (!isMessageAllowed({ user, isTransactional: false })) {

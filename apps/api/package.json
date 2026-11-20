@@ -21,6 +21,9 @@
   "dependencies": {
     "@prisma/adapter-pg": "^7.8.0",
     "@prisma/client": "^7.10.0",
+    "@signpdf/placeholder-pdfkit": "^3.4.0",
+    "@signpdf/signer-p12": "^3.4.0",
+    "@signpdf/signpdf": "^3.4.0",
     "@stellar/stellar-sdk": "^12.0.0",
     "axios": "^1.6.8",
     "bullmq": "^5.79.3",
@@ -32,6 +35,7 @@
     "ioredis": "^5.11.1",
     "libphonenumber-js": "^1.11.4",
     "morgan": "^1.10.0",
+    "pdfkit": "^0.15.2",
     "pg": "^8.22.0"
   },
   "prisma": {

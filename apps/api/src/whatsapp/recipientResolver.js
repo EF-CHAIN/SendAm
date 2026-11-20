@@ -92,19 +92,17 @@ const createRecipientResolver = ({ prisma, walletService }) => {
     const savedAlias = await prisma.alias.findUnique({
       where: { userId_alias: { userId: user.id, alias: normalized } },
     });
-    if (savedAlias) {
-      return { destination: savedAlias.target, label: normalized };
-    }
+    const target = savedAlias?.target || raw;
 
     // 2. Phone number — create or fetch wallet for that phone number.
-    if (service && isValidPhoneNumber(raw)) {
-      const canonicalPhone = canonicalizePhoneNumber(raw);
+    if (service && isValidPhoneNumber(target)) {
+      const canonicalPhone = canonicalizePhoneNumber(target);
       const wallet = await service.createOrGetWallet({ phoneNumber: canonicalPhone });
-      return { destination: wallet.publicKey, label: canonicalPhone };
+      return { destination: wallet.publicKey, label: savedAlias ? normalized : canonicalPhone };
     }
 
     // 3. Raw address (or unresolvable name)
-    return { destination: raw, label: raw };
+    return { destination: target, label: savedAlias ? normalized : raw };
   };
 };
 

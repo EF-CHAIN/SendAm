@@ -154,6 +154,8 @@ const executePayment = async ({
             fee: calculateFee(normalizedAmount, effectiveAsset),
             userHiddenRail: true,
             riskScore: compliance.riskScore,
+            ...(sourceCountry && destinationCountry
+              ? { corridor: `${sourceCountry}-${destinationCountry}`.toUpperCase() } : {}),
             stateHistory: [{
               from: null,
               to: 'processing',
@@ -246,7 +248,12 @@ const executePayment = async ({
       },
     }).catch(() => {});
 
-    return { transaction: withIdAlias(activeTransaction), quote, receipt: null };
+    return {
+      transaction: withIdAlias(activeTransaction),
+      quote,
+      receipt: null,
+      ...(result.ledgerConfirmed ? { ledgerConfirmed: true } : {}),
+    };
   } catch (error) {
     await markTransactionFailed({
       prisma,
