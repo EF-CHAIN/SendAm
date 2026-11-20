@@ -13,6 +13,7 @@ const simRoutes = require('./routes/sim.routes');
 const authRoutes = require('./routes/auth.routes');
 const receiptRoutes = require('./routes/receipt.routes');
 const retentionRoutes = require('./routes/retention.routes');
+const healthRoutes = require('./routes/health.routes');
 
 const errorHandler = require('./middlewares/errorHandler');
 const notFound = require('./middlewares/notFound');
@@ -132,6 +133,8 @@ app.use('/api/', limiter);
 // Prometheus scrape endpoint. It is deliberately outside the API limiter so a
 // traffic spike cannot blind monitoring, and protected by a dedicated token.
 app.get('/metrics', metricsHandler);
+
+app.use(healthRoutes);
 
 app.get('/health/live', (_req, res) => {
   res.status(200).json({ status: 'ok', uptime: process.uptime() });

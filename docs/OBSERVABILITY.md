@@ -190,6 +190,13 @@ answers:
 Either outcome increments `sendam_health_checks_total` with `status="ok"` or
 `status="degraded"`, which is what `SendAmDatabaseHealthDegraded` alerts on.
 
+For an operator check, call `GET /health/deep`. It probes PostgreSQL, Redis,
+the configured Horizon URL, and the active KMS provider in parallel under the
+same per-probe deadline. It returns HTTP 200 while all four can respond and
+HTTP 503 when a probe fails or times out. The `components` object names each
+dependency and reports `healthy`, `degraded` for a slow response, or `unhealthy`
+for a failure.
+
 ### Payload used by the frontend mock
 
 The default msw handler in `apps/admin/src/mocks/handlers.js` answers this URL
