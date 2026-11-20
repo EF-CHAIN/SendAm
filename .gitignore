@@ -1,3 +1,8 @@
+# Rust / Soroban build artifacts
+/target/
+**/*.rs.bk
+**/test_snapshots/
+
 # Dependencies
 node_modules/
 
