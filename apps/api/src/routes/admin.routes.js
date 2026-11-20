@@ -98,4 +98,9 @@ router.get('/users/:userId/account-status', requireAdmin('admin.read'), adminCon
 // ── Issue #308: Customer Statement generation (admin view) ────────────────────
 router.get('/users/:userId/statement', requireAdmin('compliance.read'), adminController.getUserStatement);
 
+// ── Issue #941: SEP-1 stellar.toml discovery & validation ────────────────────
+router.get('/stellar/toml', requireAdmin('admin.read'), adminController.getStellarToml);
+router.get('/stellar/toml/validate', requireAdmin('admin.read'), adminController.validateStellarToml);
+router.post('/stellar/toml/validate', requireAdmin('admin.read'), adminController.validateStellarToml);
+
 module.exports = router;
