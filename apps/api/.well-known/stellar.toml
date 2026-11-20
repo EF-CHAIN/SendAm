@@ -1,0 +1,44 @@
+# Stellar SEP-1 Discovery Configuration for SendAm
+# Specification: https://github.com/stellar/stellar-protocol/blob/master/ecosystem/sep-0001.md
+
+VERSION = "2.0.0"
+NETWORK_PASSPHRASE = "Test SDF Network ; September 2015"
+FEDERATION_SERVER = "https://api.sendam.app/api/federation"
+AUTH_SERVER = "https://api.sendam.app/api/auth"
+WEB_AUTH_ENDPOINT = "https://api.sendam.app/api/auth"
+SIGNING_KEY = "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5"
+HORIZON_URL = "https://horizon-testnet.stellar.org"
+KYC_SERVER = "https://api.sendam.app/api/compliance"
+
+[DOCUMENTATION]
+ORG_NAME = "SendAm"
+ORG_DBA = "SendAm"
+ORG_URL = "https://sendam.app"
+ORG_LOGO = "https://sendam.app/logo-sent.svg"
+ORG_DESCRIPTION = "WhatsApp-first Stellar remittance and payment bridge for Africa"
+ORG_OFFICIAL_EMAIL = "support@sendam.app"
+ORG_SUPPORT_EMAIL = "support@sendam.app"
+ORG_GITHUB = "https://github.com/EF-CHAIN/SendAm"
+ORG_TWITTER = "@SendAmApp"
+
+[[PRINCIPALS]]
+name = "SendAm Operations"
+email = "support@sendam.app"
+github = "https://github.com/EF-CHAIN/SendAm"
+
+[[CURRENCIES]]
+code = "USDC"
+issuer = "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5"
+display_decimals = 7
+desc = "USD Coin issued on Stellar"
+is_asset_anchored = true
+anchor_asset_type = "fiat"
+anchor_asset = "USD"
+status = "test"
+
+[[CURRENCIES]]
+code = "XLM"
+display_decimals = 7
+desc = "Lumen (native Stellar network token)"
+is_asset_anchored = false
+status = "live"
