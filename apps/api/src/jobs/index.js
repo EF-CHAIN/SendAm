@@ -3,6 +3,7 @@ const { startDepositPoller } = require('./deposits.jobs');
 const { startAuditPoller } = require('./audit.jobs');
 const { JOB_NAME, runRotationHealthCheck, rotateCategorySecret } = require('./secret-rotation.job');
 const { startWebhookInboxDrain, startOutboxReconciler } = require('./messaging.jobs');
+const { startSep24Poller } = require('./sep24Poll.job');
 const { startAlertDeliveryTestPoller } = require('../observability/alertDeliveryTest.service');
 const { enqueue, registerProcessor } = require('../queues/queue.service');
 const config = require('../config/env');
@@ -54,6 +55,14 @@ const registerJobs = () => {
     logger.info('alert_delivery_test_poller_disabled', { reason: 'ALERT_DELIVERY_TEST_INTERVAL_MS=0' });
   }
 
+  let sep24Poller = null;
+  const sep24PollIntervalMs = Number(config.stellar?.sep24PollIntervalMs ?? 15000);
+  if (sep24PollIntervalMs > 0) {
+    sep24Poller = startSep24Poller({ intervalMs: sep24PollIntervalMs });
+  } else {
+    logger.info('sep24_poller_disabled', { reason: 'SEP24_POLL_INTERVAL_MS=0' });
+  }
+
   return {
     whatsappWorker,
     depositPoller,
@@ -62,6 +71,7 @@ const registerJobs = () => {
     inboxDrain,
     outboxReconciler,
     alertDeliveryPoller,
+    sep24Poller,
     processorNames: ['whatsapp-inbound'],
     stop: async () => {
       depositPoller.stop();
@@ -69,6 +79,7 @@ const registerJobs = () => {
       inboxDrain.stop();
       outboxReconciler.stop();
       alertDeliveryPoller?.stop();
+      sep24Poller?.stop();
     },
   };
 };
