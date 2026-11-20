@@ -23,6 +23,12 @@ const hasTls = (url, protocol) => {
 const validateEnv = (config) => {
   const problems = [];
 
+  for (const [asset, issuer] of Object.entries(config.stellar?.pathIssuers || {})) {
+    if (issuer && !require('@stellar/stellar-sdk').StrKey.isValidEd25519PublicKey(issuer)) {
+      problems.push(`STELLAR_${asset}_ISSUER must be a valid Stellar account for the configured network.`);
+    }
+  }
+
   if (!config.encryptionKey || Buffer.from(config.encryptionKey, 'hex').length !== 32) {
     problems.push('ENCRYPTION_KEY must be a 64-character hex string (32 bytes). Generate one with: openssl rand -hex 32');
   }

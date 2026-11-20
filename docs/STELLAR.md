@@ -33,6 +33,11 @@ like a trustline — adds to the requirement. Practical consequences:
   before they can do anything — see the [ROADMAP](../ROADMAP.md) for the
   path to production.
 
+WhatsApp's balance reply and the wallet balance API show spendable XLM alongside
+the total. Spendable XLM uses the latest Horizon ledger reserve and the current
+one-operation fee. It also accounts for sponsorships and open sell offers.
+The signing adapter rechecks the amount before sending.
+
 ## Assets and trustlines
 
 XLM is the native asset; everything else (USDC, NGN tokens) is an **issued
@@ -84,6 +89,34 @@ Endpoints you'll meet in this codebase:
 
 Horizon error responses carry `extras.result_codes` — that's where
 `op_no_trust`, `op_underfunded`, `tx_bad_seq` live.
+
+## Cross-asset payments and loyalty fees
+
+Use the authenticated `POST /api/wallet/send` endpoint with `asset` and
+`amount` for the source asset and its maximum debit. Provide `destinationAsset`
+and `destinationAmount` to set the recipient's asset and exact receive amount.
+Horizon searches both directions, and SendAm signs a strict-receive operation
+with at most 0.5% headroom above the best strict-receive quote, within the caller's
+source cap and the wallet's spendable balance. Confirmed receipts show the
+actual source debit and the destination amount.
+
+For NGN/GHS, set `STELLAR_NGN_ISSUER` and `STELLAR_GHS_ISSUER` to the anchor
+accounts trusted on the selected `STELLAR_NETWORK`. Both asset issuers and
+spendable liquidity must be present on that network. Source and destination
+wallets need the relevant trustlines. XLM and configured USDC can also be used
+as path endpoints.
+
+Rolling 30-day confirmed sends are counted separately for XLM and USDC.
+A volume of 100 in the source asset earns a 10% fee discount and a voucher
+worth 5% of the discounted fee. At 1,000, the discount rises to 25% and the
+voucher to 10%. Each voucher is credited on ledger confirmation. A later quote
+automatically uses the oldest available voucher in the same asset that fits
+within the fee. Cashback is calculated after any voucher deduction.
+
+WhatsApp uses the fee shown on the confirmation prompt. REST clients can use
+`POST /api/pricing/quote` with a Bearer session and the same source asset in
+`baseCurrency` and `quoteCurrency`, then pass the returned `id` as `quoteId`
+when sending.
 
 ## Frontend display: precision, issuer labels, explorer links
 

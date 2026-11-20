@@ -1,6 +1,7 @@
 const ASSET_RULES = Object.freeze({
   XLM: { precision: 7, min: '0.0000001', max: '1000000000', rounding: 'HALF_UP' },
   USDC: { precision: 7, min: '0.0000001', max: '1000000000', rounding: 'HALF_UP' },
+  GHS: { precision: 2, min: '0.01', max: '1000000000.00', rounding: 'HALF_UP' },
   NGN: { precision: 2, min: '1.00', max: '5000000000.00', rounding: 'HALF_UP' },
   USD: { precision: 2, min: '0.01', max: '1000000000.00', rounding: 'HALF_UP' },
   EUR: { precision: 2, min: '0.01', max: '1000000000.00', rounding: 'HALF_UP' },

@@ -62,7 +62,8 @@ jobs:
           }
           images() {
             local tree="$1" refs image
-            refs=$(docker compose -f "$tree/docker-compose.production.yml" config --images) || return
+            refs=$(docker compose -f "$tree/docker-compose.production.yml" config --format json |
+              jq -r '.services[] | select(.build == null) | .image') || return
             test -n "$refs" || return 1
             while IFS= read -r image; do
               trivy image --image-src remote --scanners vuln --severity HIGH,CRITICAL --format json -- "$image" || return
@@ -83,3 +84,22 @@ jobs:
             cat "$RUNNER_TEMP/trivy-new.tsv"
             exit 1
           fi
+
+      - name: Verify production API image
+        run: |
+          docker build --target development -f deploy/Dockerfile -t sendam-api:development .
+          docker build -f deploy/Dockerfile -t sendam-api:production .
+          before=$(docker image inspect sendam-api:development --format '{{.Size}}')
+          after=$(docker image inspect sendam-api:production --format '{{.Size}}')
+          echo "Development image: $before bytes. Production image: $after bytes."
+          test "$(( after * 2 ))" -lt "$before"
+          docker run --rm --entrypoint sh sendam-api:production -ec '
+            test "$(id -u)" = 1000
+            test "$(id -un)" = node
+            test ! -d /app/node_modules/eslint
+            test ! -d /app/node_modules/prisma'
+          docker run --rm sendam-api:production node -e '
+            const { PrismaClient } = require("@prisma/client");
+            const { PrismaPg } = require("@prisma/adapter-pg");
+            if (!new PrismaClient({ adapter: new PrismaPg({}) }).feeVoucher) process.exit(1);'
+          trivy image --image-src docker --scanners vuln --severity CRITICAL --exit-code 1 sendam-api:production

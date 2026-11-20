@@ -161,6 +161,10 @@ module.exports = {
     horizonCircuitCooldownMs: Number(process.env.HORIZON_CIRCUIT_COOLDOWN_MS || 30000),
     usdcIssuer: process.env.STELLAR_USDC_ISSUER
       || (stellarProfile ? stellarProfile.usdcIssuer : null),
+    pathIssuers: {
+      NGN: process.env.STELLAR_NGN_ISSUER,
+      GHS: process.env.STELLAR_GHS_ISSUER,
+    },
     explorerBaseUrl: stellarProfile ? stellarProfile.explorerBaseUrl : null,
     supportsFriendbot: stellarProfile ? stellarProfile.supportsFriendbot : false,
     // Fail closed: an unresolved network is never treated as mainnet, so a
@@ -190,7 +194,7 @@ module.exports = {
     maxRate: process.env.PRICING_PROVIDER_MAX_RATE || '1000000000',
     spreadBasisPoints: Number(process.env.PRICING_SPREAD_BASIS_POINTS || 0),
     feePolicyVersion: process.env.PRICING_FEE_POLICY_VERSION || 'standard-v1',
-    supportedFiatCurrencies: (process.env.SUPPORTED_FIAT_CURRENCIES || 'NGN,USD,EUR,GBP')
+    supportedFiatCurrencies: (process.env.SUPPORTED_FIAT_CURRENCIES || 'NGN,GHS,USD,EUR,GBP')
       .split(',')
       .map((currency) => currency.trim().toUpperCase())
       .filter(Boolean),
