@@ -96,6 +96,7 @@ jobs:
           docker run --rm --entrypoint sh sendam-api:production -ec '
             test "$(id -u)" = 1000
             test "$(id -un)" = node
+            test ! -d /app/node_modules/react
             test ! -d /app/node_modules/eslint
             test ! -d /app/node_modules/prisma'
           docker run --rm sendam-api:production node -e '

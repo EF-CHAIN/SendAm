@@ -48,7 +48,7 @@ which costs one reserve entry.
 Consequences you'll hit in code:
 
 - `resolveAsset()` in `stellar.adapter.js` maps an asset code to the SDK
-  object — this is the seam where USDC support lands.
+  object using the configured issuer for USDC, NGN, or GHS.
 - Paying USDC to an account with no USDC trustline fails with `op_no_trust`.
   User-facing code must translate that to a human sentence.
 - Same asset code from a different issuer is a **different asset**. Issuer
@@ -106,12 +106,19 @@ spendable liquidity must be present on that network. Source and destination
 wallets need the relevant trustlines. XLM and configured USDC can also be used
 as path endpoints.
 
-Rolling 30-day confirmed sends are counted separately for XLM and USDC.
-A volume of 100 in the source asset earns a 10% fee discount and a voucher
-worth 5% of the discounted fee. At 1,000, the discount rises to 25% and the
-voucher to 10%. Each voucher is credited on ledger confirmation. A later quote
-automatically uses the oldest available voucher in the same asset that fits
-within the fee. Cashback is calculated after any voucher deduction.
+SendAm counts confirmed volume over the preceding 30 days in the source asset.
+
+| Source asset | Silver volume | Gold volume |
+| --- | ---: | ---: |
+| XLM or USDC | 100 | 1,000 |
+| NGN | 100,000 | 1,000,000 |
+| GHS | 1,000 | 10,000 |
+
+Silver discounts the fee by 10% and earns a voucher worth 5% of the final fee.
+Gold discounts the fee by 25% and earns a voucher worth 10% of the final fee.
+A later quote automatically uses the oldest available voucher in the same
+asset that fits within the fee. The voucher is earned on ledger confirmation,
+after any voucher used on that payment has been deducted from the fee.
 
 WhatsApp uses the fee shown on the confirmation prompt. REST clients can use
 `POST /api/pricing/quote` with a Bearer session and the same source asset in

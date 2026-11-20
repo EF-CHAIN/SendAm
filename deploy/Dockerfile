@@ -15,9 +15,25 @@ COPY apps/api/prisma apps/api/prisma
 COPY apps/api/prisma.config.ts apps/api/
 RUN DATABASE_URL=postgresql://localhost/sendam npm run prisma:generate --workspace=apps/api
 
-FROM manifests AS production-dependencies
-RUN npm ci --workspace=apps/api --include-workspace-root=false --omit=dev --no-audit --no-fund \
-    && npm cache clean --force
+FROM node:22-alpine3.23 AS production-dependencies
+WORKDIR /app
+COPY package.json package-lock.json ./
+COPY apps/api/package.json apps/api/
+# Limit npm's workspace resolution to the API. The Prisma CLI is also an
+# optional peer of the client, so omit peer-only packages from the runtime.
+RUN node <<'JS'
+const fs = require('node:fs');
+const root = require('./package.json');
+root.workspaces = ['apps/api'];
+delete root.dependencies;
+delete root.devDependencies;
+delete root.optionalDependencies;
+fs.writeFileSync('package.json', JSON.stringify(root));
+const api = require('./apps/api/package.json');
+delete api.devDependencies;
+fs.writeFileSync('apps/api/package.json', JSON.stringify(api));
+JS
+RUN npm ci --omit=dev --omit=peer --no-audit --no-fund && npm cache clean --force
 
 FROM alpine:3.23 AS runtime
 RUN apk add --no-cache ca-certificates libstdc++ openssl \

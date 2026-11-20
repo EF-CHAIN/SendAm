@@ -1,9 +1,11 @@
-const { formatUnits, getAssetRule, parseUnits, percentage, subtract, compare } = require('../utils/money');
+const { formatUnits, parseUnits, percentage, subtract, compare } = require('../utils/money');
 
 const WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
 const THRESHOLDS = {
   XLM: [100, 1000],
   USDC: [100, 1000],
+  NGN: [100_000, 1_000_000],
+  GHS: [1000, 10_000],
 };
 const TIERS = [
   { name: 'gold', discountBps: 2500, cashbackBps: 1000 },
@@ -25,7 +27,7 @@ const priceLoyaltyFee = async ({ db, userId, asset, amount, now = new Date() }) 
     where: { userId, type: 'send', status: 'success', asset, updatedAt: { gte: cutoff } },
     select: { amount: true, metadata: true, updatedAt: true },
   });
-  const { precision } = getAssetRule(asset);
+  const precision = 7; // All supported Stellar assets can settle at stroop precision.
   const volume = payments.reduce((sum, payment) => {
     const confirmedAt = new Date(payment.metadata?.confirmedAt || payment.updatedAt);
     if (!(confirmedAt >= cutoff && confirmedAt <= now)) return sum;

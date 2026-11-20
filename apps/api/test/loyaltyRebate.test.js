@@ -32,6 +32,21 @@ test('prices fees using only the past 30 days of confirmed volume in the source 
   assert.deepEqual(await priceLoyaltyFee({ db, asset: 'XLM', amount: '50' }), { fee: '0.5000000' });
 });
 
+test('anchor loyalty counts actual path spend at Stellar precision', async () => {
+  const now = new Date('2026-11-20T12:00:00Z');
+  const path = { amount: '10000.00', metadata: { pathPayment: { sourceDebit: '999.9999999' } }, updatedAt: now };
+  const db = {
+    transaction: { findMany: async () => [path] },
+    feeVoucher: { findMany: async () => [] },
+  };
+  const standard = await priceLoyaltyFee({ db, userId: 'user', asset: 'GHS', amount: '100', now });
+  assert.equal(standard.loyalty.tier, 'standard');
+  path.metadata.pathPayment.sourceDebit = '1000.0000001';
+  const silver = await priceLoyaltyFee({ db, userId: 'user', asset: 'GHS', amount: '100', now });
+  assert.equal(silver.loyalty.tier, 'silver');
+  assert.equal(silver.fee, '0.90');
+});
+
 const databaseUrl = process.env.TEST_DATABASE_URL;
 
 test('Horizon confirmation credits one voucher and concurrent redemptions claim it once', { skip: !databaseUrl }, async () => {

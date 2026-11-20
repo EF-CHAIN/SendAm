@@ -677,6 +677,7 @@ const submitPayment = async ({
             }
           }
 
+          if (uncertain && onEnvelope) return { txHash: hash, explorerUrl: getTransactionUrl(hash) };
           const friendlyMessage = getFriendlyPaymentError(error);
           if (friendlyMessage) {
             throw new Error(friendlyMessage);
