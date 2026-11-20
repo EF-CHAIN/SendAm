@@ -5,6 +5,7 @@ This directory contains Soroban smart contracts and shared libraries for SendAm'
 ## Workspace Layout
 
 - `contracts/common`: Common governance, timelock, and upgradeable contract primitives (`contracts/common/src/upgrade.rs`).
+- `contracts/oracle`: On-chain FX Rate Oracle for corridor feeds like NGN/XLM and GHS/USDC (`contracts/oracle/src/lib.rs`).
 
 ## Upgradeable Contract Pattern (`contracts/common/src/upgrade.rs`)
 
@@ -62,4 +63,24 @@ impl Upgradeable for MyContract {
         UpgradeManager::upgrade(&env, &admin, &new_wasm_hash).unwrap();
     }
 }
+```
+
+## Rate Oracle Contract (`contracts/oracle/src/lib.rs`)
+
+Provides tamper-resistant, verifiable on-chain FX rate feeds for cross-border African payment corridors (`NGN/XLM`, `GHS/USDC`).
+
+### Security Features
+
+1. **Signer Verification**: Only authorized feeder identities (addresses or verified Ed25519 keypairs) can publish rates (`signer.require_auth()`).
+2. **Heartbeat / Staleness Enforcement**: Queries via `get_rate(base, quote)` automatically disallow prices older than the configurable threshold (default: 300 seconds / 5 minutes) via `OracleError::PriceStale`.
+3. **Monotonic Sequence**: Rejects timestamps older than previous updates or in the future beyond permitted clock drift.
+4. **Single & Batch Invocations**: Supports updating individual corridor rates (`set_rate`) or atomic batch updates (`set_rates`).
+
+### Usage Example
+
+```rust
+use sendam_contract_oracle::{RateOracleClient, RateUpdate};
+
+// Querying on-chain rate
+let rate = oracle_client.get_rate(&Symbol::new(&env, "NGN"), &Symbol::new(&env, "XLM"));
 ```
