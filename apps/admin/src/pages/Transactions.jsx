@@ -21,7 +21,7 @@ import { getWebSocketManager } from '@/lib/websocket';
 export default function Transactions() {
   const navigate = useNavigate();
   const { params, getFilter, setFilter, resetFilters, goNext, goPrev } = useListQuery([
-    'status', 'asset', 'rail', 'phone', 'userId', 'identifier', 'from', 'to',
+    'status', 'asset', 'rail', 'phone', 'userId', 'identifier', 'from', 'to', 'corridor', 'minAmount', 'maxAmount', 'riskTier',
   ]);
   const [showFilters, setShowFilters] = useState(true);
   const [transactions, setTransactions] = useState([]);
@@ -32,13 +32,15 @@ export default function Transactions() {
   const [exporting, setExporting] = useState(false);
   const [exportError, setExportError] = useState(null);
 
-  const handleExport = async () => {
+  const handleExport = async (format) => {
     try {
       setExporting(true);
       setExportError(null);
-      await exportAdminTransactions(params);
+      await exportAdminTransactions(format === 'pdf' ? { ...params, format } : params);
     } catch (err) {
-      setExportError(err.response?.data?.message || 'Failed to export transactions');
+      const body = err.response?.data;
+      const error = body instanceof Blob ? await body.text().then(JSON.parse).catch(() => null) : body;
+      setExportError(error?.error?.message || error?.message || 'Failed to export transactions');
     } finally {
       setExporting(false);
     }
@@ -74,6 +76,7 @@ export default function Transactions() {
 
     const handleNewTx = (newTx) => {
       if (!newTx) return;
+      if (['corridor', 'minAmount', 'maxAmount', 'riskTier'].some((key) => params[key])) return;
       const tx = newTx.transaction || newTx;
       const txId = tx._id || tx.id;
       if (!txId) return;
@@ -99,7 +102,7 @@ export default function Transactions() {
       unsubSettled();
       unsubCreated();
     };
-  }, []);
+  }, [params]);
 
   const columns = [
     { header: 'ID / Hash', render: (row) => (
@@ -160,12 +163,20 @@ export default function Transactions() {
           </span>
           <button
             type="button"
-            onClick={handleExport}
+            onClick={() => handleExport('csv')}
             disabled={exporting}
             className="text-sm rounded-lg border border-gray-200 bg-white px-3 py-1.5 font-medium shadow-sm hover:bg-gray-50 disabled:opacity-50"
             data-testid="export-transactions"
           >
             {exporting ? 'Exporting…' : 'Export CSV'}
+          </button>
+          <button
+            type="button"
+            onClick={() => handleExport('pdf')}
+            disabled={exporting}
+            className="text-sm rounded-lg border border-gray-200 bg-white px-3 py-1.5 font-medium shadow-sm hover:bg-gray-50 disabled:opacity-50"
+          >
+            Export signed PDF
           </button>
         </div>
       </div>
@@ -185,6 +196,10 @@ export default function Transactions() {
             { key: 'phone', label: 'User Phone', placeholder: 'Search phone…' },
             { key: 'userId', label: 'User ID', placeholder: 'User ID…' },
             { key: 'identifier', label: 'Tx ID / Hash', placeholder: 'id, txHash…' },
+            { key: 'corridor', label: 'Corridor', placeholder: 'e.g. NG-GH or domestic' },
+            { key: 'minAmount', label: 'Minimum asset amount' },
+            { key: 'maxAmount', label: 'Maximum asset amount' },
+            { key: 'riskTier', label: 'Risk tier', type: 'select', options: ['low', 'medium', 'high', 'critical'] },
             { key: 'from', label: 'From', type: 'date' },
             { key: 'to', label: 'To', type: 'date' },
           ]}

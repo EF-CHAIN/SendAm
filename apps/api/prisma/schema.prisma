@@ -138,6 +138,7 @@ model Transaction {
   type                  String
   /// Canonical decimal string validated by src/utils/money.js; never serialize monetary values as floats.
   amount                String
+  regulatoryAmount      Decimal? @default(dbgenerated())
   asset                 String   @default("USDC")
   /// Issuer this service resolved `asset` to at execution time (see
   /// wallet/assetIdentity.js). Null for native XLM. Persisted so a receipt

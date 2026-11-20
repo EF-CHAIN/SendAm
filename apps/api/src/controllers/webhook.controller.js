@@ -1,3 +1,4 @@
+const { acceptedMessages } = require('../middlewares/dedupMessages');
 const { sendTextMessage, recordDeliveryStatus } = require('../services/whatsapp.service');
 const webhookInbox = require('../services/webhookInbox.service');
 const prismaClient = require('../common/prisma');
@@ -53,8 +54,16 @@ const processMessage = async ({ message, value }) => {
     return { outcome: OUTCOMES.INVALID };
   }
 
-  if (!['text', 'audio', 'voice'].includes(message.type)) {
+  const selection = message.interactive?.list_reply?.id;
+  const isContactSelection = message.type === 'interactive' &&
+    message.interactive?.type === 'list_reply' && /^contact:[a-f0-9]{24}:[1-9][0-9]?$/.test(selection || '');
+  if (!['text', 'audio', 'voice'].includes(message.type) && !isContactSelection) {
     return { outcome: OUTCOMES.UNSUPPORTED };
+  }
+
+  if (await acceptedMessages.has(message.id)) {
+    increment('sendam_webhook_events_total', { status: 'duplicate' });
+    return { outcome: OUTCOMES.DUPLICATE };
   }
 
   // Idempotency: Meta redelivers un-acked events, so dedup on message id
@@ -84,7 +93,8 @@ const processMessage = async ({ message, value }) => {
           increment('sendam_webhook_events_total', { status: 'duplicate' });
           // A claiming row may belong to a concurrent request. Signal a
           // retryable response so the caller does not acknowledge prematurely.
-          if (existing?.status === 'claiming') return { outcome: OUTCOMES.CLAIMING_CONFLICT };
+          if (['claiming', 'failed'].includes(existing?.status)) return { outcome: OUTCOMES.CLAIMING_CONFLICT };
+          if (existing?.status && existing.status !== 'failed') await acceptedMessages.remember(message.id);
           return { outcome: OUTCOMES.DUPLICATE };
         }
       } else {
@@ -140,7 +150,7 @@ const processMessage = async ({ message, value }) => {
     await enqueue('whatsapp-inbound', 'message.received', {
       from,
       whatsappName,
-      text: message.text?.body,
+      text: isContactSelection ? selection : message.text?.body,
       mediaId: message.audio?.id || message.voice?.id,
       messageType: message.type,
       whatsappMessageId: message.id,
@@ -171,6 +181,7 @@ const processMessage = async ({ message, value }) => {
       data: { status: 'queued', lastError: null },
     });
   }
+  await acceptedMessages.remember(claimedMessageId);
   return { outcome: OUTCOMES.ENQUEUED };
 };
 

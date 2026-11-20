@@ -586,6 +586,7 @@ const submitPayment = async ({
         try {
           const txResponse = await server.submitTransaction(transaction);
           return {
+            ledgerConfirmed: txResponse.successful === true && Boolean(txResponse.ledger),
             txHash: txResponse.hash,
             explorerUrl: getTransactionUrl(txResponse.hash),
           };
@@ -597,7 +598,11 @@ const submitPayment = async ({
                 const found = await server.transactions().transactionHash(hash).call();
                 if (found) {
                   logger.info(`Recovered seemingly-timed-out payment ${hash} via Horizon lookup.`);
-                  return { txHash: hash, explorerUrl: getTransactionUrl(hash) };
+                  return {
+                    txHash: hash,
+                    explorerUrl: getTransactionUrl(hash),
+                    ledgerConfirmed: found.successful === true && Boolean(found.ledger),
+                  };
                 }
               } catch (_) {
                 // Ignore lookup errors
@@ -621,7 +626,11 @@ const submitPayment = async ({
                 const found = await server.transactions().transactionHash(hash).call();
                 if (found) {
                   logger.info(`Recovered tx_bad_seq payment ${hash} via Horizon lookup.`);
-                  return { txHash: hash, explorerUrl: getTransactionUrl(hash) };
+                  return {
+                    txHash: hash,
+                    explorerUrl: getTransactionUrl(hash),
+                    ledgerConfirmed: found.successful === true && Boolean(found.ledger),
+                  };
                 }
               } catch (_) {
                 // lookup failed; fall through to the standard retry path
