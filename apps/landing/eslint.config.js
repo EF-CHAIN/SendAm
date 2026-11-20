@@ -5,7 +5,7 @@ import reactRefresh from 'eslint-plugin-react-refresh'
 import { defineConfig, globalIgnores } from 'eslint/config'
 
 export default defineConfig([
-  globalIgnores(['dist', 'dev-dist']),
+  globalIgnores(['dist', 'dev-dist', 'public/mockServiceWorker.js']),
   {
     // The service worker runs in a ServiceWorkerGlobalScope.
     files: ['src/sw.js', 'src/sw/**/*.js'],
@@ -28,7 +28,7 @@ export default defineConfig([
     // (e.g. __dirname, process.env).
     // Vite and Playwright configs and the build plugins run in Node, so they
     // need Node globals (e.g. __dirname, process.env, Buffer).
-    files: ['vite.config.js', 'playwright.config.js', 'build/**/*.js'],
+    files: ['vite.config.js', 'playwright.config.js', 'build/**/*.js', 'e2e/**/*.js'],
     languageOptions: { globals: globals.node },
   },
   {

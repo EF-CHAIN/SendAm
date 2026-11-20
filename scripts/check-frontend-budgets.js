@@ -94,6 +94,28 @@ for (const [appName, appConfig] of Object.entries(config.apps)) {
     );
   }
 
+  // ── Max initial entry JS chunk ──
+  if (budgets.maxEntryChunkKb) {
+    const indexHtmlPath = path.join(distPath, 'index.html');
+    if (fs.existsSync(indexHtmlPath)) {
+      const html = fs.readFileSync(indexHtmlPath, 'utf8');
+      const scriptMatches = [...html.matchAll(/<script[^>]+type=["']module["'][^>]+src=["']\/?([^"']+\.js)["']/gi)];
+      for (const match of scriptMatches) {
+        const entryFile = path.join(distPath, match[1]);
+        if (!fs.existsSync(entryFile)) continue;
+        const entryKb = sizeKb(fs.statSync(entryFile).size);
+        const entryPass = entryKb <= budgets.maxEntryChunkKb;
+        if (!entryPass) failures++;
+        const rel = path.relative(ROOT, entryFile);
+        report.push(
+          `  ${entryPass ? '✓' : '✗'} Entry     : ${rel} — ${entryKb} KB` +
+          ` (max: ${budgets.maxEntryChunkKb} KB)` +
+          (entryPass ? '' : ` ← OVER by ${(entryKb - budgets.maxEntryChunkKb).toFixed(2)} KB`)
+        );
+      }
+    }
+  }
+
   // ── Max single JS chunk ──
   for (const f of jsFiles) {
     const chunkKb = sizeKb(fs.statSync(f).size);
