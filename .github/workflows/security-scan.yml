@@ -41,11 +41,11 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - name: Install Trivy
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
           archive=trivy_0.76.2_Linux-64bit.tar.gz
-          gh release download v0.76.2 --repo aquasecurity/trivy --pattern "$archive" --dir "$RUNNER_TEMP"
+          curl --fail --silent --show-error --location --retry 3 \
+            "https://github.com/aquasecurity/trivy/releases/download/v0.76.2/$archive" \
+            --output "$RUNNER_TEMP/$archive"
           echo "bc0fc726e017b8927a62b2d3531d7a84ee01769daf5c99ed866dced54089fdbf  $RUNNER_TEMP/$archive" | sha256sum --check
           tar -xzf "$RUNNER_TEMP/$archive" -C "$RUNNER_TEMP" trivy
           echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
