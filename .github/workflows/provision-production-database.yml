@@ -33,4 +33,5 @@ jobs:
         run: npm run db:provision --workspace=apps/api
         env:
           NODE_ENV: production
+          MIGRATION_DATABASE_URL: ${{ secrets.PRODUCTION_MIGRATION_DATABASE_URL }}
           DATABASE_URL: ${{ secrets.PRODUCTION_DATABASE_URL }}

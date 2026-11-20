@@ -1,0 +1,85 @@
+name: Security Scan
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  semgrep:
+    name: Semgrep SAST
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install semgrep==1.186.0
+      - name: Block new Node.js, Rust and secret findings
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          semgrep scan --error --metrics=off --disable-nosem \
+            --baseline-commit "$BASE_SHA" --config p/nodejs --config p/javascript --config p/rust --config p/secrets
+
+  trivy:
+    name: Trivy vulnerabilities
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Install Trivy
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          archive=trivy_0.76.2_Linux-64bit.tar.gz
+          gh release download v0.76.2 --repo aquasecurity/trivy --pattern "$archive" --dir "$RUNNER_TEMP"
+          echo "bc0fc726e017b8927a62b2d3531d7a84ee01769daf5c99ed866dced54089fdbf  $RUNNER_TEMP/$archive" | sha256sum --check
+          tar -xzf "$RUNNER_TEMP/$archive" -C "$RUNNER_TEMP" trivy
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+      - name: Block new high or critical dependency and image vulnerabilities
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          POSTGRES_PASSWORD: scan-only-placeholder
+        run: |
+          baseline=$(mktemp -d)
+          git archive "$BASE_SHA" | tar -x -C "$baseline"
+          manifests() {
+            local tree="$1"
+            trivy fs --scanners vuln --severity HIGH,CRITICAL --include-dev-deps --format json "$tree"
+          }
+          images() {
+            local tree="$1" refs image
+            refs=$(docker compose -f "$tree/docker-compose.production.yml" config --images) || return
+            test -n "$refs" || return 1
+            while IFS= read -r image; do
+              trivy image --image-src remote --scanners vuln --severity HIGH,CRITICAL --format json -- "$image" || return
+            done <<< "$refs"
+          }
+          findings() {
+            "$1" "$2" |
+              jq -r '.Results[]? | .Target as $target | .Vulnerabilities[]? |
+                [$target, .PkgName, .InstalledVersion, .VulnerabilityID, .Severity] | @tsv' |
+              LC_ALL=C sort -u
+          }
+          for scan in manifests images; do
+            findings "$scan" "$baseline" > "$RUNNER_TEMP/trivy-$scan-base.tsv"
+            findings "$scan" . > "$RUNNER_TEMP/trivy-$scan-pr.tsv"
+            LC_ALL=C comm -13 "$RUNNER_TEMP/trivy-$scan-base.tsv" "$RUNNER_TEMP/trivy-$scan-pr.tsv"
+          done > "$RUNNER_TEMP/trivy-new.tsv"
+          if [ -s "$RUNNER_TEMP/trivy-new.tsv" ]; then
+            cat "$RUNNER_TEMP/trivy-new.tsv"
+            exit 1
+          fi

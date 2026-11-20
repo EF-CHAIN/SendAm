@@ -473,7 +473,7 @@ The API is a **long-running Express server** (`app.listen` in `src/server.js`), 
 Backend deployment checklist:
 
 - Provision a PostgreSQL database (e.g. Neon) and set `DATABASE_URL`.
-- Run `npm run prisma:deploy --workspace=apps/api` to apply migrations.
+- Run `npm run prisma:deploy --workspace=apps/api` to apply migrations. The runner serializes deploys with a PostgreSQL session advisory lock. If `DATABASE_URL` is transaction-pooled, set `MIGRATION_DATABASE_URL` to a direct connection to the same database. For the production provisioning workflow, store the direct URL in the `PRODUCTION_MIGRATION_DATABASE_URL` secret.
 - Set every required `apps/api` variable — the server **fails fast at startup** without `ENCRYPTION_KEY`, `JWT_SECRET`, and `ADMIN_PASSWORD`, and rejects unsigned webhooks in production without `WHATSAPP_APP_SECRET`.
 - Set `NODE_ENV=production` and a `CORS_ORIGINS` allowlist covering the deployed admin/landing URLs.
 - Point the host's health check at `GET /health` (returns 503 if the database link is down).
