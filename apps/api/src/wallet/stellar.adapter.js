@@ -514,8 +514,32 @@ const withAccountLock = async (accountKey, fn) => {
   }
 };
 
+const resolveSigningStrategy = ({ secretKey, signer }) => {
+  if (signer && typeof signer.signTransaction === 'function') {
+    if (!signer.publicKey || !StellarSdk.StrKey.isValidEd25519PublicKey(signer.publicKey)) {
+      throw new Error('Remote signer must provide a valid Stellar Ed25519 publicKey.');
+    }
+    return {
+      sourcePublicKey: signer.publicKey,
+      sign: async (transaction) => signer.signTransaction(transaction),
+    };
+  }
+  if (!secretKey) {
+    throw new Error('Either secretKey or a remote signer is required to sign Stellar transactions.');
+  }
+  const sourceKeypair = StellarSdk.Keypair.fromSecret(secretKey);
+  return {
+    sourcePublicKey: sourceKeypair.publicKey(),
+    sign: async (transaction) => {
+      transaction.sign(sourceKeypair);
+      return transaction;
+    },
+  };
+};
+
 const submitPayment = async ({
   secretKey,
+  signer,
   destination,
   amount,
   asset = "XLM",
@@ -536,8 +560,7 @@ const submitPayment = async ({
     }
 
     const normalizedAmount = assertValidAmount(amount, asset);
-    const sourceKeypair = StellarSdk.Keypair.fromSecret(secretKey);
-    const sourcePublicKey = sourceKeypair.publicKey();
+    const { sourcePublicKey, sign } = resolveSigningStrategy({ secretKey, signer });
 
     return await withAccountLock(sourcePublicKey, async () => {
       const baseDestination = getBaseAccountId(destination);
@@ -580,7 +603,7 @@ const submitPayment = async ({
         }
 
         transaction = builder.setTimeout(30).build();
-        transaction.sign(sourceKeypair);
+        await sign(transaction);
         hash = safeHash(transaction);
 
         try {
@@ -669,9 +692,8 @@ const submitPayment = async ({
 // a `changeTrust` operation the wallet signs for itself, and it costs one XLM
 // reserve entry (see docs/STELLAR.md). Idempotent: callers may retry freely, so
 // if the trustline already exists we report that without submitting anything.
-const establishTrustline = async ({ secretKey, assetCode }) => {
-  const sourceKeypair = StellarSdk.Keypair.fromSecret(secretKey);
-  const sourcePublicKey = sourceKeypair.publicKey();
+const establishTrustline = async ({ secretKey, signer, assetCode }) => {
+  const { sourcePublicKey, sign } = resolveSigningStrategy({ secretKey, signer });
 
   return withAccountLock(sourcePublicKey, async () => {
     const asset = resolveAsset(assetCode);
@@ -718,7 +740,7 @@ const establishTrustline = async ({ secretKey, assetCode }) => {
         .setTimeout(30)
         .build();
 
-      transaction.sign(sourceKeypair);
+      await sign(transaction);
       const hash = safeHash(transaction);
 
       try {

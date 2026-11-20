@@ -19,6 +19,7 @@
     "db:verify-restore": "node scripts/verify-restore-drill.js"
   },
   "dependencies": {
+    "@aws-sdk/client-kms": "^3.1173.0",
     "@prisma/adapter-pg": "^7.8.0",
     "@prisma/client": "^7.10.0",
     "@signpdf/placeholder-pdfkit": "^3.4.0",
