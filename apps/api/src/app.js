@@ -13,6 +13,7 @@ const simRoutes = require('./routes/sim.routes');
 const authRoutes = require('./routes/auth.routes');
 const receiptRoutes = require('./routes/receipt.routes');
 const retentionRoutes = require('./routes/retention.routes');
+const wellKnownRoutes = require('./routes/wellKnown.routes');
 
 const errorHandler = require('./middlewares/errorHandler');
 const notFound = require('./middlewares/notFound');
@@ -58,6 +59,12 @@ app.use((req, res, next) => {
   res.setHeader('Permissions-Policy', 'geolocation=(), microphone=(), camera=()');
   next();
 });
+
+// SEP-1 Stellar Ecosystem Discovery (Issue #941).
+// The /.well-known/stellar.toml specification mandates that CORS must be enabled
+// for all origins (Access-Control-Allow-Origin: *). Mounted before the restricted
+// application CORS middleware so external wallets and ecosystem scanners can read it.
+app.use(wellKnownRoutes);
 
 // CORS: explicitly define origin allowlists by environment. 
 // Cross-origin access strictly requires configuration.
