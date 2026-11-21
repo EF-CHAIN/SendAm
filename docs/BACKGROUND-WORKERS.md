@@ -20,7 +20,8 @@ authentication and TLS. Worker-specific settings are:
 ```text
 WORKER_CONCURRENCY=5
 WORKER_LOCK_DURATION_MS=30000
-WORKER_SHUTDOWN_TIMEOUT_MS=30000
+WORKER_DRAIN_TIMEOUT_MS=30000
+WORKER_SHUTDOWN_TIMEOUT_MS=45000
 WORKER_HEARTBEAT_INTERVAL_MS=60000
 WORKER_HEARTBEAT_FRESHNESS_MS=90000
 WORKER_HEALTH_PORT=3003
@@ -37,6 +38,18 @@ DATABASE_POOL_TIMEOUT_MS=10000
 Increase it only after measuring database, provider, and Stellar limits. The
 lock duration must exceed normal processing time so BullMQ does not classify a
 healthy job as stalled.
+
+### Graceful shutdown
+
+On `SIGTERM`/`SIGINT` the worker pauses queue intake immediately (no new jobs are
+picked up), then waits up to `WORKER_DRAIN_TIMEOUT_MS` (default 30s) for active
+jobs, including in-flight payments, to finish before closing workers, queues and
+Redis. `WORKER_SHUTDOWN_TIMEOUT_MS` is the hard process deadline and must be
+larger than the drain timeout. A job still running at the drain timeout is not
+killed by the manager; its lock expires and BullMQ's stalled-job check lets a
+resumed worker pick it up, so payment processors must remain idempotent.
+`registerProcessor(name, fn, { concurrency, lockDuration })` allows a per-queue
+concurrency override to isolate slow queues.
 
 Local development must start both entry points when exercising webhooks. Tests
 and explicit local harnesses can still register an inline processor, preserving
