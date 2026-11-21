@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- API exports Prometheus metrics `stellar_tx_submission_duration_seconds`, `stellar_tx_result_total{result}`, `stellar_tx_failure_codes_total{code}`, `stellar_fee_charged_stroops_total` and `stellar_base_fee_stroops`, with a `SendAmStellarSubmissionFailureRateHigh` alert at more than 2% failures over 5 minutes (#1019).
+- Opt-in OpenTelemetry tracing (`OTEL_EXPORTER_OTLP_ENDPOINT`) across Express, HTTP, Prisma, pg, BullMQ and Horizon submission, with `traceparent` propagated from the WhatsApp webhook through the queue to the Stellar transaction (#1018).
 - `@sendam/shared` logger keeps the last 100 entries in an in-memory ring buffer, with `logger.getRecentLogs()`, `logger.downloadLogs()` and `logger.clearLogs()` for support tickets (#811).
 - `@sendam/shared` `StellarAddress` component renders `GABC...WXYZ` with a full-address tooltip and one-click copy (#808).
 - `@sendam/shared` `formatRelativeTime` ("Just now", "5m ago", "2h ago", absolute after 24 hours) with live `subscribeRelativeTime` ticks and a `useRelativeTime` hook (#805).
