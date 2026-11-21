@@ -2,6 +2,7 @@ const { registerWhatsAppJobs } = require('./whatsapp.jobs');
 const { startDepositPoller } = require('./deposits.jobs');
 const { startAuditPoller } = require('./audit.jobs');
 const { JOB_NAME, runRotationHealthCheck, rotateCategorySecret } = require('./secret-rotation.job');
+const { startQueueHistoryPurge } = require('./purgeQueueHistory.job');
 const { startWebhookInboxDrain, startOutboxReconciler } = require('./messaging.jobs');
 const { startAlertDeliveryTestPoller } = require('../observability/alertDeliveryTest.service');
 const { enqueue, registerProcessor } = require('../queues/queue.service');
@@ -44,6 +45,7 @@ const registerJobs = () => {
   const rotationJobs = registerSecretRotationJobs();
   const inboxDrain = startWebhookInboxDrain();
   const outboxReconciler = startOutboxReconciler();
+  const queueHistoryPurge = startQueueHistoryPurge();
 
   // Only start the alert delivery test poller when at least one route is
   // configured. An interval of 0 is an explicit disable signal.
@@ -61,6 +63,7 @@ const registerJobs = () => {
     rotationJobs,
     inboxDrain,
     outboxReconciler,
+    queueHistoryPurge,
     alertDeliveryPoller,
     processorNames: ['whatsapp-inbound'],
     stop: async () => {
@@ -68,6 +71,7 @@ const registerJobs = () => {
       auditPoller.stop();
       inboxDrain.stop();
       outboxReconciler.stop();
+      queueHistoryPurge.stop();
       alertDeliveryPoller?.stop();
     },
   };
