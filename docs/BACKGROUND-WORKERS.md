@@ -218,3 +218,40 @@ After an incident restore, start workers only after PostgreSQL validation and
 key access checks pass. Inspect failed or waiting jobs by redacted job ID, avoid
 copying payloads into tickets, reconcile any payment-related transaction before
 replay, and document the final queue depth in the incident evidence.
+
+## Redis topology, retries and the dead-letter queue
+
+**Topology.** `REDIS_URL` (standalone), `REDIS_SENTINEL_HOSTS` +
+`REDIS_SENTINEL_MASTER_NAME` (Sentinel failover) or `REDIS_CLUSTER_NODES`
+(Cluster, which takes precedence; BullMQ keys then use the `{bull}` hash-tag
+prefix). A `READONLY` reply from a demoted master makes the client reconnect to
+the promoted master and resend the command. A heartbeat `PING`
+(`REDIS_HEARTBEAT_INTERVAL_MS`, `REDIS_HEARTBEAT_TIMEOUT_MS`,
+`REDIS_HEARTBEAT_MAX_FAILURES`) force-reconnects a connection that is open but
+unresponsive. Switching an existing deployment to Cluster changes the queue key
+prefix: drain the queues first.
+
+**Retries.** Queue jobs use full-jitter backoff
+(`sleep = rand(0, min(max, base * 2^attempt))`, `RETRY_BASE_BACKOFF_MS`,
+`RETRY_MAX_BACKOFF_MS`) and honour `Retry-After` on Horizon `429` responses.
+
+**Dead-letter queue.** A job that exhausts its retries is stored once in the DLQ
+and an alert (redacted error and stack trace, no payload) is posted to
+`DLQ_ALERT_WEBHOOK_URL` (falls back to `ERROR_MONITOR_WEBHOOK_URL`; Slack,
+Discord and generic JSON endpoints are detected from the URL). Operators inspect
+and re-queue with:
+
+```
+node scripts/whatsapp-dlq.js list --status pending
+node scripts/whatsapp-dlq.js inspect <dlqId>
+node scripts/whatsapp-dlq.js replay <dlqId>
+node scripts/whatsapp-dlq.js replay-all
+node scripts/whatsapp-dlq.js discard <dlqId>
+```
+
+`POST /api/admin/dlq/:id/replay` does the same from the admin API.
+
+**Deposit cursor.** The Horizon paging cursor is saved in the same database
+transaction as the deposit outbox row and only ever moves forward, so a worker
+restart resumes exactly where it stopped and a replayed or stale poll cannot
+rewind it or create a second record for the same payment.

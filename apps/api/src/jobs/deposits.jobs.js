@@ -35,6 +35,43 @@ const assetIdentity = require('../wallet/assetIdentity');
 const { setGauge } = require('../observability/metrics');
 
 // ---------------------------------------------------------------------------
+// Forward-only cursor persistence
+//
+// Horizon paging tokens are monotonically increasing numeric strings. A replay
+// (duplicate poll, stale replica, re-delivered page) must never move the saved
+// cursor backwards, or already-credited payments would be fetched again. The
+// guard is evaluated inside the same transaction that writes the outbox row.
+// ---------------------------------------------------------------------------
+
+/**
+ * True when `candidate` should replace `current`. Numeric tokens (what Horizon
+ * issues) compare numerically via BigInt so the cursor is forward-only. A token
+ * that cannot be compared is accepted when it differs, so an unexpected format
+ * can never freeze a wallet's cursor.
+ */
+const isCursorAhead = (candidate, current) => {
+  if (candidate == null) return false;
+  if (current == null) return true;
+  if (candidate === current) return false;
+  try {
+    return BigInt(candidate) > BigInt(current);
+  } catch (_e) {
+    return true;
+  }
+};
+
+/**
+ * Persist `cursor` for a wallet only if it moves forward. Works with a Prisma
+ * client or an interactive-transaction client. Returns true if written.
+ */
+const persistCursorIfAhead = async (client, walletId, cursor) => {
+  const row = await client.wallet.findUnique({ where: { id: walletId }, select: { paymentCursor: true } });
+  if (!isCursorAhead(cursor, row?.paymentCursor)) return false;
+  await client.wallet.update({ where: { id: walletId }, data: { paymentCursor: cursor } });
+  return true;
+};
+
+// ---------------------------------------------------------------------------
 // Notification text — "You received 20 USDC (~₦31,000)"
 // The fiat hint is best-effort: if the exchange-rate call fails we omit it
 // rather than blocking or crashing.
@@ -201,10 +238,7 @@ const pollWallet = async (wallet, deps) => {
 
     if (!records || records.length === 0) {
       if (nextCursor !== cursor && nextCursor != null) {
-        await prismaClient.wallet.update({
-          where: { id },
-          data: { paymentCursor: nextCursor },
-        });
+        await persistCursorIfAhead(prismaClient, id, nextCursor);
       }
       break;
     }
@@ -218,10 +252,7 @@ const pollWallet = async (wallet, deps) => {
     if (inbound.length === 0) {
       // No new inbound payments on this page; advance cursor if records moved it.
       if (nextCursor !== cursor) {
-        await prismaClient.wallet.update({
-          where: { id },
-          data: { paymentCursor: nextCursor },
-        });
+        await persistCursorIfAhead(prismaClient, id, nextCursor);
         cursor = nextCursor;
         if (records.length < 200) break;
         // Continue to drain next page
@@ -266,10 +297,7 @@ const pollWallet = async (wallet, deps) => {
       // Atomically write cursor AND outbox intent BEFORE sending.
       if (prismaClient.depositOutboxRecord) {
         await prismaClient.$transaction(async (tx) => {
-          await tx.wallet.update({
-            where: { id },
-            data: { paymentCursor: newCursor },
-          });
+          await persistCursorIfAhead(tx, id, newCursor);
           await tx.depositOutboxRecord.upsert({
             where: { stellarPaymentId },
             create: {
@@ -302,10 +330,7 @@ const pollWallet = async (wallet, deps) => {
           // if lookup fails, still try notify; worst case duplicate is constrained by status check in worker
         }
       } else {
-        await prismaClient.wallet.update({
-          where: { id },
-          data: { paymentCursor: newCursor },
-        });
+        await persistCursorIfAhead(prismaClient, id, newCursor);
       }
 
       if (notify && shouldNotify) {
@@ -348,13 +373,7 @@ const pollWallet = async (wallet, deps) => {
     // Advance cursor to nextCursor if it is beyond last inbound's paging_token
     // (e.g. trailing outbound records after last inbound on this page).
     if (nextCursor !== cursor) {
-      const currentCursor = (await prismaClient.wallet.findUnique({ where: { id }, select: { paymentCursor: true } }))?.paymentCursor;
-      if (currentCursor !== nextCursor) {
-        await prismaClient.wallet.update({
-          where: { id },
-          data: { paymentCursor: nextCursor },
-        });
-      }
+      await persistCursorIfAhead(prismaClient, id, nextCursor);
       cursor = nextCursor;
     }
 
@@ -620,6 +639,8 @@ const startDepositPoller = ({
 };
 
 module.exports = {
+  isCursorAhead,
+  persistCursorIfAhead,
   startDepositPoller,
   // Exported for unit tests and outbox management
   formatDepositMessage,

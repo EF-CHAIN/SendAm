@@ -1043,9 +1043,9 @@ const getComplianceExpirySummary = async (req, res, next) => {
 const {
   listDeadLetterJobs,
   getDeadLetterJob,
-  replayDeadLetterJob: replayDlqJob,
   discardDeadLetterJob: discardDlqJob,
 } = require('../queues/dlq.service');
+const { requeueJob } = require('../queues/dlqManager');
 
 const getDeadLetterJobs = async (req, res, next) => {
   try {
@@ -1073,7 +1073,8 @@ const getDeadLetterJobById = async (req, res, next) => {
 const replayDeadLetterJobHandler = async (req, res, next) => {
   try {
     const adminId = req.admin?.id || 'system';
-    const result = await replayDlqJob(req.params.id, {
+    // requeueJob supplies the real queue service so the job is actually re-enqueued.
+    const result = await requeueJob(req.params.id, {
       actorId: adminId,
     });
     return sendSuccess(res, result, 'Dead letter job replay processed');
