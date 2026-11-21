@@ -49,7 +49,7 @@ const validateEnv = (config) => {
     if (!config.databaseUrl || !hasTls(config.databaseUrl, 'postgres')) {
       problems.push('DATABASE_URL must use PostgreSQL TLS (sslmode=require, verify-ca, or verify-full) in production.');
     }
-    if (!config.redis?.url || !hasTls(config.redis.url, 'redis')) {
+    if (!config.redis?.clusterNodes && (!config.redis?.url || !hasTls(config.redis.url, 'redis'))) {
       problems.push('REDIS_URL or UPSTASH_REDIS_URL must use rediss:// TLS in production.');
     }
     if (!Number.isInteger(config.databasePool?.max) || config.databasePool.max < 1) {
@@ -144,7 +144,7 @@ const validateEnv = (config) => {
 
 const validateWorkerEnv = (config) => {
   const problems = [];
-  if (!config.redis?.url) problems.push('REDIS_URL or UPSTASH_REDIS_URL must be set for the background worker.');
+  if (!config.redis?.url && !config.redis?.clusterNodes) problems.push('REDIS_URL, UPSTASH_REDIS_URL or REDIS_CLUSTER_NODES must be set for the background worker.');
   if (!Number.isInteger(config.worker?.concurrency) || config.worker.concurrency < 1) {
     problems.push('WORKER_CONCURRENCY must be a positive integer.');
   }

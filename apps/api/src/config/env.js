@@ -106,6 +106,15 @@ module.exports = {
     // in production for transport encryption.
     sentinelHosts: process.env.REDIS_SENTINEL_HOSTS || '',
     sentinelMasterName: process.env.REDIS_SENTINEL_MASTER_NAME || '',
+    sentinelPassword: process.env.REDIS_SENTINEL_PASSWORD,
+    // Cluster topology: REDIS_CLUSTER_NODES="host1:6379,host2:6379". Takes
+    // precedence over Sentinel. BullMQ keys use a {bull} hash-tag prefix.
+    clusterNodes: process.env.REDIS_CLUSTER_NODES || '',
+    // Heartbeat PING: after heartbeatMaxFailures consecutive failures/timeouts
+    // the connection is force-reconnected to re-resolve the master.
+    heartbeatIntervalMs: Number(process.env.REDIS_HEARTBEAT_INTERVAL_MS || 5000),
+    heartbeatTimeoutMs: Number(process.env.REDIS_HEARTBEAT_TIMEOUT_MS || 2000),
+    heartbeatMaxFailures: Number(process.env.REDIS_HEARTBEAT_MAX_FAILURES || 3),
   },
   worker: {
     healthPort: Number(process.env.WORKER_HEALTH_PORT || 3003),
@@ -136,6 +145,8 @@ module.exports = {
     metricsToken: process.env.METRICS_TOKEN,
     errorMonitorWebhookUrl: process.env.ERROR_MONITOR_WEBHOOK_URL,
     errorMonitorToken: process.env.ERROR_MONITOR_TOKEN,
+    // Slack/Discord/generic webhook for dead-lettered jobs; falls back to the error monitor.
+    dlqAlertWebhookUrl: process.env.DLQ_ALERT_WEBHOOK_URL,
     errorMonitorTimeoutMs: Number(process.env.ERROR_MONITOR_TIMEOUT_MS || 3000),
   },
   storage: {
