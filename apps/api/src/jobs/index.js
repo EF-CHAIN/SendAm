@@ -2,6 +2,8 @@ const { registerWhatsAppJobs } = require('./whatsapp.jobs');
 const { startDepositPoller } = require('./deposits.jobs');
 const { startAuditPoller } = require('./audit.jobs');
 const { JOB_NAME, runRotationHealthCheck, rotateCategorySecret } = require('./secret-rotation.job');
+const { startLedgerReconciliationScheduler } = require('./reconcileLedger.job');
+const { startRecurringPaymentScheduler } = require('../payment/recurringPayments');
 const { startWebhookInboxDrain, startOutboxReconciler } = require('./messaging.jobs');
 const { startAlertDeliveryTestPoller } = require('../observability/alertDeliveryTest.service');
 const { processReceiptJob, QUEUE_NAME: RECEIPT_QUEUE } = require('./generateReceipt.job');
@@ -62,6 +64,8 @@ const registerJobs = () => {
 
   registerPartnerWebhookJobs();
   registerReceiptJobs();
+  const ledgerReconciler = startLedgerReconciliationScheduler();
+  const recurringPayments = startRecurringPaymentScheduler();
   return {
     whatsappWorker,
     depositPoller,
@@ -70,6 +74,8 @@ const registerJobs = () => {
     inboxDrain,
     outboxReconciler,
     alertDeliveryPoller,
+    ledgerReconciler,
+    recurringPayments,
     processorNames: ['whatsapp-inbound', PARTNER_WEBHOOK_QUEUE, RECEIPT_QUEUE],
     stop: async () => {
       depositPoller.stop();
@@ -77,6 +83,8 @@ const registerJobs = () => {
       inboxDrain.stop();
       outboxReconciler.stop();
       alertDeliveryPoller?.stop();
+      ledgerReconciler.stop();
+      recurringPayments.stop();
     },
   };
 };
