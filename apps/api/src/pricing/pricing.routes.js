@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { createQuote } = require('./pricing.service');
 const { sendSuccess } = require('../utils/response');
+const requireRestSession = require('../middlewares/requireRestSession');
 const { validateRequest } = require('../middlewares/validateRequest');
 
 router.post(
@@ -25,9 +26,16 @@ router.post(
       },
     },
   }),
+  (req, res, next) => req.headers.authorization ? requireRestSession(req, res, next) : next(),
   async (req, res, next) => {
     try {
-      const quote = await createQuote(req.body);
+      const quote = await createQuote({
+        userId: req.restUser?.id,
+        sourceCurrency: req.body.baseCurrency,
+        targetCurrency: req.body.quoteCurrency,
+        sourceAmount: req.body.amount,
+        route: req.body.routeType,
+      });
       return sendSuccess(res, quote, 'Quote generated');
     } catch (error) {
       next(error);
