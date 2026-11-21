@@ -51,7 +51,7 @@ describe('Deposit Notification Outbox (#158)', () => {
         update: async (args) => {
           updatedCursor = args.data.paymentCursor;
         },
-        findUnique: async () => ({ paymentCursor: updatedCursor || '101' }),
+        findUnique: async () => ({ paymentCursor: updatedCursor || '100' }),
       },
       depositOutboxRecord: {
         upsert: async (args) => {

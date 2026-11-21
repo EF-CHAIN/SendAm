@@ -106,6 +106,15 @@ module.exports = {
     // in production for transport encryption.
     sentinelHosts: process.env.REDIS_SENTINEL_HOSTS || '',
     sentinelMasterName: process.env.REDIS_SENTINEL_MASTER_NAME || '',
+    sentinelPassword: process.env.REDIS_SENTINEL_PASSWORD,
+    // Cluster topology: REDIS_CLUSTER_NODES="host1:6379,host2:6379". Takes
+    // precedence over Sentinel. BullMQ keys use a {bull} hash-tag prefix.
+    clusterNodes: process.env.REDIS_CLUSTER_NODES || '',
+    // Heartbeat PING: after heartbeatMaxFailures consecutive failures/timeouts
+    // the connection is force-reconnected to re-resolve the master.
+    heartbeatIntervalMs: Number(process.env.REDIS_HEARTBEAT_INTERVAL_MS || 5000),
+    heartbeatTimeoutMs: Number(process.env.REDIS_HEARTBEAT_TIMEOUT_MS || 2000),
+    heartbeatMaxFailures: Number(process.env.REDIS_HEARTBEAT_MAX_FAILURES || 3),
   },
   worker: {
     healthPort: Number(process.env.WORKER_HEALTH_PORT || 3003),
@@ -118,6 +127,13 @@ module.exports = {
   },
   health: {
     timeoutMs: Number(process.env.HEALTH_CHECK_TIMEOUT_MS || 1000),
+  },
+  // PDF receipts are generated in the background and uploaded to S3 (#1014).
+  // Leave S3_RECEIPTS_BUCKET unset to disable PDF receipts; the text receipt is unaffected.
+  receipts: {
+    bucket: process.env.S3_RECEIPTS_BUCKET || '',
+    region: process.env.AWS_REGION || 'us-east-1',
+    urlTtlSeconds: Number(process.env.RECEIPT_URL_TTL_SECONDS || 24 * 60 * 60),
   },
   databasePool: {
     max: Number(process.env.DATABASE_POOL_MAX || (process.env.PROCESS_TYPE === 'worker' ? 5 : 10)),
@@ -136,6 +152,8 @@ module.exports = {
     metricsToken: process.env.METRICS_TOKEN,
     errorMonitorWebhookUrl: process.env.ERROR_MONITOR_WEBHOOK_URL,
     errorMonitorToken: process.env.ERROR_MONITOR_TOKEN,
+    // Slack/Discord/generic webhook for dead-lettered jobs; falls back to the error monitor.
+    dlqAlertWebhookUrl: process.env.DLQ_ALERT_WEBHOOK_URL,
     errorMonitorTimeoutMs: Number(process.env.ERROR_MONITOR_TIMEOUT_MS || 3000),
   },
   storage: {
@@ -161,6 +179,10 @@ module.exports = {
     horizonCircuitCooldownMs: Number(process.env.HORIZON_CIRCUIT_COOLDOWN_MS || 30000),
     usdcIssuer: process.env.STELLAR_USDC_ISSUER
       || (stellarProfile ? stellarProfile.usdcIssuer : null),
+    pathIssuers: {
+      NGN: process.env.STELLAR_NGN_ISSUER,
+      GHS: process.env.STELLAR_GHS_ISSUER,
+    },
     explorerBaseUrl: stellarProfile ? stellarProfile.explorerBaseUrl : null,
     supportsFriendbot: stellarProfile ? stellarProfile.supportsFriendbot : false,
     // Fail closed: an unresolved network is never treated as mainnet, so a
@@ -190,7 +212,7 @@ module.exports = {
     maxRate: process.env.PRICING_PROVIDER_MAX_RATE || '1000000000',
     spreadBasisPoints: Number(process.env.PRICING_SPREAD_BASIS_POINTS || 0),
     feePolicyVersion: process.env.PRICING_FEE_POLICY_VERSION || 'standard-v1',
-    supportedFiatCurrencies: (process.env.SUPPORTED_FIAT_CURRENCIES || 'NGN,USD,EUR,GBP')
+    supportedFiatCurrencies: (process.env.SUPPORTED_FIAT_CURRENCIES || 'NGN,GHS,USD,EUR,GBP')
       .split(',')
       .map((currency) => currency.trim().toUpperCase())
       .filter(Boolean),

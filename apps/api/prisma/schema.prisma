@@ -138,6 +138,7 @@ model Transaction {
   type                  String
   /// Canonical decimal string validated by src/utils/money.js; never serialize monetary values as floats.
   amount                String
+  regulatoryAmount      Decimal? @default(dbgenerated())
   asset                 String   @default("USDC")
   /// Issuer this service resolved `asset` to at execution time (see
   /// wallet/assetIdentity.js). Null for native XLM. Persisted so a receipt
@@ -166,6 +167,8 @@ model Transaction {
   confirmation              PaymentConfirmation?
   journalEntries            JournalEntry[]
   reconciliationCheckpoints ReconciliationCheckpoint[]
+  earnedFeeVoucher          FeeVoucher? @relation("EarnedFeeVoucher")
+  redeemedFeeVoucher        FeeVoucher? @relation("RedeemedFeeVoucher")
 
   @@index([userId, createdAt])
   @@index([status])
@@ -175,6 +178,20 @@ model Transaction {
   @@index([createdAt, id])
   @@index([txHash])
   @@index([providerTransactionId])
+}
+
+model FeeVoucher {
+  earnedById   String   @id
+  redeemedById String?  @unique
+  userId       String
+  asset        String
+  amount       String
+  createdAt    DateTime @default(now())
+
+  earnedBy   Transaction  @relation("EarnedFeeVoucher", fields: [earnedById], references: [id], onDelete: Cascade)
+  redeemedBy Transaction? @relation("RedeemedFeeVoucher", fields: [redeemedById], references: [id], onDelete: SetNull)
+
+  @@index([userId, asset, createdAt])
 }
 
 model LedgerAccount {
