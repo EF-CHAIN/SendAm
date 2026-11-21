@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 
 const mockVoiceProfile = {
   findUnique: async () => null,
-  create: async (data) => ({ ...data.data, id: 'vp-1' }),
+  create: async (data) => ({ ...data.data, id: 'vp-1', enrollmentCount: 1 }),
   update: async (data) => ({ ...data.data, id: 'vp-1' }),
 };
 
@@ -131,10 +131,15 @@ test('verifySpeaker returns verified=true for matching embeddings', async () => 
     enrollmentCount: 3,
   });
 
+  const originalExtract = require('../src/voice/speakerVerification').extractEmbedding;
+  require('../src/voice/speakerVerification').extractEmbedding = async () => Buffer.from(embedding.buffer);
+
   const audio = makeAudioBuffer(2);
   const result = await verifySpeaker(mockUserId, audio, { threshold: 0.5 });
   assert.equal(result.verified, true);
   assert.ok(result.confidence > 0.5);
+
+  require('../src/voice/speakerVerification').extractEmbedding = originalExtract;
 });
 
 test('verifySpeaker returns verified=false for non-matching embeddings', async () => {
@@ -206,11 +211,16 @@ test('verifyVoiceCommand returns verified for clean matching audio', async () =>
     enrollmentCount: 3,
   });
 
+  const originalExtract = require('../src/voice/speakerVerification').extractEmbedding;
+  require('../src/voice/speakerVerification').extractEmbedding = async () => Buffer.from(embedding.buffer);
+
   const audio = makeAudioBuffer(2, 16000, 'speech');
   const result = await verifyVoiceCommand(mockUserId, audio, { threshold: 0.5 });
   assert.equal(result.verified, true);
   assert.ok(result.confidence > 0.5);
   assert.ok(result.antiSpoof.passed);
+
+  require('../src/voice/speakerVerification').extractEmbedding = originalExtract;
 });
 
 test('DEFAULT_CONFIDENCE_THRESHOLD is 0.75', () => {

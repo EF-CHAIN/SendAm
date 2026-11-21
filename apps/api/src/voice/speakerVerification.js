@@ -133,14 +133,14 @@ async function verifySpeaker(userId, audioBuffer, options = {}) {
   return { verified, confidence, threshold, reason: verified ? 'match' : 'below_threshold' };
 }
 
-async function antiSpoofingCheck(audioBuffer, options = {}) {
+async function antiSpoofingCheck(audioBuffer, _options = {}) {
   const checks = [];
   let riskScore = 0;
 
   const durationSec = audioBuffer.length / 16000 / 2;
   if (durationSec < 1.0) {
     checks.push({ check: 'duration', passed: false, detail: 'Audio too short for reliable verification' });
-    riskScore += 30;
+    riskScore += 50;
   } else {
     checks.push({ check: 'duration', passed: true, detail: `Duration: ${durationSec.toFixed(2)}s` });
   }
@@ -158,14 +158,14 @@ async function antiSpoofingCheck(audioBuffer, options = {}) {
 
   if (rms < 0.01) {
     checks.push({ check: 'energy', passed: false, detail: 'Audio energy too low (likely silence/noise)' });
-    riskScore += 25;
+    riskScore += 40;
   } else {
     checks.push({ check: 'energy', passed: true, detail: `RMS: ${rms.toFixed(4)}` });
   }
 
   if (rms > 0.95) {
     checks.push({ check: 'clipping', passed: false, detail: 'Audio appears clipped/distorted' });
-    riskScore += 20;
+    riskScore += 40;
   } else {
     checks.push({ check: 'clipping', passed: true, detail: 'No clipping detected' });
   }
