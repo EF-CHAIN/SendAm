@@ -50,7 +50,6 @@ model User {
   userErasures            UserErasure[]
 
   voiceProfile            VoiceProfile?
-  voiceCommands           VoiceCommand[]
 
   @@index([anonymizedAt])
   @@index([createdAt, id])
