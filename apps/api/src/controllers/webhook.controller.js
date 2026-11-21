@@ -7,6 +7,7 @@ const { consume } = require('../services/rateLimit.service');
 const config = require('../config/env');
 const logger = require('../utils/logger');
 const { enqueue } = require('../queues/queue.service');
+const { withPriority } = require('../queues/priorityQueues');
 const prisma = require('../common/prisma');
 const { increment } = require('../observability/metrics');
 const { captureException } = require('../observability/errors');
@@ -138,7 +139,7 @@ const processMessage = async ({ message, value }) => {
     return { outcome: OUTCOMES.THROTTLED };
   }
 
-  const options = message.id ? { jobId: message.id } : {};
+  const options = withPriority('webhookIntake', message.id ? { jobId: message.id } : {});
   // Meta's inbound timestamp (unix seconds) is the source of truth for
   // per-sender message ordering — see queues/ordering.service.js. It's
   // preserved through the job data rather than relying on enqueue order,

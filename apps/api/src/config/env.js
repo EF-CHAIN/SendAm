@@ -119,6 +119,13 @@ module.exports = {
   health: {
     timeoutMs: Number(process.env.HEALTH_CHECK_TIMEOUT_MS || 1000),
   },
+  // PDF receipts are generated in the background and uploaded to S3 (#1014).
+  // Leave S3_RECEIPTS_BUCKET unset to disable PDF receipts; the text receipt is unaffected.
+  receipts: {
+    bucket: process.env.S3_RECEIPTS_BUCKET || '',
+    region: process.env.AWS_REGION || 'us-east-1',
+    urlTtlSeconds: Number(process.env.RECEIPT_URL_TTL_SECONDS || 24 * 60 * 60),
+  },
   databasePool: {
     max: Number(process.env.DATABASE_POOL_MAX || (process.env.PROCESS_TYPE === 'worker' ? 5 : 10)),
     connectionTimeoutMs: Number(process.env.DATABASE_CONNECTION_TIMEOUT_MS || 5000),

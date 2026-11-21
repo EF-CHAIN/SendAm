@@ -21,6 +21,20 @@ const { sendVoiceReceipt } = require('../voice/voiceReceipt');
 const config = require('../config/env');
 const logger = require('../utils/logger');
 
+// Hand PDF rendering to the background worker (#1014). Never blocks or fails
+// the reply: the text receipt has already been sent.
+const queuePdfReceipt = (transactionId) => {
+  if (!config.receipts?.bucket) return;
+  try {
+    const { enqueueReceiptGeneration } = require('../jobs/generateReceipt.job');
+    Promise.resolve(enqueueReceiptGeneration(transactionId)).catch((error) => {
+      logger.warn('receipt_pdf_enqueue_failed', { transactionId, message: error.message });
+    });
+  } catch (error) {
+    logger.warn('receipt_pdf_enqueue_failed', { transactionId, message: error.message });
+  }
+};
+
 const PENDING_SEND_TTL_MS = 10 * 60 * 1000;
 const NATIVE_ASSET = 'XLM';
 
@@ -371,6 +385,7 @@ const handlePendingPin = async ({ phoneNumber, user, text, notify, db = defaultP
     },
   });
   await voiceReceipt;
+  queuePdfReceipt(result.transaction.id);
   return true;
 };
 
