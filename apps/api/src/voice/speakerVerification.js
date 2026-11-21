@@ -5,6 +5,22 @@ const prisma = require('../common/prisma');
 const DEFAULT_CONFIDENCE_THRESHOLD = 0.75;
 const MIN_ENROLLMENT_SAMPLES = 3;
 
+// Internal extractEmbedding implementation; can be replaced for testing
+let _extractEmbeddingImpl = null;
+
+function setExtractEmbeddingImpl(fn) {
+  _extractEmbeddingImpl = fn;
+}
+
+function getExtractEmbeddingImpl() {
+  if (_extractEmbeddingImpl) return _extractEmbeddingImpl;
+  const provider = config.voice?.provider || 'deepgram';
+  if (provider === 'deepgram' && config.voice?.deepgramApiKey) {
+    return extractEmbeddingDeepgram;
+  }
+  return extractEmbeddingMock;
+}
+
 function cosineSimilarity(a, b) {
   if (!a || !b || a.length !== b.length) return 0;
   let dot = 0, normA = 0, normB = 0;
@@ -27,11 +43,8 @@ function float32ArrayToBuffer(arr) {
 }
 
 async function extractEmbedding(audioBuffer) {
-  const provider = config.voice?.provider || 'deepgram';
-  if (provider === 'deepgram' && config.voice?.deepgramApiKey) {
-    return extractEmbeddingDeepgram(audioBuffer);
-  }
-  return extractEmbeddingMock(audioBuffer);
+  const impl = getExtractEmbeddingImpl();
+  return impl(audioBuffer);
 }
 
 async function extractEmbeddingDeepgram(audioBuffer) {
@@ -165,7 +178,7 @@ async function antiSpoofingCheck(audioBuffer, _options = {}) {
 
   if (rms > 0.95) {
     checks.push({ check: 'clipping', passed: false, detail: 'Audio appears clipped/distorted' });
-    riskScore += 40;
+    riskScore += 50;
   } else {
     checks.push({ check: 'clipping', passed: true, detail: 'No clipping detected' });
   }
@@ -209,4 +222,5 @@ module.exports = {
   cosineSimilarity,
   DEFAULT_CONFIDENCE_THRESHOLD,
   MIN_ENROLLMENT_SAMPLES,
+  setExtractEmbeddingImpl,
 };
