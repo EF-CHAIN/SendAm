@@ -219,6 +219,38 @@ key access checks pass. Inspect failed or waiting jobs by redacted job ID, avoid
 copying payloads into tickets, reconcile any payment-related transaction before
 replay, and document the final queue depth in the incident evidence.
 
+## Job priorities, partner webhooks, PDF receipts and queue metrics
+
+**Priorities (`src/queues/priorityQueues.js`).** BullMQ serves lower numbers
+first within a queue: 1 payment submission, 2 webhook intake, 3 receipts,
+4 bulk messaging. Priority only orders jobs that share a queue, so producers
+that must compete fairly enqueue to the same queue with
+`enqueuePrioritized()` / `withPriority()`. Inbound WhatsApp webhook jobs use
+priority 2 and PDF receipt jobs priority 3.
+
+**Partner webhooks (`src/services/partnerWebhooks.js`).** Queue
+`partner-webhooks`. Endpoint and encrypted signing secret live in
+`Partner.config.webhook` (build it with `buildWebhookConfig`). Requests carry
+`X-SendAm-Timestamp` and `X-SendAm-Signature: sha256=<hex>` where the MAC is
+HMAC-SHA256 over `<timestamp>.<raw body>`; receivers should use the exported
+`verifySignature` logic and reject timestamps older than 5 minutes. Any non-2xx
+or network error is retried with exponential backoff (2s base) up to 5 times
+(6 attempts total) before the job is dead-lettered. Each attempt is written to
+the audit log (`partner_webhook.delivery`) with status and latency in ms.
+
+**PDF receipts (`src/jobs/generateReceipt.job.js`).** Queue `receipts`. Set
+`S3_RECEIPTS_BUCKET` (and optionally `AWS_REGION`, `RECEIPT_URL_TTL_SECONDS`,
+default 86400) to enable. The worker renders the PDF with PDFKit, uploads it
+privately with SSE to S3 and sends a 24h presigned URL over WhatsApp. The
+worker's IAM role needs `s3:PutObject` and `s3:GetObject` on the bucket prefix
+`receipts/`.
+
+**Queue metrics (`src/observability/queueMetrics.js`).** `/metrics` (API and
+worker) exports `bullmq_waiting_jobs_count`, `bullmq_active_jobs_count` and
+`bullmq_redis_memory_used_bytes` gauges per queue, plus the
+`bullmq_job_duration_seconds` and `bullmq_job_wait_seconds` histograms
+(recorded in the worker process). `observability/grafana-dashboard.json`
+includes queue depth, active jobs, duration p95, wait p95 and Redis memory panels.
 ## Redis topology, retries and the dead-letter queue
 
 **Topology.** `REDIS_URL` (standalone), `REDIS_SENTINEL_HOSTS` +

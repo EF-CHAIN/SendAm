@@ -25,7 +25,8 @@ const logger = require('./utils/logger');
 const prisma = require('./common/prisma');
 const { AppError } = require('./errors');
 const { correlationMiddleware, getContext } = require('./observability/context');
-const { requestMetrics, getMetricSnapshot, metricsHandler, increment } = require('./observability/metrics');
+const { requestMetrics, getMetricSnapshot, increment } = require('./observability/metrics');
+const { createQueueMetricsHandler } = require('./observability/queueMetrics');
 const { pingRedis } = require('./queues/queue.service');
 
 const app = express();
@@ -132,7 +133,7 @@ app.use('/api/', limiter);
 
 // Prometheus scrape endpoint. It is deliberately outside the API limiter so a
 // traffic spike cannot blind monitoring, and protected by a dedicated token.
-app.get('/metrics', metricsHandler);
+app.get('/metrics', createQueueMetricsHandler());
 
 app.use(healthRoutes);
 

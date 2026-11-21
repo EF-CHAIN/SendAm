@@ -51,7 +51,9 @@ const registerProcessor = (name, processor) => {
       increment('sendam_queue_jobs_total', { queue: name, status: 'active' });
       const enqueuedAt = Number(job.timestamp);
       if (Number.isFinite(enqueuedAt)) {
-        observeDuration('sendam_queue_job_age_seconds', { queue: name }, Math.max(0, (Date.now() - enqueuedAt) / 1000));
+        const waitSeconds = Math.max(0, (Date.now() - enqueuedAt) / 1000);
+        observeDuration('sendam_queue_job_age_seconds', { queue: name }, waitSeconds);
+        observeDuration('bullmq_job_wait_seconds', { queue: name }, waitSeconds);
       }
       try {
         const result = await processor(job, token);
@@ -71,11 +73,9 @@ const registerProcessor = (name, processor) => {
         }
         throw error;
       } finally {
-        observeDuration(
-          'sendam_queue_job_duration_seconds',
-          { queue: name },
-          Number(process.hrtime.bigint() - started) / 1e9,
-        );
+        const durationSeconds = Number(process.hrtime.bigint() - started) / 1e9;
+        observeDuration('sendam_queue_job_duration_seconds', { queue: name }, durationSeconds);
+        observeDuration('bullmq_job_duration_seconds', { queue: name }, durationSeconds);
       }
     });
   };
@@ -196,7 +196,17 @@ const getQueueReadiness = async () => {
 
 const getRegisteredProcessors = () => [...inlineProcessors.keys()];
 
+/** Queue handle for observability readers; null when Redis/BullMQ is unavailable. */
+const getQueueHandle = (name) => getQueue(name);
+
+/** Redis INFO for memory metrics; null when Redis is unavailable. */
+const getRedisInfo = async (section = 'memory') => {
+  if (!connection || !redisIsAvailable()) return null;
+  return connection.info(section);
+};
+
 const collectQueueMetrics = async () => {
+  await require('../observability/queueMetrics').collectBullmqMetrics().catch(() => {});
   for (const name of getRegisteredProcessors()) {
     const queue = getQueue(name);
     if (!queue) continue;
@@ -218,5 +228,7 @@ module.exports = {
   pingRedis,
   getQueueReadiness,
   getRegisteredProcessors,
+  getQueueHandle,
+  getRedisInfo,
   collectQueueMetrics,
 };
