@@ -30,6 +30,9 @@ const fingerprintRequest = (input) => {
     destinationCountry: String(input.destinationCountry || 'NG').toUpperCase(),
     routeType: input.routeType || null,
     sourceCountry: String(input.sourceCountry || 'NG').toUpperCase(),
+    ...(input.destinationAsset === undefined ? {} : { destinationAsset: input.destinationAsset }),
+    ...(input.destinationAmount === undefined ? {} : { destinationAmount: input.destinationAmount }),
+    ...(input.quoteId === undefined ? {} : { quoteId: input.quoteId }),
   };
   return crypto.createHash('sha256').update(JSON.stringify(canonical)).digest('hex');
 };
@@ -43,7 +46,7 @@ const responseFromTransaction = (transaction) => ({
   receipt: {
     transactionId: transaction.id,
     status: transaction.status,
-    amount: transaction.amount,
+    amount: transaction.metadata?.pathPayment?.sourceDebit || transaction.amount,
     asset: transaction.asset,
     rail: transaction.rail,
     receiptUrl: transaction.explorerUrl,

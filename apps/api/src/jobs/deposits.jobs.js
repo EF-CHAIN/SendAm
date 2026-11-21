@@ -212,7 +212,7 @@ const pollWallet = async (wallet, deps) => {
     // Filter to inbound payment_type records only (exclude create_account, etc.)
     // and exclude outbound (where the source account is this wallet).
     const inbound = records.filter(
-      (r) => r.type === 'payment' && r.to === publicKey,
+      (r) => ['payment', 'path_payment_strict_receive', 'path_payment_strict_send'].includes(r.type) && r.to === publicKey,
     );
 
     if (inbound.length === 0) {

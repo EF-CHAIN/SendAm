@@ -203,7 +203,8 @@ const requestConfirmation = async ({ phoneNumber, user, intent, notify, selected
     amount: intent.amount,
     asset: intent.asset,
     quoteId: quote?.id,
-    quoteExpiresAt: quote?.expiresAt,
+    quoteExpiresAt: quote?.expiresAt && new Date(quote.expiresAt).toISOString(),
+    quoteFee: quote?.fee,
     destination: recipient.destination,
     alias: recipient.label,
     memo: intent.memo,
@@ -227,13 +228,14 @@ const requestConfirmation = async ({ phoneNumber, user, intent, notify, selected
   } else {
     const formattedAmount = formatAmountByLocale(intent.amount, intent.asset, locale);
     const memoLine = intent.memo ? `\nMemo (${intent.memoType || 'text'}): ${intent.memo}` : '';
+    const feeLine = quote?.fee ? `${t('payment_fee', { amount: formatAmountByLocale(quote.fee, intent.asset, locale) }, locale)}\n` : '';
     const quoteLine = quote?.expiresAt ? `Quote expires: ${new Date(quote.expiresAt).toISOString()}\n` : '';
     const confirmMsg = t('payment_confirm', {
       amount: formattedAmount,
       asset: intent.asset,
       label: recipient.label,
       memoLine,
-      quoteLine,
+      quoteLine: feeLine + quoteLine,
     }, locale);
     await notify(phoneNumber, confirmMsg);
   }
@@ -284,7 +286,8 @@ const handlePendingPin = async ({ phoneNumber, user, text, notify, db = defaultP
   if (isHighRiskStep) {
     if (lowered === 'yes' || lowered === 'oui' || lowered === 'si') {
       const now = new Date();
-      const newExpiresAt = new Date(now.getTime() + PENDING_SEND_TTL_MS);
+      const quoteExpiresAt = pendingState.quoteExpiresAt ? new Date(pendingState.quoteExpiresAt).getTime() : Infinity;
+      const newExpiresAt = new Date(Math.min(now.getTime() + PENDING_SEND_TTL_MS, quoteExpiresAt));
       const updatedPending = {
         ...pendingState,
         step: 'AWAITING_PIN',
@@ -298,13 +301,16 @@ const handlePendingPin = async ({ phoneNumber, user, text, notify, db = defaultP
       });
 
       const memoLine = updatedPending.memo ? `Memo (${updatedPending.memoType || 'text'}): ${updatedPending.memo}\n` : '';
+      const feeLine = updatedPending.quoteFee ? `${t('payment_fee', {
+        amount: formatAmountByLocale(updatedPending.quoteFee, updatedPending.asset, locale),
+      }, locale)}\n` : '';
       const quoteLine = updatedPending.quoteExpiresAt ? `Quote expires: ${new Date(updatedPending.quoteExpiresAt).toISOString()}\n` : '';
       const confirmMsg = t('payment_confirm_high_risk', {
         amount: updatedPending.amount,
         asset: updatedPending.asset,
         fingerprint: updatedPending.fingerprint,
         memoLine,
-        quoteLine,
+        quoteLine: feeLine + quoteLine,
       }, locale);
       await notify(phoneNumber, confirmMsg);
       return true;
@@ -347,6 +353,7 @@ const handlePendingPin = async ({ phoneNumber, user, text, notify, db = defaultP
     memo: pending.memo,
     memoType: pending.memoType,
     routeType: pending.routeType,
+    ...(pending.quoteId ? { quoteId: pending.quoteId } : {}),
   });
 
   const standardReceipt = buildStandardReceipt(result.transaction, { mask: true });
@@ -433,7 +440,12 @@ const processMessage = async (phoneNumber, whatsappName, text, options = {}) => 
     const balances = await walletService.balancesForUser({ userId: user.id });
     const lines = balances.flatMap((b) => {
       if (b.error) return [`${b.chain}: unavailable (${b.error})`];
-      return (b.assets || []).map((a) => `${a.asset}: ${formatAmountByLocale(a.value, a.asset, locale)}`);
+      return (b.assets || []).map((a) => {
+        const total = `${a.asset}: ${formatAmountByLocale(a.value, a.asset, locale)}`;
+        return a.spendable === undefined ? total : `${total} (${t('balance_spendable', {
+          amount: formatAmountByLocale(a.spendable, a.asset, locale),
+        }, locale)})`;
+      });
     });
     const headerMsg = t('balances_header', { lines: lines.join('\n') }, locale);
     await notify(phoneNumber, headerMsg);

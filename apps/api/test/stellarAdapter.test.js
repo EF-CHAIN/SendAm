@@ -1,4 +1,4 @@
-const { test, mock, afterEach } = require('node:test');
+const { test, mock, beforeEach, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
 
 process.env.ENCRYPTION_KEY = process.env.ENCRYPTION_KEY || 'a'.repeat(64);
@@ -25,12 +25,30 @@ const mockSuccessfulPaymentSetup = () => {
     return account;
   });
 
-  mock.method(server, 'fetchBaseFee', async () => '100');
-
   mock.method(server, 'submitTransaction', async () => ({
     hash: 'mock-transaction-hash',
   }));
 };
+
+test('submitPayment checks live reserves, liabilities and fees down to the stroop', async () => {
+  mockSuccessfulPaymentSetup();
+  mock.method(server, 'loadAccount', async () => {
+    const account = new StellarSdk.Account(SOURCE_PUBLIC_KEY, '1');
+    account.balances = [{ asset_type: 'native', balance: '10', selling_liabilities: '2' }];
+    account.subentry_count = 3;
+    account.num_sponsored = 1;
+    account.num_sponsoring = 2;
+    return account;
+  });
+  const payment = { secretKey: SOURCE_SECRET, destination: DESTINATION_PUBLIC_KEY, asset: 'XLM' };
+  await assert.rejects(stellarAdapter.submitPayment({ ...payment, amount: '4.9999901' }), {
+    statusCode: 409,
+    message: 'Insufficient spendable balance. You can send up to 4.9999900 XLM.',
+  });
+  assert.equal(server.submitTransaction.mock.callCount(), 0);
+  await stellarAdapter.submitPayment({ ...payment, amount: '4.9999900' });
+  assert.equal(server.submitTransaction.mock.callCount(), 1);
+});
 
 test('submitPayment returns a friendly error for op_no_trust', async () => {
   mockSuccessfulPaymentSetup();
@@ -56,7 +74,7 @@ test('submitPayment returns a friendly error for op_no_trust', async () => {
     stellarAdapter.submitPayment({
       secretKey: SOURCE_SECRET,
       destination: DESTINATION_PUBLIC_KEY,
-      amount: '10',
+      amount: '8',
       asset: 'XLM',
     }),
     {
@@ -90,7 +108,7 @@ test('submitPayment returns a friendly error for op_underfunded', async () => {
     stellarAdapter.submitPayment({
       secretKey: SOURCE_SECRET,
       destination: DESTINATION_PUBLIC_KEY,
-      amount: '10',
+      amount: '8',
       asset: 'XLM',
     }),
     {
@@ -123,7 +141,7 @@ test('submitPayment preserves unknown Horizon errors unchanged', async () => {
     stellarAdapter.submitPayment({
       secretKey: SOURCE_SECRET,
       destination: DESTINATION_PUBLIC_KEY,
-      amount: '10',
+      amount: '8',
       asset: 'XLM',
     }),
     {
@@ -167,6 +185,13 @@ test('adapter identifies as the stellar chain', () => {
   assert.equal(stellarAdapter.chain, 'stellar');
 });
 
+beforeEach(() => {
+  mock.method(server, 'ledgers', () => ({
+    order: () => ({ limit: () => ({ call: async () => ({ records: [{ base_reserve_in_stroops: 5_000_000 }] }) }) }),
+  }));
+  mock.method(server, 'fetchBaseFee', async () => '100');
+});
+
 afterEach(() => {
   mock.restoreAll();
 });
@@ -183,6 +208,7 @@ test('getBalances returns canonical identity for native XLM only', async () => {
     {
       asset: 'XLM',
       value: '5.0000000',
+      spendable: '3.9999900',
       issuer: null,
       network: NETWORK,
       assetId: 'stellar:testnet:XLM',
@@ -204,6 +230,7 @@ test('getBalances tags configured USDC as trusted with issuer provenance', async
     {
       asset: 'XLM',
       value: '42.5000000',
+      spendable: '41.4999900',
       issuer: null,
       network: NETWORK,
       assetId: 'stellar:testnet:XLM',

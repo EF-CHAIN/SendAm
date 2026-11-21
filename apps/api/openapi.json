@@ -222,6 +222,7 @@
       "get": {
         "tags": ["Wallet"],
         "summary": "Get user wallet balances",
+        "description": "Per-wallet asset rows include total value. The XLM row also includes spendable, which deducts the network reserve, selling liabilities, and an estimated single-operation fee.",
         "x-feature-flag": "ENABLE_WALLET_REST_API",
         "security": [{ "BearerAuth": [] }],
         "responses": {
@@ -295,6 +296,7 @@
       "post": {
         "tags": ["Wallet"],
         "summary": "Initiate token transfer",
+        "description": "Supply destinationAsset and destinationAmount together for a Stellar strict-receive path payment. In that case amount is the maximum source debit, and destinationAmount is the exact amount to deliver.",
         "x-feature-flag": "ENABLE_WALLET_REST_API",
         "security": [{ "BearerAuth": [] }],
         "requestBody": {
@@ -303,12 +305,14 @@
             "application/json": {
               "schema": {
                 "type": "object",
-                "required": ["amount", "recipient"],
+                "required": ["amount", "destination"],
                 "properties": {
                   "amount": { "type": "string", "example": "25.00" },
                   "asset": { "type": "string", "example": "USDC" },
-                  "recipient": { "type": "string", "example": "+2348012345678" },
-                  "pin": { "type": "string", "example": "1234" }
+                  "destination": { "type": "string", "description": "Stellar G-address or M-address" },
+                  "destinationAsset": { "type": "string", "example": "XLM" },
+                  "destinationAmount": { "type": "string", "example": "100.00" },
+                  "quoteId": { "type": "string", "description": "Optional active source-asset fee quote owned by the caller" }
                 }
               }
             }
@@ -446,18 +450,20 @@
     "/api/pricing/quote": {
       "post": {
         "tags": ["Pricing"],
-        "summary": "Request guaranteed transfer quote",
+        "summary": "Request a pricing quote",
+        "security": [{}, { "BearerAuth": [] }],
+        "description": "An authenticated request includes applicable loyalty discounts and fee vouchers. To request a send fee quote, use the source asset as both currencies.",
         "requestBody": {
           "required": true,
           "content": {
             "application/json": {
               "schema": {
                 "type": "object",
-                "required": ["sourceCurrency", "targetCurrency", "sourceAmount"],
+                "required": ["baseCurrency", "quoteCurrency", "amount"],
                 "properties": {
-                  "sourceCurrency": { "type": "string", "example": "USDC" },
-                  "targetCurrency": { "type": "string", "example": "NGN" },
-                  "sourceAmount": { "type": "string", "example": "50.00" }
+                  "baseCurrency": { "type": "string", "example": "USDC" },
+                  "quoteCurrency": { "type": "string", "example": "USDC" },
+                  "amount": { "type": "string", "example": "50.00" }
                 }
               }
             }
@@ -586,6 +592,7 @@
           "targetCurrency": { "type": "string", "example": "NGN" },
           "sourceAmount": { "type": "string", "example": "50.00" },
           "targetAmount": { "type": "string", "example": "75000.00" },
+          "fee": { "type": "string", "example": "0.5000000" },
           "rate": { "type": "string", "example": "1500.00" },
           "expiresAt": { "type": "string", "format": "date-time" }
         }
