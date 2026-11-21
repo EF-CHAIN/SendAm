@@ -176,7 +176,7 @@ async function antiSpoofingCheck(audioBuffer, _options = {}) {
     checks.push({ check: 'energy', passed: true, detail: `RMS: ${rms.toFixed(4)}` });
   }
 
-  if (rms > 0.95) {
+  if (rms > 0.9) {
     checks.push({ check: 'clipping', passed: false, detail: 'Audio appears clipped/distorted' });
     riskScore += 50;
   } else {
