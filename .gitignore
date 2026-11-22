@@ -9,6 +9,10 @@ target/
 Cargo.lock
 test_snapshots/
 
+# Rust / Soroban build artifacts
+target/
+test_snapshots/
+
 # Environment files
 .env
 .env.*
