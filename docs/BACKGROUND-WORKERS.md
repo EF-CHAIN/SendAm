@@ -20,7 +20,8 @@ authentication and TLS. Worker-specific settings are:
 ```text
 WORKER_CONCURRENCY=5
 WORKER_LOCK_DURATION_MS=30000
-WORKER_SHUTDOWN_TIMEOUT_MS=30000
+WORKER_DRAIN_TIMEOUT_MS=30000
+WORKER_SHUTDOWN_TIMEOUT_MS=45000
 WORKER_HEARTBEAT_INTERVAL_MS=60000
 WORKER_HEARTBEAT_FRESHNESS_MS=90000
 WORKER_HEALTH_PORT=3003
@@ -37,6 +38,18 @@ DATABASE_POOL_TIMEOUT_MS=10000
 Increase it only after measuring database, provider, and Stellar limits. The
 lock duration must exceed normal processing time so BullMQ does not classify a
 healthy job as stalled.
+
+### Graceful shutdown
+
+On `SIGTERM`/`SIGINT` the worker pauses queue intake immediately (no new jobs are
+picked up), then waits up to `WORKER_DRAIN_TIMEOUT_MS` (default 30s) for active
+jobs, including in-flight payments, to finish before closing workers, queues and
+Redis. `WORKER_SHUTDOWN_TIMEOUT_MS` is the hard process deadline and must be
+larger than the drain timeout. A job still running at the drain timeout is not
+killed by the manager; its lock expires and BullMQ's stalled-job check lets a
+resumed worker pick it up, so payment processors must remain idempotent.
+`registerProcessor(name, fn, { concurrency, lockDuration })` allows a per-queue
+concurrency override to isolate slow queues.
 
 Local development must start both entry points when exercising webhooks. Tests
 and explicit local harnesses can still register an inline processor, preserving
@@ -218,3 +231,72 @@ After an incident restore, start workers only after PostgreSQL validation and
 key access checks pass. Inspect failed or waiting jobs by redacted job ID, avoid
 copying payloads into tickets, reconcile any payment-related transaction before
 replay, and document the final queue depth in the incident evidence.
+
+## Job priorities, partner webhooks, PDF receipts and queue metrics
+
+**Priorities (`src/queues/priorityQueues.js`).** BullMQ serves lower numbers
+first within a queue: 1 payment submission, 2 webhook intake, 3 receipts,
+4 bulk messaging. Priority only orders jobs that share a queue, so producers
+that must compete fairly enqueue to the same queue with
+`enqueuePrioritized()` / `withPriority()`. Inbound WhatsApp webhook jobs use
+priority 2 and PDF receipt jobs priority 3.
+
+**Partner webhooks (`src/services/partnerWebhooks.js`).** Queue
+`partner-webhooks`. Endpoint and encrypted signing secret live in
+`Partner.config.webhook` (build it with `buildWebhookConfig`). Requests carry
+`X-SendAm-Timestamp` and `X-SendAm-Signature: sha256=<hex>` where the MAC is
+HMAC-SHA256 over `<timestamp>.<raw body>`; receivers should use the exported
+`verifySignature` logic and reject timestamps older than 5 minutes. Any non-2xx
+or network error is retried with exponential backoff (2s base) up to 5 times
+(6 attempts total) before the job is dead-lettered. Each attempt is written to
+the audit log (`partner_webhook.delivery`) with status and latency in ms.
+
+**PDF receipts (`src/jobs/generateReceipt.job.js`).** Queue `receipts`. Set
+`S3_RECEIPTS_BUCKET` (and optionally `AWS_REGION`, `RECEIPT_URL_TTL_SECONDS`,
+default 86400) to enable. The worker renders the PDF with PDFKit, uploads it
+privately with SSE to S3 and sends a 24h presigned URL over WhatsApp. The
+worker's IAM role needs `s3:PutObject` and `s3:GetObject` on the bucket prefix
+`receipts/`.
+
+**Queue metrics (`src/observability/queueMetrics.js`).** `/metrics` (API and
+worker) exports `bullmq_waiting_jobs_count`, `bullmq_active_jobs_count` and
+`bullmq_redis_memory_used_bytes` gauges per queue, plus the
+`bullmq_job_duration_seconds` and `bullmq_job_wait_seconds` histograms
+(recorded in the worker process). `observability/grafana-dashboard.json`
+includes queue depth, active jobs, duration p95, wait p95 and Redis memory panels.
+## Redis topology, retries and the dead-letter queue
+
+**Topology.** `REDIS_URL` (standalone), `REDIS_SENTINEL_HOSTS` +
+`REDIS_SENTINEL_MASTER_NAME` (Sentinel failover) or `REDIS_CLUSTER_NODES`
+(Cluster, which takes precedence; BullMQ keys then use the `{bull}` hash-tag
+prefix). A `READONLY` reply from a demoted master makes the client reconnect to
+the promoted master and resend the command. A heartbeat `PING`
+(`REDIS_HEARTBEAT_INTERVAL_MS`, `REDIS_HEARTBEAT_TIMEOUT_MS`,
+`REDIS_HEARTBEAT_MAX_FAILURES`) force-reconnects a connection that is open but
+unresponsive. Switching an existing deployment to Cluster changes the queue key
+prefix: drain the queues first.
+
+**Retries.** Queue jobs use full-jitter backoff
+(`sleep = rand(0, min(max, base * 2^attempt))`, `RETRY_BASE_BACKOFF_MS`,
+`RETRY_MAX_BACKOFF_MS`) and honour `Retry-After` on Horizon `429` responses.
+
+**Dead-letter queue.** A job that exhausts its retries is stored once in the DLQ
+and an alert (redacted error and stack trace, no payload) is posted to
+`DLQ_ALERT_WEBHOOK_URL` (falls back to `ERROR_MONITOR_WEBHOOK_URL`; Slack,
+Discord and generic JSON endpoints are detected from the URL). Operators inspect
+and re-queue with:
+
+```
+node scripts/whatsapp-dlq.js list --status pending
+node scripts/whatsapp-dlq.js inspect <dlqId>
+node scripts/whatsapp-dlq.js replay <dlqId>
+node scripts/whatsapp-dlq.js replay-all
+node scripts/whatsapp-dlq.js discard <dlqId>
+```
+
+`POST /api/admin/dlq/:id/replay` does the same from the admin API.
+
+**Deposit cursor.** The Horizon paging cursor is saved in the same database
+transaction as the deposit outbox row and only ever moves forward, so a worker
+restart resumes exactly where it stopped and a replayed or stale poll cannot
+rewind it or create a second record for the same payment.

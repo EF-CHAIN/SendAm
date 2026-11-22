@@ -11,8 +11,11 @@ const complianceRoutes = require('./compliance/compliance.routes');
 const pricingRoutes = require('./pricing/pricing.routes');
 const simRoutes = require('./routes/sim.routes');
 const authRoutes = require('./routes/auth.routes');
+const sep24Routes = require('./routes/sep24.routes');
 const receiptRoutes = require('./routes/receipt.routes');
 const retentionRoutes = require('./routes/retention.routes');
+const federationRoutes = require('./routes/federation.routes');
+const healthRoutes = require('./routes/health.routes');
 const wellKnownRoutes = require('./routes/wellKnown.routes');
 
 const errorHandler = require('./middlewares/errorHandler');
@@ -22,10 +25,12 @@ const config = require('./config/env');
 const { getTrustProxySetting, sanitizeForwardingHeaders } = require('./config/proxy');
 const { describeNetworkProfile } = require('./config/networkProfiles');
 const logger = require('./utils/logger');
+const { redactPii, redactedUrlToken } = require('./middlewares/redactPii');
 const prisma = require('./common/prisma');
 const { AppError } = require('./errors');
 const { correlationMiddleware, getContext } = require('./observability/context');
-const { requestMetrics, getMetricSnapshot, metricsHandler, increment } = require('./observability/metrics');
+const { requestMetrics, getMetricSnapshot, increment } = require('./observability/metrics');
+const { createQueueMetricsHandler } = require('./observability/queueMetrics');
 const { pingRedis } = require('./queues/queue.service');
 
 const app = express();
@@ -106,6 +111,10 @@ app.use((err, req, res, next) => {
 // Access logs: the verbose, colorized 'dev' format is great locally but unfit
 // for production log aggregation. Use the standard Apache 'combined' format in
 // production so hosted log drains get parseable, complete request lines.
+// The :url token is overridden so PII and credentials in query strings are
+// redacted before morgan writes the line.
+morgan.token('url', redactedUrlToken);
+app.use(redactPii);
 app.use(morgan(config.isProduction ? 'combined' : 'dev'));
 app.use(requestMetrics);
 
@@ -138,7 +147,9 @@ app.use('/api/', limiter);
 
 // Prometheus scrape endpoint. It is deliberately outside the API limiter so a
 // traffic spike cannot blind monitoring, and protected by a dedicated token.
-app.get('/metrics', metricsHandler);
+app.get('/metrics', createQueueMetricsHandler());
+
+app.use(healthRoutes);
 
 app.get('/health/live', (_req, res) => {
   res.status(200).json({ status: 'ok', uptime: process.uptime() });
@@ -177,8 +188,11 @@ app.get('/metrics', (_req, res) => {
 });
 
 // Routes
+app.use('/federation', federationRoutes);
 app.use('/webhook', webhookRoutes);
+app.use('/auth', authRoutes);
 app.use('/api/auth', authRoutes);
+app.use('/api/sep24', sep24Routes);
 app.use('/api/receipts', receiptRoutes);
 
 // The REST wallet API requires a SEP-10 application session. The feature flag

@@ -1,17 +1,6 @@
 const { getContext } = require('../observability/context');
 
-const REDACTED = '[REDACTED]';
-const SENSITIVE_KEY = /(?:authorization|cookie|password|passphrase|pin|secret|token|signature|private.?key|encrypted.?secret|api.?key|dsn)/i;
-const SENSITIVE_TEXT = [
-  /(\b(?:pin|password|passphrase|secret|token|authorization|api[_-]?key)\b\s*[:=]\s*)[^\s,;]+/gi,
-  /(Bearer\s+)[A-Za-z0-9._~+/-]+=*/gi,
-  /([?&](?:access_token|token|api_key)=)[^&\s]+/gi,
-];
-
-const sanitizeString = (value) => SENSITIVE_TEXT.reduce(
-  (text, pattern) => text.replace(pattern, `$1${REDACTED}`),
-  value,
-);
+const { redactString: sanitizeString, redactionForKey } = require('../middlewares/redactPii');
 
 const sanitize = (value, seen = new WeakSet()) => {
   if (typeof value === 'string') return sanitizeString(value);
@@ -30,7 +19,7 @@ const sanitize = (value, seen = new WeakSet()) => {
     seen.add(value);
     const output = {};
     for (const [key, nested] of Object.entries(value)) {
-      output[key] = SENSITIVE_KEY.test(key) ? REDACTED : sanitize(nested, seen);
+      output[key] = redactionForKey(key) ?? sanitize(nested, seen);
     }
     return output;
   }

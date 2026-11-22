@@ -1,6 +1,8 @@
 const StellarSdk = require('@stellar/stellar-sdk');
 const config = require('./env');
 const { attachHorizonResilience } = require('./horizon');
+const { instrumentStellarServer } = require('../observability/stellarMetrics');
+const { instrumentStellarServerTracing } = require('../observability/tracing');
 
 // Ordered list of approved Horizon endpoints. The first entry is the primary;
 // the rest are failover endpoints tried in order when the primary is slow or
@@ -26,6 +28,10 @@ const primaryUrl = baseUrls[0] || config.stellar?.horizonUrl || 'https://horizon
 const server = new StellarSdk.Horizon.Server(primaryUrl, {
   allowHttp: !!primaryUrl && primaryUrl.startsWith('http://'),
 });
+
+// Record submission latency, results and fees as Prometheus metrics.
+instrumentStellarServer(server);
+instrumentStellarServerTracing(server);
 
 // Attach failover + circuit breaking. No-op (single endpoint) when only one
 // Horizon URL is configured.

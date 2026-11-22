@@ -1,3 +1,6 @@
+// Tracing must start before http/express/pg are loaded so they can be instrumented.
+require('./observability/tracing').startTracing();
+
 const { initializeErrorMonitoring, captureException } = require('./observability/errors');
 initializeErrorMonitoring();
 
