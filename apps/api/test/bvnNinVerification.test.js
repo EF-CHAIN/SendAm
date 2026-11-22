@@ -70,7 +70,7 @@ describe('Smile ID / Dojah BVN/NIN verification', () => {
     mockPrisma.kycProfile.update = async () => ({});
 
     const { verifyCallback } = require('../src/compliance/providers/smileId');
-    const signature = verifyCallback({ signature: 'test', timestamp: new Date().toISOString() }) ? 'valid' : 'invalid';
+    verifyCallback({ signature: 'test', timestamp: new Date().toISOString() });
 
     const result = await processKycCallback({
       provider: 'smileid',
