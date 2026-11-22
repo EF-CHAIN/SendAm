@@ -17,6 +17,12 @@ injectMock('middlewares/requireAdmin', () => (req, _res, next) => {
   next();
 });
 
+// The admin replay must really re-enqueue; record what it enqueues.
+const enqueued = [];
+injectMock('queues/queue.service', {
+  enqueue: async (...args) => { enqueued.push(args); return { id: 'replayed-job' }; },
+});
+
 const {
   moveToDeadLetterQueue,
   clearDlq,
@@ -108,6 +114,8 @@ test('Admin DLQ: list, inspect, replay, and discard dead-letter jobs', async (t)
       assert.equal(body.success, true);
       assert.equal(body.data.replayed, true);
       assert.equal(body.data.record.status, 'replayed');
+      assert.equal(enqueued.length, 1, 'replay must re-enqueue the job, not only flip its status');
+      assert.equal(enqueued[0][0], 'whatsapp-inbound');
     });
   });
 

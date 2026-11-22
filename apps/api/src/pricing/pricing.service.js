@@ -1,9 +1,10 @@
+const { priceLoyaltyFee } = require('./loyaltyRebate');
 const axios = require('axios');
 const config = require('../config/env');
 const { withIdAlias } = require('../common/records');
 const { increment: incrementMetric } = require('../observability/metrics');
 const { outboundHeaders } = require('../observability/context');
-const { assertValidAmount, percentage, convert, getAssetRule, subtract, decimalToRatio, compare } = require('../utils/money');
+const { assertValidAmount, convert, getAssetRule, subtract, decimalToRatio, compare } = require('../utils/money');
 
 const normalizeCurrency = (currency) => String(currency || '').trim().toUpperCase();
 const providerState = new Map();
@@ -221,7 +222,7 @@ const createQuote = async ({
   const normalizedSourceAmount = assertValidAmount(sourceAmount, sourceCurrency);
   const providerQuote = await fetchExchangeRateQuote({ sourceCurrency, targetCurrency });
   const rate = providerQuote?.effectiveRate || null;
-  const fee = percentage(normalizedSourceAmount, sourceCurrency, 100);
+  const { fee, loyalty } = await priceLoyaltyFee({ db: client, userId, asset: sourceCurrency, amount: normalizedSourceAmount });
   const netSourceAmount = subtract(normalizedSourceAmount, fee, sourceCurrency);
   const targetAmount = rate ? convert({ amount: netSourceAmount, sourceAsset: sourceCurrency, targetAsset: targetCurrency, rate }) : undefined;
   const expires = expiresAt || new Date(Date.now() + 5 * 60 * 1000);
@@ -252,6 +253,7 @@ const createQuote = async ({
     status,
     expiresAt: expires,
     metadata: {
+      ...(loyalty ? { loyalty } : {}),
       provenance: {
         provider: provider || providerQuote?.provider || null,
         sourceTimestamp: providerQuote?.sourceTimestamp?.toISOString?.() || null,

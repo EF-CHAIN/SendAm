@@ -6,6 +6,7 @@ const prisma = require('../common/prisma');
 const { canonicalizePhoneNumber } = require('../utils/validators');
 const { ProviderSkippedError } = require('../compliance/providerErrors');
 const { outboundHeaders } = require('../observability/context');
+const { verifyVoiceCommand, enrollVoiceProfile } = require('./speakerVerification');
 
 const transcribeWithDeepgram = async (audioBuffer) => {
   if (!config.voice.deepgramApiKey) {
@@ -69,10 +70,46 @@ const processVoiceMessage = async ({ phoneNumber, whatsappName, mediaId, whatsap
   };
 
   try {
-    await sendTextMessage(canonicalPhone, 'Got your voice note. I am checking the payment details now.', {
+    await sendTextMessage(canonicalPhone, 'Got your voice note. Verifying your voice...', {
       notification: notificationMeta,
     });
     const audio = await downloadWhatsAppMedia(mediaId);
+
+    const profile = await prisma.voiceProfile.findUnique({ where: { userId: user.id } });
+    if (!profile) {
+      await enrollVoiceProfile(user.id, audio);
+      await sendTextMessage(canonicalPhone, 'Voice profile enrolled. Please send the voice note again to verify.', {
+        notification: notificationMeta,
+      });
+      await prisma.voiceCommand.update({
+        where: { id: record.id },
+        data: { status: 'enrolled', error: 'First enrollment completed; awaiting verification sample' },
+      });
+      return;
+    }
+
+    const verification = await verifyVoiceCommand(user.id, audio);
+    if (!verification.verified) {
+      let msg = 'Voice verification failed. ';
+      if (verification.reason === 'anti_spoofing_failed') {
+        msg += 'Potential spoofing detected. For security, this voice note cannot be processed.';
+      } else if (verification.reason === 'below_threshold') {
+        msg += 'Voice does not match enrolled profile. Please try again or use text.';
+      } else if (verification.reason === 'embedding_mismatch') {
+        msg += 'Voice profile error. Please re-enroll by sending a new voice note.';
+      } else {
+        msg += 'Please try again or use text to authorize payments.';
+      }
+      await sendTextMessage(canonicalPhone, msg, { notification: notificationMeta });
+      await prisma.voiceCommand.update({
+        where: { id: record.id },
+        data: { status: 'verification_failed', error: `Speaker verification failed: ${verification.reason}` },
+      });
+      return;
+    }
+
+    await sendTextMessage(canonicalPhone, 'Voice verified. Processing payment...', { notification: notificationMeta });
+
     const transcript = await transcribeWithDeepgram(audio);
 
     await prisma.voiceCommand.update({
