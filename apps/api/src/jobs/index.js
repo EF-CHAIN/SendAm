@@ -84,7 +84,6 @@ const registerJobs = () => {
     outboxReconciler,
     alertDeliveryPoller,
     sep24Poller,
-    processorNames: ['whatsapp-inbound'],
     ledgerReconciler,
     recurringPayments,
     processorNames: ['whatsapp-inbound', PARTNER_WEBHOOK_QUEUE, RECEIPT_QUEUE],
