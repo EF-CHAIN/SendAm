@@ -7,6 +7,7 @@ const { enqueue } = require('../queues/queue.service');
 const { increment } = require('../observability/metrics');
 const { outboundHeaders } = require('../observability/context');
 const { ProviderSkippedError } = require('../compliance/providerErrors');
+const { getLastInboundAt, isWithinConversationWindow } = require('./whatsappWindowTracker');
 
 const RETRYABLE_META_STATUS_CODES = new Set([429, 500, 502, 503, 504]);
 
@@ -228,15 +229,6 @@ const classifyWhatsappFailure = (errorCode) => {
   if (code && RETRYABLE_ERROR_CODES.has(code)) return { retryable: true, reason: 'transient' };
   if (code && NON_RETRYABLE_ERROR_CODES.has(code)) return { retryable: false, reason: 'permanent' };
   return { retryable: false, reason: 'unknown' };
-};
-
-const CONVERSATION_WINDOW_MS = 24 * 60 * 60 * 1000;
-
-const isWithinConversationWindow = (lastCustomerInteractionAt) => {
-  if (!lastCustomerInteractionAt) return false;
-  const lastTime = new Date(lastCustomerInteractionAt).getTime();
-  if (Number.isNaN(lastTime)) return false;
-  return Date.now() - lastTime <= CONVERSATION_WINDOW_MS;
 };
 
 const sendTemplateMessage = async (to, templateName, languageCode = 'en', components = [], options = {}) => {
@@ -718,8 +710,6 @@ module.exports = {
   sendTemplateMessage,
   retryOutboundNotification,
   isRetryableMetaFailure,
-  isWithinConversationWindow,
-  CONVERSATION_WINDOW_MS,
   recordDeliveryStatus,
   classifyWhatsappFailure,
   deleteUserData,

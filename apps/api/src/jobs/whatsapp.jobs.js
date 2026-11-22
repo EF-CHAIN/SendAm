@@ -2,6 +2,7 @@ const { registerProcessor } = require('../queues/queue.service');
 const { processMessage } = require('../whatsapp/assistant.service');
 const { processVoiceMessage } = require('../voice/voice.service');
 const { retryOutboundNotification } = require('../services/whatsapp.service');
+const { setLastInboundAt } = require('../services/whatsappWindowTracker');
 const { withOrdering, createInMemoryOrderingStore, createDistributedOrderingStore } = require('../queues/ordering.service');
 const config = require('../config/env');
 const logger = require('../utils/logger');
@@ -42,6 +43,9 @@ const registerWhatsAppJobs = ({ orderingStore } = {}) => {
     } else {
       await processMessage(from, whatsappName, text);
     }
+
+    // Update last inbound timestamp for 24h conversation window tracking
+    await setLastInboundAt(from);
 
     if (whatsappMessageId) {
       try {

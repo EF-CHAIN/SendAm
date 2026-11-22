@@ -4,9 +4,9 @@ const assert = require('node:assert/strict');
 process.env.ENCRYPTION_KEY = process.env.ENCRYPTION_KEY || 'a'.repeat(64);
 
 const {
-  isWithinConversationWindow,
   sendTextMessage,
 } = require('../src/services/whatsapp.service');
+const { isWithinConversationWindow } = require('../src/services/whatsappWindowTracker');
 
 test('isWithinConversationWindow correctly identifies timestamps within 24h', () => {
   const now = Date.now();
