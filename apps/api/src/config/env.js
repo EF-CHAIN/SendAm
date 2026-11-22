@@ -200,6 +200,13 @@ module.exports = {
       challengeTtlSeconds: Number(process.env.STELLAR_AUTH_CHALLENGE_TTL_SECONDS || 300),
       sessionTtlMinutes: Number(process.env.REST_SESSION_TTL_MINUTES || 15),
     },
+    sep6Url: process.env.STELLAR_SEP6_URL || null,
+    sep24Url: process.env.STELLAR_SEP24_URL || null,
+    sep31Url: process.env.STELLAR_SEP31_URL || null,
+    sep38Url: process.env.STELLAR_SEP38_URL || null,
+    anchorWebhookSecret: process.env.STELLAR_ANCHOR_WEBHOOK_SECRET || null,
+    sep24PollIntervalMs: Number(process.env.SEP24_POLL_INTERVAL_MS || 15000),
+    sep38DefaultQuoteTtlSeconds: Number(process.env.SEP38_DEFAULT_QUOTE_TTL_SECONDS || 60),
   },
   pricing: {
     coinGeckoBaseUrl: process.env.COINGECKO_BASE_URL || 'https://api.coingecko.com/api/v3',

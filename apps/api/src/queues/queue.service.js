@@ -260,6 +260,7 @@ const collectQueueMetrics = async () => {
 
 module.exports = {
   enqueue,
+  getQueue,
   registerProcessor,
   closeQueues,
   getWorkers,
