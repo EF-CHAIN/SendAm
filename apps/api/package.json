@@ -16,9 +16,13 @@
     "db:provision": "npm run prisma:deploy && node scripts/validate-production-db.js",
     "whatsapp:webhook:configure": "node scripts/configure-whatsapp-webhook.js",
     "test": "node --test",
+    "deploy:contracts:testnet": "node ../../scripts/deploy-soroban.js --network testnet",
+    "deploy:contracts:mainnet": "node ../../scripts/deploy-soroban.js --network mainnet",
     "db:verify-restore": "node scripts/verify-restore-drill.js"
   },
   "dependencies": {
+    "@aws-sdk/client-kms": "^3.1173.0",
+    "@jest/globals": "^29.7.0",
     "@aws-sdk/client-s3": "^3.1175.0",
     "@aws-sdk/s3-request-presigner": "^3.1175.0",
     "@prisma/adapter-pg": "^7.8.0",

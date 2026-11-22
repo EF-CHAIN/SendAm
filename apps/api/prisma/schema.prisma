@@ -34,6 +34,7 @@ model User {
   kycProfile    KycProfile?
   voiceCommands VoiceCommand[]
   notifications Notification[]
+  recurringPayments RecurringPayment[]
   quotes        Quote[]
   restSessions  RestSession[]
   supportCases  SupportCase[]
@@ -48,6 +49,8 @@ model User {
   paymentIdempotencies    PaymentIdempotency[]
   paymentConfirmations    PaymentConfirmation[]
   userErasures            UserErasure[]
+
+  voiceProfile            VoiceProfile?
 
   @@index([anonymizedAt])
   @@index([createdAt, id])
@@ -427,6 +430,20 @@ model VoiceCommand {
 
   @@index([phoneNumber])
   @@index([whatsappMessageId])
+}
+
+model VoiceProfile {
+  id              String   @id @default(cuid())
+  userId          String   @unique
+  embedding       Bytes    // Voice embedding vector (e.g., from speaker verification model)
+  enrollmentCount Int      @default(1)
+  lastVerifiedAt  DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
 }
 
 model AuditLog {
@@ -1034,4 +1051,42 @@ model AlertDeliveryTest {
 
   @@index([completedAt])
   @@index([overallResult, completedAt])
+}
+
+/// Scheduled/recurring payment mandate (#1005). Created in `awaiting_pin` and
+/// only becomes `active` after the user confirms with their PIN. Execution is
+/// claimed per occurrence by advancing `nextRunAt`, so a run happens once.
+model RecurringPayment {
+  id                String    @id @default(cuid())
+  userId            String
+  /// Short per-user code the user quotes in WhatsApp (e.g. "pause A1B2C3").
+  reference         String
+  destination       String
+  recipientLabel    String?
+  /// Canonical decimal string validated by src/utils/money.js.
+  amount            String
+  asset             String    @default("XLM")
+  memo              String?
+  memoType          String?
+  frequency         String // daily | weekly | monthly
+  status            String    @default("awaiting_pin") // awaiting_pin | active | paused | cancelled
+  nextRunAt         DateTime
+  /// Day of month the schedule started on; monthly runs clamp to month length
+  /// without drifting (31st -> Feb 28 -> Mar 31).
+  anchorDay         Int       @default(1)
+  /// The nextRunAt value the 24h reminder was already sent for.
+  reminderSentFor   DateTime?
+  lastRunAt         DateTime?
+  lastTransactionId String?
+  failureCount      Int       @default(0)
+  pinConfirmedAt    DateTime?
+  expiresAt         DateTime? // only meaningful while awaiting_pin
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, reference])
+  @@index([status, nextRunAt])
+  @@index([userId, status])
 }
