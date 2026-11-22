@@ -33,6 +33,11 @@ like a trustline — adds to the requirement. Practical consequences:
   before they can do anything — see the [ROADMAP](../ROADMAP.md) for the
   path to production.
 
+WhatsApp's balance reply and the wallet balance API show spendable XLM alongside
+the total. Spendable XLM uses the latest Horizon ledger reserve and the current
+one-operation fee. It also accounts for sponsorships and open sell offers.
+The signing adapter rechecks the amount before sending.
+
 ## Assets and trustlines
 
 XLM is the native asset; everything else (USDC, NGN tokens) is an **issued
@@ -43,7 +48,7 @@ which costs one reserve entry.
 Consequences you'll hit in code:
 
 - `resolveAsset()` in `stellar.adapter.js` maps an asset code to the SDK
-  object — this is the seam where USDC support lands.
+  object using the configured issuer for USDC, NGN, or GHS.
 - Paying USDC to an account with no USDC trustline fails with `op_no_trust`.
   User-facing code must translate that to a human sentence.
 - Same asset code from a different issuer is a **different asset**. Issuer
@@ -84,6 +89,41 @@ Endpoints you'll meet in this codebase:
 
 Horizon error responses carry `extras.result_codes` — that's where
 `op_no_trust`, `op_underfunded`, `tx_bad_seq` live.
+
+## Cross-asset payments and loyalty fees
+
+Use the authenticated `POST /api/wallet/send` endpoint with `asset` and
+`amount` for the source asset and its maximum debit. Provide `destinationAsset`
+and `destinationAmount` to set the recipient's asset and exact receive amount.
+Horizon searches both directions, and SendAm signs a strict-receive operation
+with at most 0.5% headroom above the best strict-receive quote, within the caller's
+source cap and the wallet's spendable balance. Confirmed receipts show the
+actual source debit and the destination amount.
+
+For NGN/GHS, set `STELLAR_NGN_ISSUER` and `STELLAR_GHS_ISSUER` to the anchor
+accounts trusted on the selected `STELLAR_NETWORK`. Both asset issuers and
+spendable liquidity must be present on that network. Source and destination
+wallets need the relevant trustlines. XLM and configured USDC can also be used
+as path endpoints.
+
+SendAm counts confirmed volume over the preceding 30 days in the source asset.
+
+| Source asset | Silver volume | Gold volume |
+| --- | ---: | ---: |
+| XLM or USDC | 100 | 1,000 |
+| NGN | 100,000 | 1,000,000 |
+| GHS | 1,000 | 10,000 |
+
+Silver discounts the fee by 10% and earns a voucher worth 5% of the final fee.
+Gold discounts the fee by 25% and earns a voucher worth 10% of the final fee.
+A later quote automatically uses the oldest available voucher in the same
+asset that fits within the fee. The voucher is earned on ledger confirmation,
+after any voucher used on that payment has been deducted from the fee.
+
+WhatsApp uses the fee shown on the confirmation prompt. REST clients can use
+`POST /api/pricing/quote` with a Bearer session and the same source asset in
+`baseCurrency` and `quoteCurrency`, then pass the returned `id` as `quoteId`
+when sending.
 
 ## Frontend display: precision, issuer labels, explorer links
 

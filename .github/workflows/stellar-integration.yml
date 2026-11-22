@@ -1,0 +1,30 @@
+name: Stellar integration
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  stellar-testnet:
+    name: Stellar testnet payment
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.head_ref, 'release/')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - name: Submit and confirm a live testnet payment
+        env:
+          RUN_STELLAR_INTEGRATION: 'true'
+          STELLAR_NETWORK: testnet
+        run: node --test tests/integration/stellar.test.js

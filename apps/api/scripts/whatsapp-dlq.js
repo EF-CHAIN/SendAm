@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 'use strict';
 
-const { listDeadLetterJobs, getDeadLetterJob, replayDeadLetterJob } = require('../src/queues/dlq.service');
-const queueService = require('../src/queues/queue.service');
+const { listDeadLetterJobs, getDeadLetterJob } = require('../src/queues/dlq.service');
+const { discardDeadLetterJob } = require('../src/queues/dlq.service');
+const { requeueJob, requeueAllPending } = require('../src/queues/dlqManager');
 
 const args = process.argv.slice(2);
 const command = args[0] || 'list';
@@ -72,8 +73,7 @@ async function main() {
         console.error('Error: Please specify a job ID to replay.');
         process.exit(1);
       }
-      const result = await replayDeadLetterJob(jobId, {
-        queueService,
+      const result = await requeueJob(jobId, {
         actorId,
         actorType: 'operator',
       });
@@ -87,11 +87,24 @@ async function main() {
           console.log(`⚠️ Could not replay job ${jobId}: ${result.reason}`);
         }
       }
+    } else if (command === 'replay-all') {
+      const summary = await requeueAllPending({ limit: limitFilter, actorId });
+      console.log(isJson ? JSON.stringify(summary, null, 2) : `Replay-all: ${JSON.stringify(summary)}`);
+    } else if (command === 'discard') {
+      const jobId = args[1];
+      if (!jobId) {
+        console.error('Error: Please specify a job ID to discard.');
+        process.exit(1);
+      }
+      const result = await discardDeadLetterJob(jobId);
+      console.log(isJson ? JSON.stringify(result, null, 2) : `Discarded DLQ job ${jobId}.`);
     } else {
-      console.log(`Usage: node scripts/whatsapp-dlq.js <list|inspect|replay> [options]`);
+      console.log(`Usage: node scripts/whatsapp-dlq.js <list|inspect|replay|replay-all|discard> [options]`);
       console.log(`  list                   List DLQ jobs (--status, --limit, --json)`);
       console.log(`  inspect <jobId>        Inspect a DLQ job (--json)`);
       console.log(`  replay <jobId>         Replay a DLQ job with idempotency & audit logging (--actor, --json)`);
+      console.log(`  replay-all             Replay every pending DLQ job (--limit, --actor, --json)`);
+      console.log(`  discard <jobId>        Discard a DLQ job without replaying it`);
     }
   } catch (error) {
     console.error(`DLQ CLI Error: ${error.message}`);

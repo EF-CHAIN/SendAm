@@ -5,6 +5,9 @@
 
 # Dependencies
 node_modules/
+target/
+Cargo.lock
+test_snapshots/
 
 # Environment files
 .env

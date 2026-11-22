@@ -42,6 +42,8 @@
     "a11y:report": "node scripts/a11y-report.mjs",
     "test:visual": "playwright test",
     "load": "npm run load --workspace=apps/api --",
+    "deploy:contracts:testnet": "node scripts/deploy-soroban.js --network testnet",
+    "deploy:contracts:mainnet": "node scripts/deploy-soroban.js --network mainnet",
     "install:all": "npm install"
   },
   "devDependencies": {
