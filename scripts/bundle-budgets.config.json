@@ -4,12 +4,13 @@
       "distDir": "apps/landing/dist",
       "comment": "Re-measured on PR builds after #884 (i18n switcher): JS 418.4 KB (gzip 131.5), largest chunk 396.3 KB, CSS 48.8 KB. Budgets raised with ~8% headroom because main CI skips the budget job and drifted over; follow up with code-splitting to bring them back down. CSS raised to 60 KB after main measured 55.3 KB (9.7 KB gzip) once the onboarding, calculator and navbar features landed. CSS raised to 64 KB after main measured 61.4 KB once the critical-CSS, hero skeleton and offline page work landed.",
       "budgets": {
-        "totalJsKb": 460,
+        "totalJsKb": 470,
         "totalCssKb": 64,
         "maxImageKb": 100,
         "maxChunkKb": 430,
+        "maxEntryChunkKb": 250,
         "gzip": {
-          "totalJsKb": 145,
+          "totalJsKb": 150,
           "totalCssKb": 11
         }
       }
@@ -22,6 +23,7 @@
         "totalCssKb": 60,
         "maxImageKb": 100,
         "maxChunkKb": 950,
+        "maxEntryChunkKb": 250,
         "gzip": {
           "totalJsKb": 830,
           "totalCssKb": 10

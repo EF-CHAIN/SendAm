@@ -190,6 +190,13 @@ answers:
 Either outcome increments `sendam_health_checks_total` with `status="ok"` or
 `status="degraded"`, which is what `SendAmDatabaseHealthDegraded` alerts on.
 
+For an operator check, call `GET /health/deep`. It probes PostgreSQL, Redis,
+the configured Horizon URL, and the active KMS provider in parallel under the
+same per-probe deadline. It returns HTTP 200 while all four can respond and
+HTTP 503 when a probe fails or times out. The `components` object names each
+dependency and reports `healthy`, `degraded` for a slow response, or `unhealthy`
+for a failure.
+
 ### Payload used by the frontend mock
 
 The default msw handler in `apps/admin/src/mocks/handlers.js` answers this URL
@@ -336,4 +343,22 @@ This alert means **alerting itself may be broken** and should be treated as high
 5. If both routes fail, escalate — the alerting pipeline has no verified delivery path.
 6. To manually trigger a test without waiting for the scheduled interval, restart the worker process
    (the poller runs immediately on startup).
+
+### Stellar submission failures
+
+Fires on `SendAmStellarSubmissionFailureRateHigh` when more than 2% of Stellar transactions failed over
+5 minutes (with at least 5 attempts). The API exports these on `/metrics`:
+
+| Metric | Type | Meaning |
+| --- | --- | --- |
+| `stellar_tx_submission_duration_seconds` | histogram | Horizon `submitTransaction` latency |
+| `stellar_tx_result_total{result="success\|fail"}` | counter | Submission outcomes |
+| `stellar_tx_failure_codes_total{code}` | counter | Horizon result codes, e.g. `tx_bad_auth`, `tx_insufficient_balance` |
+| `stellar_fee_charged_stroops_total` | counter | Fees actually charged |
+| `stellar_base_fee_stroops` | gauge | Latest base fee reported by Horizon |
+
+1. Break the failure rate down with `sum by (code) (rate(stellar_tx_failure_codes_total[5m]))`.
+2. `tx_bad_auth` or `tx_bad_seq` points at signing or sequence handling; `tx_insufficient_balance` or
+   `op_underfunded` points at funding; `timeout` points at Horizon latency or availability.
+3. Check `stellar_base_fee_stroops` and the latency histogram for a network fee spike or slow Horizon.
 

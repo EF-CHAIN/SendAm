@@ -1,5 +1,17 @@
+# Rust / Soroban build artifacts
+/target/
+**/*.rs.bk
+**/test_snapshots/
+
 # Dependencies
 node_modules/
+target/
+Cargo.lock
+test_snapshots/
+
+# Rust / Soroban build artifacts
+target/
+test_snapshots/
 
 # Environment files
 .env

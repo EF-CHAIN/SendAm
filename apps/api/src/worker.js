@@ -1,3 +1,6 @@
+// Tracing must start before pg/prisma/bullmq are loaded so they can be instrumented.
+require('./observability/tracing').startTracing({ serviceName: process.env.OTEL_SERVICE_NAME || 'sendam-worker' });
+
 const config = require('./config/env');
 const connectDB = require('./config/db');
 const { validateEnv, validateWorkerEnv } = require('./config/validateEnv');
@@ -5,8 +8,9 @@ const prisma = require('./common/prisma');
 const logger = require('./utils/logger');
 const { registerJobs } = require('./jobs');
 const {
-  closeQueues, getQueueReadiness, getRegisteredProcessors, collectQueueMetrics,
+  getQueueReadiness, getRegisteredProcessors, collectQueueMetrics,
 } = require('./queues/queue.service');
+const { createQueueManager } = require('./queues/queueManager');
 const { cancelInFlightSends } = require('./services/whatsapp.service');
 const { createWorkerHealth, startWorkerHealthServer } = require('./observability/workerHealth');
 
@@ -14,7 +18,9 @@ const startWorker = async ({
   jobs = registerJobs,
   connect = connectDB,
   disconnect = () => prisma.$disconnect(),
-  closeQueueResources = closeQueues,
+  queueManager = createQueueManager({ drainTimeoutMs: config.worker?.drainTimeoutMs }),
+  pauseQueueIntake = () => queueManager.pauseIntake(),
+  closeQueueResources = () => queueManager.shutdown('worker'),
   createHealth = createWorkerHealth,
   startHealthServer = startWorkerHealthServer,
 } = {}) => {
@@ -57,6 +63,9 @@ const startWorker = async ({
     try {
       clearInterval(heartbeat);
       health.markShuttingDown();
+      // Stop taking new jobs right away; active payment jobs keep running and
+      // are drained (up to config.worker.drainTimeoutMs) inside closeQueueResources.
+      await pauseQueueIntake();
       cancelInFlightSends(`worker shutdown: ${signal}`);
       await healthRuntime.close();
       await jobRuntime?.stop?.();

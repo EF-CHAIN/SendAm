@@ -1,9 +1,22 @@
 [workspace]
 resolver = "2"
 members = [
+    "contracts/smart-wallet",
+    "contracts/escrow",
+    "contracts/settlement",
+    "contracts/attestation",
+    "contracts/escrow-harness",
     "contracts/common",
     "contracts/oracle",
 ]
+
+[workspace.package]
+edition = "2021"
+license = "MIT"
+version = "0.1.0"
+
+[workspace.dependencies]
+soroban-sdk = "29.0.1"
 
 [profile.release]
 opt-level = "z"

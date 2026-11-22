@@ -1,6 +1,7 @@
 const ASSET_RULES = Object.freeze({
   XLM: { precision: 7, min: '0.0000001', max: '1000000000', rounding: 'HALF_UP' },
   USDC: { precision: 7, min: '0.0000001', max: '1000000000', rounding: 'HALF_UP' },
+  GHS: { precision: 2, min: '0.01', max: '1000000000.00', rounding: 'HALF_UP' },
   NGN: { precision: 2, min: '1.00', max: '5000000000.00', rounding: 'HALF_UP' },
   USD: { precision: 2, min: '0.01', max: '1000000000.00', rounding: 'HALF_UP' },
   EUR: { precision: 2, min: '0.01', max: '1000000000.00', rounding: 'HALF_UP' },
@@ -120,4 +121,74 @@ const compare = (left, right, asset) => {
   return a === b ? 0 : a > b ? 1 : -1;
 };
 
-module.exports = { ASSET_RULES, getAssetRule, assertValidAmount, parseUnits, formatUnits, percentage, convert, add, subtract, compare, decimalToRatio, expandExponentialDecimal };
+const STROOPS_PER_XLM = 10_000_000n;
+const STELLAR_PRECISION = 7;
+// Stellar amounts are signed 64-bit stroop integers.
+const MAX_STROOPS = 9223372036854775807n;
+
+/**
+ * Truncates (never rounds up) a decimal value to `precision` places and returns
+ * the canonical fixed-precision string. Unlike parseUnits, excess digits are
+ * discarded rather than rejected, so a computed value such as 1/3 can be made
+ * Horizon-safe without ever being inflated past what the sender holds.
+ * Accepts strings, bigints, finite numbers and exponent notation.
+ */
+const truncateAmount = (value, precision = STELLAR_PRECISION) => {
+  if (typeof value === 'number' && !Number.isFinite(value)) {
+    throw new Error('Amount must be a positive decimal string.');
+  }
+  const raw = expandExponentialDecimal(typeof value === 'number' ? value.toLocaleString('en-US', { useGrouping: false, maximumFractionDigits: 20 }) : String(value).trim());
+  if (!DECIMAL_RE.test(raw)) throw new Error('Amount must be a positive decimal string.');
+  return formatUnits(parseUnits(raw, precision, { rejectExcessPrecision: false }), precision);
+};
+
+/** Converts a decimal amount to integer stroops, truncating beyond 7 places. */
+const toStroops = (value) => {
+  const stroops = parseUnits(truncateAmount(value, STELLAR_PRECISION), STELLAR_PRECISION);
+  if (stroops > MAX_STROOPS) throw new Error('Amount exceeds the maximum Stellar amount.');
+  return stroops;
+};
+
+/** Formats integer stroops as the 7-decimal string Horizon expects. */
+const fromStroops = (stroops) => {
+  let units;
+  try {
+    units = BigInt(stroops);
+  } catch (_error) {
+    throw new Error('Stroops must be an integer.');
+  }
+  if (units < 0n) throw new Error('Stroops must not be negative.');
+  if (units > MAX_STROOPS) throw new Error('Amount exceeds the maximum Stellar amount.');
+  return formatUnits(units, STELLAR_PRECISION);
+};
+
+/**
+ * Normalizes any amount into a valid Stellar operation amount: positive,
+ * truncated to 7 decimal places, within int64 stroops.
+ */
+const toStellarAmount = (value) => {
+  const stroops = toStroops(value);
+  if (stroops <= 0n) throw new Error('Amount must be greater than zero.');
+  return fromStroops(stroops);
+};
+
+module.exports = {
+  ASSET_RULES,
+  STROOPS_PER_XLM,
+  STELLAR_PRECISION,
+  getAssetRule,
+  assertValidAmount,
+  parseUnits,
+  formatUnits,
+  percentage,
+  convert,
+  add,
+  subtract,
+  compare,
+  decimalToRatio,
+  expandExponentialDecimal,
+  truncateAmount,
+  toStroops,
+  fromStroops,
+  toStellarAmount,
+};

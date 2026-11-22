@@ -29,6 +29,7 @@
 //      trusted/spoofed cases. No resolution logic changes are needed —
 //      every function here reads from `TRUSTED_ISSUERS`.
 
+const config = require('../config/env');
 const { NETWORK_PROFILES } = require('../config/networkProfiles');
 
 /** Chain discriminator used in every canonical asset key this module mints. */
@@ -51,7 +52,8 @@ const TRUSTED_ISSUERS = Object.freeze({
 });
 
 /** The configured issuer for `code` on `network`, or null if there isn't one. */
-const trustedIssuerFor = (network, code) => TRUSTED_ISSUERS[code]?.[network] || null;
+const trustedIssuerFor = (network, code) => TRUSTED_ISSUERS[code]?.[network]
+  || (network === config.stellar.network && Object.hasOwn(config.stellar.pathIssuers || {}, code) ? config.stellar.pathIssuers[code] : null) || null;
 
 /** Canonical identity for native XLM on a given network. */
 const nativeAssetId = (network) => ({

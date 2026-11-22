@@ -2,8 +2,15 @@ const { registerWhatsAppJobs } = require('./whatsapp.jobs');
 const { startDepositPoller } = require('./deposits.jobs');
 const { startAuditPoller } = require('./audit.jobs');
 const { JOB_NAME, runRotationHealthCheck, rotateCategorySecret } = require('./secret-rotation.job');
+const { registerKeyRotationJob } = require('./keyRotation.job');
+const { startLedgerReconciliationScheduler } = require('./reconcileLedger.job');
+const { startRecurringPaymentScheduler } = require('../payment/recurringPayments');
+const { startQueueHistoryPurge } = require('./purgeQueueHistory.job');
 const { startWebhookInboxDrain, startOutboxReconciler } = require('./messaging.jobs');
+const { startSep24Poller } = require('./sep24Poll.job');
 const { startAlertDeliveryTestPoller } = require('../observability/alertDeliveryTest.service');
+const { processReceiptJob, QUEUE_NAME: RECEIPT_QUEUE } = require('./generateReceipt.job');
+const { processPartnerWebhookJob, QUEUE_NAME: PARTNER_WEBHOOK_QUEUE } = require('../services/partnerWebhooks');
 const { enqueue, registerProcessor } = require('../queues/queue.service');
 const config = require('../config/env');
 const prisma = require('../common/prisma');
@@ -37,13 +44,19 @@ const registerSecretRotationJobs = () => {
   return { startRotationScheduler };
 };
 
+const registerPartnerWebhookJobs = () => registerProcessor(PARTNER_WEBHOOK_QUEUE, (job) => processPartnerWebhookJob(job));
+
+const registerReceiptJobs = () => registerProcessor(RECEIPT_QUEUE, (job) => processReceiptJob(job));
+
 const registerJobs = () => {
   const whatsappWorker = registerWhatsAppJobs();
   const depositPoller = startDepositPoller();
   const auditPoller = startAuditPoller();
   const rotationJobs = registerSecretRotationJobs();
+  registerKeyRotationJob(registerProcessor);
   const inboxDrain = startWebhookInboxDrain();
   const outboxReconciler = startOutboxReconciler();
+  const queueHistoryPurge = startQueueHistoryPurge();
 
   // Only start the alert delivery test poller when at least one route is
   // configured. An interval of 0 is an explicit disable signal.
@@ -54,6 +67,18 @@ const registerJobs = () => {
     logger.info('alert_delivery_test_poller_disabled', { reason: 'ALERT_DELIVERY_TEST_INTERVAL_MS=0' });
   }
 
+  let sep24Poller = null;
+  const sep24PollIntervalMs = Number(config.stellar?.sep24PollIntervalMs ?? 15000);
+  if (sep24PollIntervalMs > 0) {
+    sep24Poller = startSep24Poller({ intervalMs: sep24PollIntervalMs });
+  } else {
+    logger.info('sep24_poller_disabled', { reason: 'SEP24_POLL_INTERVAL_MS=0' });
+  }
+
+  registerPartnerWebhookJobs();
+  registerReceiptJobs();
+  const ledgerReconciler = startLedgerReconciliationScheduler();
+  const recurringPayments = startRecurringPaymentScheduler();
   return {
     whatsappWorker,
     depositPoller,
@@ -61,14 +86,22 @@ const registerJobs = () => {
     rotationJobs,
     inboxDrain,
     outboxReconciler,
+    queueHistoryPurge,
     alertDeliveryPoller,
-    processorNames: ['whatsapp-inbound'],
+    sep24Poller,
+    ledgerReconciler,
+    recurringPayments,
+    processorNames: ['whatsapp-inbound', PARTNER_WEBHOOK_QUEUE, RECEIPT_QUEUE],
     stop: async () => {
       depositPoller.stop();
       auditPoller.stop();
       inboxDrain.stop();
       outboxReconciler.stop();
+      queueHistoryPurge.stop();
       alertDeliveryPoller?.stop();
+      sep24Poller?.stop();
+      ledgerReconciler.stop();
+      recurringPayments.stop();
     },
   };
 };

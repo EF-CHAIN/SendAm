@@ -139,7 +139,7 @@ export const exportAdminTransactions = async (params = {}) => {
   // Strip cursor/pagination params — exports always cover the full filtered set.
   const { after: _a, before: _b, limit: _l, ...filters } = params;
   const response = await api.get('/admin/transactions/export', { params: filters, responseType: 'blob' });
-  triggerDownload(response.data, 'transactions-export.csv');
+  triggerDownload(response.data, `transactions-export.${filters.format === 'pdf' ? 'pdf' : 'csv'}`);
   return response.data;
 };
 

@@ -8,8 +8,46 @@ const { canonicalizePhoneNumber } = require('../utils/validators');
 const config = require('../config/env');
 const { assertAccountActive } = require('../compliance/account.service');
 const { appendEvent, EVENT_TYPES } = require('../common/event.service');
+const { createHsmSigner } = require('./hsmSigner');
 
 const CHAIN = 'stellar';
+
+let activeHsmSigner = null;
+
+const getHsmSigner = () => {
+  if (activeHsmSigner) return activeHsmSigner;
+  if (config.hsm?.enabled && config.hsm?.endpoint) {
+    activeHsmSigner = createHsmSigner({
+      endpoint: config.hsm.endpoint,
+      apiKey: config.hsm.apiKey,
+      timeoutMs: config.hsm.timeoutMs,
+      maxRetries: config.hsm.maxRetries,
+    });
+    return activeHsmSigner;
+  }
+  return null;
+};
+
+const setHsmSigner = (signer) => {
+  activeHsmSigner = signer || null;
+};
+
+const resolveWalletSigningParams = (wallet) => {
+  const hsm = getHsmSigner();
+  const isHsmWallet = Boolean(wallet?.keyVersion && String(wallet.keyVersion).startsWith('hsm:'));
+  if (hsm && (config.hsm?.enabled || isHsmWallet)) {
+    const keyId = isHsmWallet ? String(wallet.keyVersion).slice(4) : wallet.id;
+    return {
+      signer: hsm.forAccount({
+        keyId: keyId || wallet.publicKey,
+        publicKey: wallet.publicKey,
+      }),
+    };
+  }
+  return {
+    secretKey: decrypt(wallet.encryptedSecretKey),
+  };
+};
 
 class WalletNetworkMismatchError extends Error {
   constructor(message) {
@@ -96,7 +134,8 @@ const ensureUsdcTrustline = async ({ wallet }) => {
   });
   if (claimed.count === 0) return prisma.wallet.findUnique({ where: { id: wallet.id } });
   try {
-    const result = await stellarAdapter.establishTrustline({ secretKey: decrypt(wallet.encryptedSecretKey), assetCode: USDC });
+    const signingParams = resolveWalletSigningParams(wallet);
+    const result = await stellarAdapter.establishTrustline({ ...signingParams, assetCode: USDC });
     const updateData = { trustlineState: 'succeeded', trustlineError: null, trustlineUpdatedAt: new Date() };
     if (result.alreadyExisted) updateData.trustlineState = 'succeeded';
     return prisma.wallet.update({ where: { id: wallet.id }, data: updateData });
@@ -340,11 +379,11 @@ const balancesForUser = async ({ userId, phoneNumber }) => {
   }));
 };
 
-const submitPayment = async ({ wallet, destination, amount, asset, memo, memoType }) => {
-  // Last line of defence before a key is decrypted and used to sign.
+const submitPayment = async ({ wallet, ...payment }) => {
+  // Last line of defence before a key is decrypted or signed via HSM.
   assertUsableOnActiveNetwork(wallet);
-  const secretKey = decrypt(wallet.encryptedSecretKey);
-  return stellarAdapter.submitPayment({ secretKey, destination, amount, asset, memo, memoType });
+  const signingParams = resolveWalletSigningParams(wallet);
+  return stellarAdapter.submitPayment({ ...signingParams, ...payment });
 };
 
 const transactionHistory = async ({ userId }) => {
@@ -370,6 +409,8 @@ module.exports = {
   balance,
   balancesForUser,
   submitPayment,
+  setHsmSigner,
+  getHsmSigner,
   transactionHistory,
   rotateWalletKey: require('./walletRecovery.service').rotateWalletKey,
   initiateWalletRecovery: require('./walletRecovery.service').initiateWalletRecovery,
