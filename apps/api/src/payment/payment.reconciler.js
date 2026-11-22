@@ -1,5 +1,38 @@
 const logger = require('../utils/logger');
 const { transitionPaymentState } = require('./payment.transitions');
+const { readSourceDebit } = require('./pathPaymentRouter');
+const { creditVoucher, hasLoyaltyReward } = require('../pricing/loyaltyRebate');
+const { postPaymentSettled } = require('./ledger.service');
+
+const confirmPayment = ({ prisma, transaction, hash, reason, resultXdr, ledgerTime }) => {
+  const confirmedAt = new Date(ledgerTime || Date.now()).toISOString();
+  const path = transaction.metadata?.pathPayment;
+  const metadata = { confirmedAt };
+  if (path) {
+    const { StellarSdk } = require('../config/stellar');
+    const source = transaction.assetIssuer
+      ? new StellarSdk.Asset(transaction.asset, transaction.assetIssuer) : StellarSdk.Asset.native();
+    metadata.pathPayment = { ...path, sourceDebit: readSourceDebit(resultXdr, source) };
+  }
+
+  const settle = async (db) => {
+    const settled = { ...transaction, status: 'success', txHash: hash, metadata: { ...transaction.metadata, ...metadata } };
+    await creditVoucher({ db, transaction: settled });
+    if (path) await postPaymentSettled({ tx: db, transaction: settled });
+    return transitionPaymentState({
+      db,
+      transactionId: transaction.id,
+      fromState: ['processing', 'pending'],
+      toState: 'success',
+      actor: { type: 'system', id: 'reconciler' },
+      reason,
+      extraData: { txHash: hash, explorerUrl: transactionUrl(hash) },
+      metadata,
+    });
+  };
+  return (path || hasLoyaltyReward(transaction)) && prisma.$transaction
+    ? prisma.$transaction(settle) : settle(prisma);
+};
 const defaultHorizonServer = () => require('../config/stellar').server;
 const writeAuditLog = async (args) => {
   try {
@@ -54,9 +87,10 @@ const reconcileStaleTransactions = async ({
     take: maxTransactions,
     include: {
       user: {
-        include: {
+        select: {
           wallets: {
             where: { chain: 'stellar' },
+            select: { publicKey: true },
           },
         },
       },
@@ -87,15 +121,9 @@ const reconcileStaleTransactions = async ({
         }
         if (horizonTx && horizonTx.successful) {
           // ✅ Confirmed — ledger-backed finality achieved.
-          const updated = await transitionPaymentState({
-            db: prisma,
-            transactionId: tx.id,
-            fromState: ['processing', 'pending'],
-            toState: 'success',
-            actor: { type: 'system', id: 'reconciler' },
+          const updated = await confirmPayment({
+            prisma, transaction: tx, hash: tx.txHash, resultXdr: horizonTx.result_xdr, ledgerTime: horizonTx.created_at,
             reason: 'Reconciled to success via on-chain txHash',
-            extraData: { explorerUrl: transactionUrl(tx.txHash) },
-            metadata: { confirmedAt: new Date().toISOString() },
           });
           updatedCount += 1;
           loggerInstance.info(`Reconciled transaction ${tx.id} to success via txHash ${tx.txHash}`);
@@ -156,7 +184,7 @@ const reconcileStaleTransactions = async ({
 
       // 2. No txHash: query sender wallet payment history on Horizon.
       const senderPublicKey = tx.user?.wallets?.[0]?.publicKey;
-      if (senderPublicKey) {
+      if (senderPublicKey && !tx.txHash && !tx.metadata?.pathPayment && !tx.metadata?.loyalty?.voucherId && !hasLoyaltyReward(tx)) {
         try {
           const paymentsResponse = await horizon.payments().forAccount(senderPublicKey).order('desc').limit(20).call();
           const matchingPayment = paymentsResponse.records.find((p) => {
@@ -168,15 +196,9 @@ const reconcileStaleTransactions = async ({
 
           if (matchingPayment) {
             const hash = matchingPayment.transaction_hash;
-            const updated = await transitionPaymentState({
-              db: prisma,
-              transactionId: tx.id,
-              fromState: ['processing', 'pending'],
-              toState: 'success',
-              actor: { type: 'system', id: 'reconciler' },
+            const updated = await confirmPayment({
+              prisma, transaction: tx, hash, ledgerTime: matchingPayment.created_at,
               reason: `Reconciled to success via payment history match on ${senderPublicKey}`,
-              extraData: { txHash: hash, explorerUrl: transactionUrl(hash) },
-              metadata: { confirmedAt: new Date().toISOString() },
             });
             updatedCount += 1;
             loggerInstance.info(`Reconciled transaction ${tx.id} to success via payment history match on ${senderPublicKey}`);
@@ -342,17 +364,17 @@ const reconcileMonetaryValues = async ({
   return { checkedCount, invalidCount, fixedCount, errors };
 };
 
-const signedUnits = (amount, asset) => {
+const signedUnits = (amount, precision) => {
   const raw = String(amount || '0').trim();
   const sign = raw.startsWith('-') ? -1n : 1n;
-  const rule = getAssetRule(asset);
-  return sign * parseUnits(raw.replace(/^-/, '') || '0', rule.precision);
+  return sign * parseUnits(raw.replace(/^-/, '') || '0', precision);
 };
 
-const sumPostingsByAsset = (postings = []) => {
+const sumPostingsByAsset = (postings = [], useStellarPrecision) => {
   const totals = new Map();
   for (const posting of postings) {
-    totals.set(posting.asset, (totals.get(posting.asset) || 0n) + signedUnits(posting.amount, posting.asset));
+    const precision = useStellarPrecision ? 7 : getAssetRule(posting.asset).precision;
+    totals.set(posting.asset, (totals.get(posting.asset) || 0n) + signedUnits(posting.amount, precision));
   }
   return totals;
 };
@@ -365,7 +387,7 @@ const listLedgerDiscrepancies = async ({ prisma, maxEntries = 500 } = {}) => {
   });
   const discrepancies = [];
   for (const entry of entries) {
-    const totals = sumPostingsByAsset(entry.postings);
+    const totals = sumPostingsByAsset(entry.postings, entry.transaction?.metadata?.pathPayment?.sourceDebit);
     for (const [asset, total] of totals.entries()) {
       if (total !== 0n) {
         discrepancies.push({ type: 'unbalanced_entry', journalEntryId: entry.id, transactionId: entry.transactionId, asset });

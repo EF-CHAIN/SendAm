@@ -1,0 +1,14 @@
+**
+!package.json
+!package-lock.json
+!apps/
+!apps/*/
+!apps/*/package.json
+!apps/api/prisma.config.ts
+!apps/api/prisma/
+!apps/api/prisma/**
+!apps/api/src/
+!apps/api/src/**
+!packages/
+!packages/*/
+!packages/*/package.json

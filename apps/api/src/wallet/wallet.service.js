@@ -379,11 +379,11 @@ const balancesForUser = async ({ userId, phoneNumber }) => {
   }));
 };
 
-const submitPayment = async ({ wallet, destination, amount, asset, memo, memoType }) => {
+const submitPayment = async ({ wallet, ...payment }) => {
   // Last line of defence before a key is decrypted or signed via HSM.
   assertUsableOnActiveNetwork(wallet);
   const signingParams = resolveWalletSigningParams(wallet);
-  return stellarAdapter.submitPayment({ ...signingParams, destination, amount, asset, memo, memoType });
+  return stellarAdapter.submitPayment({ ...signingParams, ...payment });
 };
 
 const transactionHistory = async ({ userId }) => {

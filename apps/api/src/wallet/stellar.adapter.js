@@ -5,9 +5,11 @@ const { isHorizonWriteUncertain } = require("../config/horizon");
 const axios = require("axios");
 const logger = require("../utils/logger");
 const config = require("../config/env");
-const { assertValidAmount } = require("../utils/money");
+const { assertValidAmount, formatUnits, parseUnits } = require("../utils/money");
 const { outboundHeaders } = require("../observability/context");
 const assetIdentity = require("./assetIdentity");
+const { nativeBalance, PRECISION } = require("./balanceCalculator");
+const { routePathPayment, pathAmount } = require("../payment/pathPaymentRouter");
 
 const chain = "stellar";
 
@@ -116,21 +118,30 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const BASE_RESERVE_XLM = 1;
 const BASE_RESERVE_PER_ENTRY = 0.5;
 const FUNDING_MAX_ATTEMPTS = 3;
-const NATIVE_BASE_RESERVE = Number(process.env.STELLAR_BASE_RESERVE_XLM || 0.5);
-const NATIVE_RESERVE_BUFFER = Number(process.env.STELLAR_RESERVE_BUFFER_XLM || 0.1);
-
-function assertNativeReserve(account, feeStroops, additionalSubentries = 0) {
-  const native = account.balances.find((balance) => balance.asset_type === 'native');
-  const available = Number(native?.balance || 0);
-  const subentries = Number(account.subentry_count || 0) + additionalSubentries;
-  const required = NATIVE_BASE_RESERVE * (2 + subentries)
-    + NATIVE_RESERVE_BUFFER + Number(feeStroops || 0) / 1e7;
-  if (!Number.isFinite(available) || available < required) {
-    throw new Error(
-      `Insufficient XLM reserve. Keep at least ${required.toFixed(7)} XLM for account reserve and fees, then retry.`,
-    );
+const fetchBaseReserve = async () => {
+  if (process.env.STELLAR_BASE_RESERVE_XLM) {
+    return parseUnits(process.env.STELLAR_BASE_RESERVE_XLM, PRECISION);
   }
-  return { available, required };
+  const { records: [ledger] } = await server.ledgers().order("desc").limit(1).call();
+  const reserve = BigInt(ledger.base_reserve_in_stroops);
+  if (reserve <= 0n) throw new Error("Invalid Stellar base reserve.");
+  return reserve;
+};
+
+function assertNativeReserve(account, feeStroops, additionalSubentries = 0, baseReserveStroops = 5_000_000n, amount) {
+  const balance = nativeBalance(account, {
+    feeStroops, baseReserveStroops, additionalSubentries,
+    buffer: additionalSubentries ? process.env.STELLAR_RESERVE_BUFFER_XLM || "0.1" : "0",
+  });
+  if (balance.available < 0n) {
+    throw Object.assign(new Error(
+      `Insufficient XLM reserve. Keep at least ${formatUnits(balance.required, PRECISION)} XLM for account reserve and fees, then retry.`,
+    ), { code: "insufficient_reserve" });
+  }
+  if (amount && parseUnits(amount, PRECISION) > balance.available) {
+    throw Object.assign(new Error(`Insufficient spendable balance. You can send up to ${balance.spendable} XLM.`), { statusCode: 409 });
+  }
+  return balance;
 }
 
 const getSeverityPriority = (status) => ({ ok: 0, warning: 1, critical: 2 }[status] || 0);
@@ -326,7 +337,9 @@ const getFundingAccountHealth = async ({
 // an untrusted row as the real asset just because the code matches (#285).
 const getBalances = async (publicKey) => {
   try {
-    const account = await server.loadAccount(publicKey);
+    const [account, feeStroops, baseReserveStroops] = await Promise.all([
+      server.loadAccount(publicKey), server.fetchBaseFee(), fetchBaseReserve(),
+    ]);
     const network = config.stellar.network;
     const balances = [];
 
@@ -335,6 +348,7 @@ const getBalances = async (publicKey) => {
     balances.push({
       asset: "XLM",
       value: xlmBalance ? xlmBalance.balance : "0",
+      spendable: nativeBalance(account, { feeStroops, baseReserveStroops }).spendable,
       issuer: nativeIdentity.issuer,
       network: nativeIdentity.network,
       assetId: nativeIdentity.assetId,
@@ -367,18 +381,11 @@ const getBalances = async (publicKey) => {
   }
 };
 
-// Resolve an asset code to a Stellar SDK Asset. Native XLM is the only
-// asset wired today; this is the seam where future assets (e.g. USDC and
-// other anchor-issued assets used by on/off-ramps and swaps) get added by
-// mapping a code+issuer instead of throwing.
-const resolveAsset = (asset) => {
-  if (!asset || asset === "XLM" || asset === "native") {
-    return StellarSdk.Asset.native();
-  }
-  if (asset === 'USDC') {
-    return new StellarSdk.Asset('USDC', config.stellar.usdcIssuer);
-  }
-  throw Object.assign(new Error(`Unsupported asset: ${asset}. Supported assets are XLM and USDC.`), {
+const resolveAsset = (asset, { path = false } = {}) => {
+  if (!asset || asset === "XLM" || asset === "native") return StellarSdk.Asset.native();
+  const issuer = assetIdentity.resolveConfiguredIssuer({ network: config.stellar.network, code: asset });
+  if (issuer && (asset === "USDC" || path)) return new StellarSdk.Asset(asset, issuer);
+  throw Object.assign(new Error(`Unsupported asset on Stellar: ${asset}.`), {
     code: 'unsupported_asset',
     retryable: false,
   });
@@ -545,6 +552,8 @@ const submitPayment = async ({
   asset = "XLM",
   memo,
   memoType,
+  pathPayment,
+  onEnvelope,
 }) => {
   try {
     if (!validateAddress(destination)) {
@@ -560,6 +569,8 @@ const submitPayment = async ({
     }
 
     const normalizedAmount = assertValidAmount(amount, asset);
+    const sourceAsset = resolveAsset(asset, { path: Boolean(pathPayment) });
+    const targetAsset = pathPayment && resolveAsset(pathPayment.destinationAsset, { path: true });
     const { sourcePublicKey, sign } = resolveSigningStrategy({ secretKey, signer });
 
     return await withAccountLock(sourcePublicKey, async () => {
@@ -572,7 +583,7 @@ const submitPayment = async ({
         throw new Error("Destination account does not exist or is not funded.");
       }
 
-      const fee = await server.fetchBaseFee();
+      const [fee, baseReserve] = await Promise.all([server.fetchBaseFee(), fetchBaseReserve()]);
       const networkPassphrase =
         config.stellar.network === "testnet"
           ? StellarSdk.Networks.TESTNET
@@ -583,44 +594,67 @@ const submitPayment = async ({
       let transaction;
       let hash;
       let lastError;
+      let uncertain = false;
       for (let attempt = 1; attempt <= SEND_MAX_ATTEMPTS; attempt += 1) {
-        const sourceAccount = await server.loadAccount(sourcePublicKey);
-        assertNativeReserve(sourceAccount, fee);
+        if (!transaction) {
+          const sourceAccount = await server.loadAccount(sourcePublicKey);
+          const balance = assertNativeReserve(sourceAccount, fee, 0, baseReserve,
+            sourceAsset.isNative() && !pathPayment ? normalizedAmount : undefined);
+          let operation;
+          if (pathPayment) {
+            let budget = pathAmount(normalizedAmount);
+            if (sourceAsset.isNative()) {
+              budget = balance.available < budget ? balance.available : budget;
+            } else if (sourceAsset.getIssuer() !== sourcePublicKey) {
+              const line = sourceAccount.balances.find((entry) =>
+                entry.asset_code === sourceAsset.getCode() && entry.asset_issuer === sourceAsset.getIssuer());
+              const available = parseUnits(line?.balance ?? "0", PRECISION)
+                - parseUnits(line?.selling_liabilities ?? "0", PRECISION);
+              if (line?.is_authorized === false || available <= 0n) budget = 0n;
+              else if (available < budget) budget = available;
+            }
+            if (budget <= 0n) throw Object.assign(new Error("Insufficient spendable balance for a Stellar path payment."), { statusCode: 409 });
+            operation = await routePathPayment({
+              server,
+              source: sourceAsset,
+              target: targetAsset,
+              maxSource: formatUnits(budget, PRECISION),
+              destination,
+              destinationAmount: pathPayment.destinationAmount,
+            });
+          } else {
+            operation = StellarSdk.Operation.payment({ destination, asset: sourceAsset, amount: normalizedAmount });
+          }
 
-        const builder = new StellarSdk.TransactionBuilder(sourceAccount, {
-          fee,
-          networkPassphrase,
-        }).addOperation(
-          StellarSdk.Operation.payment({
-            destination,
-            asset: resolveAsset(asset),
-            amount: normalizedAmount,
-          }),
-        );
-
-        if (stellarMemo) {
-          builder.addMemo(stellarMemo);
+          const builder = new StellarSdk.TransactionBuilder(sourceAccount, { fee, networkPassphrase }).addOperation(operation);
+          if (stellarMemo) builder.addMemo(stellarMemo);
+          transaction = builder.setTimeout(30).build();
+          await sign(transaction);
+          hash = safeHash(transaction);
+          if (onEnvelope) await onEnvelope(hash);
         }
-
-        transaction = builder.setTimeout(30).build();
-        await sign(transaction);
-        hash = safeHash(transaction);
 
         try {
           const txResponse = await server.submitTransaction(transaction);
           return {
+            ledgerConfirmed: txResponse.successful === true && Boolean(txResponse.ledger),
             txHash: txResponse.hash,
             explorerUrl: getTransactionUrl(txResponse.hash),
           };
         } catch (error) {
           // Reconcile uncertain submissions before rebuilding or failing
           if (isHorizonWriteUncertain(error)) {
+            uncertain = true;
             if (hash) {
               try {
                 const found = await server.transactions().transactionHash(hash).call();
                 if (found) {
                   logger.info(`Recovered seemingly-timed-out payment ${hash} via Horizon lookup.`);
-                  return { txHash: hash, explorerUrl: getTransactionUrl(hash) };
+                  return {
+                    txHash: hash,
+                    explorerUrl: getTransactionUrl(hash),
+                    ledgerConfirmed: found.successful === true && Boolean(found.ledger),
+                  };
                 }
               } catch (_) {
                 // Ignore lookup errors
@@ -632,9 +666,8 @@ const submitPayment = async ({
               await sleep(attempt * 250);
               continue;
             } else {
-              throw new Error(
-                "Transaction submission status unknown after timeout; not resubmitting to avoid a duplicate.",
-              );
+              if (onEnvelope) return { txHash: hash, explorerUrl: getTransactionUrl(hash) };
+              throw new Error("Transaction submission status unknown after timeout; not resubmitting to avoid a duplicate.");
             }
           }
 
@@ -644,13 +677,18 @@ const submitPayment = async ({
                 const found = await server.transactions().transactionHash(hash).call();
                 if (found) {
                   logger.info(`Recovered tx_bad_seq payment ${hash} via Horizon lookup.`);
-                  return { txHash: hash, explorerUrl: getTransactionUrl(hash) };
+                  return {
+                    txHash: hash,
+                    explorerUrl: getTransactionUrl(hash),
+                    ledgerConfirmed: found.successful === true && Boolean(found.ledger),
+                  };
                 }
               } catch (_) {
                 // lookup failed; fall through to the standard retry path
               }
             }
 
+            if (uncertain && onEnvelope) return { txHash: hash, explorerUrl: getTransactionUrl(hash) };
             if (attempt < SEND_MAX_ATTEMPTS) {
               lastError = error;
               logger.warn(
@@ -662,6 +700,7 @@ const submitPayment = async ({
             }
           }
 
+          if (uncertain && onEnvelope) return { txHash: hash, explorerUrl: getTransactionUrl(hash) };
           const friendlyMessage = getFriendlyPaymentError(error);
           if (friendlyMessage) {
             throw new Error(friendlyMessage);
@@ -675,7 +714,7 @@ const submitPayment = async ({
     });
   } catch (error) {
     logger.error("Error sending payment", error.message);
-    throw new Error(error.message || "Failed to send payment");
+    throw error;
   }
 };
 
@@ -713,8 +752,8 @@ const establishTrustline = async ({ secretKey, signer, assetCode }) => {
       return { established: true, alreadyExisted: true };
     }
 
-    const fee = await server.fetchBaseFee();
-    assertNativeReserve(account, fee, 1);
+    const [fee, baseReserve] = await Promise.all([server.fetchBaseFee(), fetchBaseReserve()]);
+    assertNativeReserve(account, fee, 1, baseReserve);
     const networkPassphrase =
       config.stellar.network === "testnet"
         ? StellarSdk.Networks.TESTNET

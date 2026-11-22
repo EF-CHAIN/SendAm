@@ -3,17 +3,11 @@ const { add, formatUnits, getAssetRule, parseUnits } = require('../utils/money')
 const SYSTEM_USER = 'system';
 const defaultPrisma = () => require('../common/prisma');
 
-const signedUnits = (amount, asset) => {
+const signedUnits = (amount, precision) => {
   const raw = String(amount || '').trim();
   const sign = raw.startsWith('-') ? -1n : 1n;
   const abs = raw.replace(/^-/, '');
-  const rule = getAssetRule(asset);
-  return sign * parseUnits(abs, rule.precision);
-};
-
-const signedAmount = (amount, asset) => {
-  const units = signedUnits(amount, asset);
-  return formatUnits(units, getAssetRule(asset).precision);
+  return sign * parseUnits(abs, precision);
 };
 
 const assertBalancedPostings = (postings) => {
@@ -22,12 +16,14 @@ const assertBalancedPostings = (postings) => {
   }
   const totals = new Map();
   for (const posting of postings) {
-    const asset = getAssetRule(posting.asset).code;
-    totals.set(asset, (totals.get(asset) || 0n) + signedUnits(posting.amount, asset));
+    const asset = getAssetRule(posting.asset);
+    const precision = posting.precision ?? asset.precision;
+    const units = signedUnits(posting.amount, precision) * 10n ** BigInt(7 - precision);
+    totals.set(asset.code, (totals.get(asset.code) || 0n) + units);
   }
   for (const [asset, total] of totals.entries()) {
     if (total !== 0n) {
-      throw new Error(`Journal entry is unbalanced for ${asset}: ${formatUnits(total, getAssetRule(asset).precision)}`);
+      throw new Error(`Journal entry is unbalanced for ${asset}: ${formatUnits(total, 7)}`);
     }
   }
   return true;
@@ -67,11 +63,11 @@ const createJournalEntry = async ({
   const client = tx || defaultPrisma();
   if (!client?.journalEntry || !client?.ledgerAccount || !client?.ledgerPosting) return null;
 
-  const normalized = postings.map((posting) => ({
-    ...posting,
-    asset: getAssetRule(posting.asset).code,
-    amount: signedAmount(posting.amount, posting.asset),
-  }));
+  const normalized = postings.map((posting) => {
+    const asset = getAssetRule(posting.asset);
+    const precision = posting.precision ?? asset.precision;
+    return { ...posting, asset: asset.code, amount: formatUnits(signedUnits(posting.amount, precision), precision) };
+  });
   assertBalancedPostings(normalized);
 
   const accounts = new Map();
@@ -115,17 +111,22 @@ const postPaymentReserved = ({ tx, transaction }) => createJournalEntry({
   ],
 });
 
-const postPaymentSettled = ({ tx, transaction }) => createJournalEntry({
-  tx,
-  eventType: 'payment.settled',
-  transactionId: transaction.id,
-  externalRef: transaction.txHash,
-  metadata: { status: transaction.status, explorerUrl: transaction.explorerUrl },
-  postings: [
-    { type: 'stellar_pending', asset: transaction.asset, amount: `-${transaction.amount}` },
-    { type: 'stellar_settled', asset: transaction.asset, amount: transaction.amount },
-  ],
-});
+const postPaymentSettled = ({ tx, transaction }) => {
+  const debit = transaction.metadata?.pathPayment?.sourceDebit;
+  const amount = debit || transaction.amount;
+  const precision = debit ? 7 : undefined;
+  return createJournalEntry({
+    tx,
+    eventType: 'payment.settled',
+    transactionId: transaction.id,
+    externalRef: transaction.txHash,
+    metadata: { status: transaction.status, explorerUrl: transaction.explorerUrl },
+    postings: [
+      { type: 'stellar_pending', asset: transaction.asset, amount: `-${amount}`, precision },
+      { type: 'stellar_settled', asset: transaction.asset, amount, precision },
+    ],
+  });
+};
 
 const postPaymentFailed = ({ tx, transaction }) => createJournalEntry({
   tx,

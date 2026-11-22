@@ -84,6 +84,16 @@ Before any real-money launch:
 - Add audit logging for sensitive actions, plus monitoring and alerting.
 - Complete legal, compliance, KYC, AML, and custody review where required.
 
+## Pull Request Security Checks
+
+The Security Scan workflow blocks new Semgrep findings for Node.js, Rust, and
+hardcoded secrets. Trivy scans dependency lockfiles and every image in the
+production Compose file. High and critical findings introduced since the PR
+base fail the check.
+
+Set **Semgrep SAST** and **Trivy vulnerabilities** as required status checks in
+the protected branch rules to enforce these checks before merge.
+
 ## Secret Scanning & Push Protection
 
 Automated secret scanning runs on every push and pull request to `main` using
