@@ -149,8 +149,8 @@ const sep10Token = async (req, res) => {
 
 const sep10Refresh = async (req, res) => {
   try {
-    const rawToken = extractBearerOrBodyToken(req);
-    const result = await sep10Service.refreshToken(rawToken);
+    const presentedJwt = extractBearerOrBodyToken(req);
+    const result = await sep10Service.refreshToken(presentedJwt);
     await writeAuditLog({
       actorType: 'stellar_account',
       actorId: result.account,
@@ -186,8 +186,8 @@ const sep10Refresh = async (req, res) => {
 
 const sep10Revoke = async (req, res) => {
   try {
-    const rawToken = extractBearerOrBodyToken(req);
-    const result = await sep10Service.revokeToken(rawToken);
+    const presentedJwt = extractBearerOrBodyToken(req);
+    const result = await sep10Service.revokeToken(presentedJwt);
     await writeAuditLog({
       actorType: 'stellar_account',
       actorId: result.tokenHash,
