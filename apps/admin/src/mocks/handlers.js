@@ -267,4 +267,182 @@ export const handlers = [
       },
     });
   }),
+
+  // Session lifecycle & password rotation
+  http.post("*/api/admin/logout", () => {
+    return HttpResponse.json({ success: true });
+  }),
+
+  http.post("*/api/admin/session/renew", () => {
+    return HttpResponse.json({ data: { token: "renewed_fake_token" } });
+  }),
+
+  http.post("*/api/admin/password", () => {
+    return HttpResponse.json({ success: true });
+  }),
+
+  // Single-user drill-down, onboarding status & account status history
+  http.get("*/api/admin/users/:id", ({ params }) => {
+    return HttpResponse.json({
+      data: {
+        _id: params.id || "1",
+        id: params.id || "1",
+        phoneNumber: "+1234567890",
+        status: "active",
+        kycTier: 1,
+        createdAt: "2026-01-05T10:00:00.000Z",
+        updatedAt: "2026-01-05T10:00:00.000Z",
+      },
+    });
+  }),
+
+  http.get("*/api/admin/users/:id/onboarding", ({ params }) => {
+    return HttpResponse.json({
+      data: {
+        userId: params.id || "1",
+        stage: "in_progress",
+        percentComplete: 67,
+        checkpoints: [
+          { id: "account_created", label: "Account created", complete: true },
+          { id: "wallet_ready", label: "Wallet ready", complete: true },
+          { id: "kyc_approved", label: "Identity verified", complete: false },
+        ],
+      },
+    });
+  }),
+
+  http.get("*/api/admin/users/:id/account-status", ({ params }) => {
+    return HttpResponse.json({
+      data: [
+        {
+          _id: "status-1",
+          userId: params.id || "1",
+          status: "active",
+          reason: "Initial activation",
+          createdAt: "2026-01-05T10:00:00.000Z",
+        },
+      ],
+    });
+  }),
+
+  // Single-wallet drill-down
+  http.get("*/api/admin/wallets/:id", ({ params }) => {
+    return HttpResponse.json({
+      data: {
+        _id: params.id || "w1",
+        publicKey: "GBRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3ZMFDAGOROTMPGQW5BCW5AZ",
+        network: "testnet",
+        funded: true,
+        trustlineState: "succeeded",
+        balances: [
+          { asset: "XLM", amount: "100.0000000" },
+          { asset: "USDC", amount: "250.00" },
+        ],
+        createdAt: "2026-01-05T10:00:00.000Z",
+      },
+    });
+  }),
+
+  // Sensitive field reveal
+  http.post("*/api/admin/reveal/:resource/:id", ({ params }) => {
+    return HttpResponse.json({
+      data: {
+        resource: params.resource,
+        id: params.id,
+        revealed: true,
+        phoneNumber: "+1234567890",
+      },
+    });
+  }),
+
+  // CSV exports
+  http.get("*/api/admin/transactions/export", () => {
+    const csv = "id,type,amount,asset,status,createdAt\ntx1,deposit,100,USDC,Completed,2026-01-05T10:00:00.000Z\n";
+    return new HttpResponse(csv, {
+      headers: {
+        "Content-Type": "text/csv; charset=utf-8",
+        "Content-Disposition": 'attachment; filename="transactions-export.csv"',
+      },
+    });
+  }),
+
+  http.get("*/api/admin/audit-logs/export", () => {
+    const csv = "id,actorType,action,entityType,ipAddress,createdAt\na1,administrator,admin.login.succeeded,AdminSession,127.0.0.1,2026-01-05T10:00:00.000Z\n";
+    return new HttpResponse(csv, {
+      headers: {
+        "Content-Type": "text/csv; charset=utf-8",
+        "Content-Disposition": 'attachment; filename="audit-logs-export.csv"',
+      },
+    });
+  }),
+
+  // Workflow events & ledger integrity
+  http.get("*/api/admin/events", () => {
+    return HttpResponse.json({
+      data: [
+        {
+          _id: "evt-1",
+          eventType: "transfer.settled",
+          entityId: "tx1",
+          hash: "b".repeat(64),
+          createdAt: "2026-01-05T10:00:00.000Z",
+        },
+      ],
+      pagination: {
+        limit: 50,
+        nextCursor: null,
+        prevCursor: null,
+        hasMore: false,
+        total: 1,
+      },
+    });
+  }),
+
+  http.get("*/api/admin/events/verify", () => {
+    return HttpResponse.json({
+      data: { valid: true, checkedCount: 1, brokenAt: null },
+    });
+  }),
+
+  http.get("*/api/admin/events/export", () => {
+    const csv = "id,eventType,entityId,createdAt\nevt-1,transfer.settled,tx1,2026-01-05T10:00:00.000Z\n";
+    return new HttpResponse(csv, {
+      headers: {
+        "Content-Type": "text/csv; charset=utf-8",
+        "Content-Disposition": 'attachment; filename="workflow-events-export.csv"',
+      },
+    });
+  }),
+
+  // Compliance evidence packages & exports
+  http.get("*/api/admin/compliance/evidence/:id", ({ params }) => {
+    return HttpResponse.json({
+      data: {
+        userId: params.id || "1",
+        generatedAt: "2026-01-05T10:00:00.000Z",
+        kycRecords: [],
+        accountStatusHistory: [],
+      },
+    });
+  }),
+
+  http.get("*/api/admin/compliance/kyc-evidence/export", () => {
+    const csv = "id,userId,status,createdAt\nkyc1,1,pending,2026-01-05T10:00:00.000Z\n";
+    return new HttpResponse(csv, {
+      headers: {
+        "Content-Type": "text/csv; charset=utf-8",
+        "Content-Disposition": 'attachment; filename="kyc-evidence-export.csv"',
+      },
+    });
+  }),
+
+  http.get("*/api/admin/compliance/account-status/export", () => {
+    const csv = "id,userId,status,reason,createdAt\nstatus-1,1,active,Initial activation,2026-01-05T10:00:00.000Z\n";
+    return new HttpResponse(csv, {
+      headers: {
+        "Content-Type": "text/csv; charset=utf-8",
+        "Content-Disposition": 'attachment; filename="account-status-export.csv"',
+      },
+    });
+  }),
 ];
