@@ -2,6 +2,7 @@ const config = require('../config/env');
 const prisma = require('../common/prisma');
 const logger = require('../utils/logger');
 const smileId = require('./smileId.provider');
+const kycProvider = require('./providers/kycProvider');
 const { assertValidAmount, add, compare, formatUnits, getAssetRule, parseUnits } = require('../utils/money');
 const { getPolicyConversionSnapshot, PolicyError, POLICY_ERROR_CODES } = require('../pricing/policyRate');
 
@@ -290,14 +291,31 @@ const processSmileIdCallback = async (payload) => {
       return updated;
     });
     logger.info('kyc_callback_processed', { profileId: result.id, status: result.status, resultCode: String(payload.ResultCode) });
-    return { duplicate: false, profile: result };
+return { duplicate: false, profile: result };
+} catch (error) {
+  if (error.code === 'P2002') {
+    logger.info('kyc_callback_duplicate', { provider: 'smileid', eventId });
+    return { duplicate: true };
+  }
+  throw error;
+}
+};
+
+const processKycCallback = async ({ provider, payload, signature, timestamp }) => {
+  try {
+    const result = await kycProvider.processProviderCallback({ provider, payload, signature, timestamp });
+    logger.info('kyc_callback_processed', { provider, userId: result.userId, verified: result.verified });
+    return result;
   } catch (error) {
-    if (error.code === 'P2002') {
-      logger.info('kyc_callback_duplicate', { provider: 'smileid', eventId });
-      return { duplicate: true };
-    }
+    logger.error('kyc_callback_failed', { provider, message: error.message });
     throw error;
   }
+};
+
+const verifyBvnNin = async ({ user, idType, idNumber, applicantData }) => {
+  const result = await kycProvider.verifyIdentity({ user, idType, idNumber, applicantData });
+  logger.info('bvn_nin_verification_initiated', { userId: user.id, idType, provider: result.provider, verificationRef: result.verificationRef });
+  return result;
 };
 
 const calculateRiskScore = ({ amount, asset, routeType, destinationCountry, profileRiskScore = 0 }) => {
@@ -629,4 +647,6 @@ module.exports = {
   enforceWalletActivityLimit,
   PolicyError,
   POLICY_ERROR_CODES,
+  processKycCallback,
+  verifyBvnNin,
 };

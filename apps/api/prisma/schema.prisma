@@ -1053,6 +1053,28 @@ model AlertDeliveryTest {
   @@index([overallResult, completedAt])
 }
 
+/// KYC verification records for BVN/NIN verification via Smile ID or Dojah
+model KycVerification {
+  id                String   @id @default(cuid())
+  userId            String
+  provider          String
+  idType            String
+  idNumber          String
+  status            String   @default("pending")
+  providerReference String?
+  resultCode        String?
+  verifiedAt        DateTime?
+  metadata          Json     @default("{}")
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, status])
+  @@index([providerReference, provider])
+  @@index([createdAt])
+}
+
 /// Scheduled/recurring payment mandate (#1005). Created in `awaiting_pin` and
 /// only becomes `active` after the user confirms with their PIN. Execution is
 /// claimed per occurrence by advancing `nextRunAt`, so a run happens once.
