@@ -23,7 +23,7 @@ function signatureFor(timestamp) {
     .digest('base64');
 }
 
-async function submitBvnVerification({ jobId, _userId, phoneNumber, applicant }) {
+async function submitBvnVerification({ jobId, userId, phoneNumber, applicant }) {
   const smile = getSmileIdConfig();
   if (!smile) throw new ProviderSkippedError('Smile ID KYC is not configured');
 
@@ -57,7 +57,7 @@ async function submitBvnVerification({ jobId, _userId, phoneNumber, applicant })
   return { accepted: true, providerReference: response.data?.job_id || jobId };
 }
 
-async function submitNinVerification({ jobId, _userId, phoneNumber, applicant }) {
+async function submitNinVerification({ jobId, userId, phoneNumber, applicant }) {
   const smile = getSmileIdConfig();
   if (!smile) throw new ProviderSkippedError('Smile ID KYC is not configured');
 

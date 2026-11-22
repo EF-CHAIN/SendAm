@@ -26,7 +26,7 @@ async function getDojahToken() {
   return response.data.entity.access_token;
 }
 
-async function submitNinVerification({ jobId, _userId, phoneNumber, applicant }) {
+async function submitNinVerification({ jobId, userId, phoneNumber, applicant }) {
   const dojah = getDojahConfig();
   if (!dojah) throw new ProviderSkippedError('Dojah KYC is not configured');
 
@@ -52,7 +52,7 @@ async function submitNinVerification({ jobId, _userId, phoneNumber, applicant })
   return { accepted: true, providerReference: response.data?.entity?.reference || jobId };
 }
 
-async function submitBvnVerification({ jobId, _userId, phoneNumber, applicant }) {
+async function submitBvnVerification({ jobId, userId, phoneNumber, applicant }) {
   const dojah = getDojahConfig();
   if (!dojah) throw new ProviderSkippedError('Dojah KYC is not configured');
 
