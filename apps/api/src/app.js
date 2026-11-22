@@ -11,6 +11,7 @@ const complianceRoutes = require('./compliance/compliance.routes');
 const pricingRoutes = require('./pricing/pricing.routes');
 const simRoutes = require('./routes/sim.routes');
 const authRoutes = require('./routes/auth.routes');
+const sep24Routes = require('./routes/sep24.routes');
 const receiptRoutes = require('./routes/receipt.routes');
 const retentionRoutes = require('./routes/retention.routes');
 const federationRoutes = require('./routes/federation.routes');
@@ -189,7 +190,9 @@ app.get('/metrics', (_req, res) => {
 // Routes
 app.use('/federation', federationRoutes);
 app.use('/webhook', webhookRoutes);
+app.use('/auth', authRoutes);
 app.use('/api/auth', authRoutes);
+app.use('/api/sep24', sep24Routes);
 app.use('/api/receipts', receiptRoutes);
 
 // The REST wallet API requires a SEP-10 application session. The feature flag
