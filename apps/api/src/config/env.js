@@ -241,8 +241,9 @@ module.exports = {
   },
   voice: {
     provider: process.env.VOICE_PROVIDER || 'deepgram',
-    deepgramApiKey: process.env.DEEPERAM_APIKEY,
+    deepgramApiKey: process.env.DEEPGRAM_API_KEY,
     whisperApiKey: process.env.WHISPER_API_KEY || process.env.OPENAI_API_KEY,
+    speakerConfidenceThreshold: Number(process.env.VOICE_SPEAKER_CONFIDENCE_THRESHOLD || 0.75),
   },
   // Request body limits and timeout tuning. Limits are route-appropriate;
   // webhook/media routes may override the default. Timeouts prevent slow or
