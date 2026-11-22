@@ -1,7 +1,7 @@
 #![no_std]
 
 use soroban_sdk::{
-    contract, contractclient, contracterror, contractimpl, contracttype, symbol_short,
+    contract, contracterror, contractimpl, contracttype, symbol_short,
     Address, Bytes, BytesN, Env, Symbol, Vec,
 };
 
@@ -66,7 +66,6 @@ pub struct RateUpdate {
     pub timestamp: u64,
 }
 
-#[contractclient(name = "RateOracleClient")]
 pub trait RateOracleTrait {
     /// Initialize Oracle with an admin and configurable maximum staleness threshold in seconds.
     fn init(env: Env, admin: Address, max_staleness_seconds: u64) -> Result<(), OracleError>;
