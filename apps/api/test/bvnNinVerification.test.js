@@ -68,9 +68,11 @@ describe('Smile ID / Dojah BVN/NIN verification', () => {
     });
     mockPrisma.kycVerification.update = async () => ({});
     mockPrisma.kycProfile.update = async () => ({});
+    mockPrisma.user.update = async () => ({});
 
     const { verifyCallback } = require('../src/compliance/providers/smileId');
-    verifyCallback({ signature: 'test', timestamp: new Date().toISOString() });
+    const originalVerifyCallback = verifyCallback;
+    require('../src/compliance/providers/smileId').verifyCallback = () => true;
 
     const result = await processKycCallback({
       provider: 'smileid',
@@ -78,6 +80,8 @@ describe('Smile ID / Dojah BVN/NIN verification', () => {
       signature: 'valid',
       timestamp: new Date().toISOString(),
     });
+
+    require('../src/compliance/providers/smileId').verifyCallback = originalVerifyCallback;
 
     assert.equal(result.verified, true);
     assert.equal(result.status, 'verified');
@@ -111,6 +115,7 @@ describe('Smile ID / Dojah BVN/NIN verification', () => {
     });
     mockPrisma.kycVerification.update = async () => ({});
     mockPrisma.kycProfile.update = async () => ({});
+    mockPrisma.user.update = async () => ({});
 
     const payload = {
       entity: { verified: true, reference: 'ref-1', message: 'Verified' },
