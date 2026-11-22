@@ -235,3 +235,21 @@ groups:
         annotations:
           summary: SendAm alert delivery tests are repeatedly failing
           runbook_url: https://github.com/EF-CHAIN/SendAm/blob/main/docs/OBSERVABILITY.md#alert-delivery-test
+
+      # Stellar submission health. The ratio is only evaluated when at least
+      # five transactions were attempted in the window, so a single failure
+      # on a quiet system does not page.
+      - alert: SendAmStellarSubmissionFailureRateHigh
+        expr: |
+          (
+            sum(rate(stellar_tx_result_total{result="fail"}[5m]))
+            / sum(rate(stellar_tx_result_total[5m]))
+          ) > 0.02
+          and sum(increase(stellar_tx_result_total[5m])) >= 5
+        for: 1m
+        labels:
+          severity: critical
+          service: sendam-api
+        annotations:
+          summary: More than 2% of Stellar transaction submissions failed over the last 5 minutes
+          runbook_url: https://github.com/EF-CHAIN/SendAm/blob/main/docs/OBSERVABILITY.md#stellar-submission-failures

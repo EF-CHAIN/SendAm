@@ -87,7 +87,10 @@ const buildRegistry = ({ prisma, pingRedis, fetchImpl = globalThis.fetch } = {})
     degradedAboveMs: 1500,
     description: 'Stellar ledger access for balances and submission.',
     check: async () => {
-      const response = await fetchImpl(`${config.stellar.horizonUrl}/`, { method: 'GET' });
+      const url = config.stellar.horizonUrls[0] || config.stellar.horizonUrl;
+      const response = await fetchImpl(`${url.replace(/\/$/, '')}/`, {
+        signal: AbortSignal.timeout(config.health.timeoutMs),
+      });
       if (!response.ok) throw new Error(`Horizon returned ${response.status}`);
     },
   },
@@ -139,7 +142,7 @@ const checkDependency = async (dependency, { timeoutMs = config.health.timeoutMs
       status: STATUS.UNHEALTHY,
       latencyMs,
       thresholdMs: dependency.degradedAboveMs ?? null,
-      error: error.message,
+      error: error?.message || String(error),
       checkedAt: new Date().toISOString(),
     };
   }
