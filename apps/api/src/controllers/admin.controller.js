@@ -1,3 +1,4 @@
+const { createComplianceExport, reportFilters } = require('../admin/controllers/complianceExport.controller');
 const { sendSuccess, sendError, sendCursorPaginated } = require('../utils/response');
 const { authenticate, createInvitation, acceptInvitation, revokeSessions, hashPassword, changeOwnPassword, renewSession } = require('../services/adminAuth.service');
 const { writeAuditLog } = require('../common/audit.service');
@@ -74,7 +75,10 @@ const transactionWhere = (query) => {
   if (query.userId) where.userId = { equals: query.userId };
   if (query.phone) where.user = { phoneNumber: { contains: query.phone, mode: 'insensitive' } };
   Object.assign(where, identifierWhere(query.identifier, ['id', 'txHash', 'providerTransactionId']));
-  return where;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(query.to || '') && where.createdAt?.lte) {
+    where.createdAt.lte.setUTCHours(23, 59, 59, 999);
+  }
+  return { ...where, ...reportFilters(query) };
 };
 
 const kycWhere = (query) => {
@@ -455,44 +459,7 @@ const getAuditLogs = async (req, res, next) => {
   } catch (error) { return next(error); }
 };
 
-const exportTransactions = async (req, res, next) => {
-  try {
-    const where = transactionWhere(req.query);
-    const transactions = await prisma.transaction.findMany({
-      where,
-      include: { user: { select: { phoneNumber: true } } },
-      orderBy: { createdAt: 'desc' },
-      take: MAX_EXPORT_ROWS,
-    });
-    await writeAuditLog({
-      actorType: 'administrator',
-      actorId: req.admin.id,
-      action: 'admin.transactions.export',
-      entityType: 'Transaction',
-      metadata: { filters: req.query, rows: transactions.length, capped: transactions.length >= MAX_EXPORT_ROWS },
-      req,
-    });
-    const csv = toCsv(
-      transactions.map((t) => ({ ...t, phoneNumber: t.user?.phoneNumber })),
-      [
-        { header: 'id', accessor: 'id' },
-        { header: 'type', accessor: 'type' },
-        { header: 'amount', accessor: 'amount' },
-        { header: 'asset', accessor: 'asset' },
-        { header: 'rail', accessor: 'rail' },
-        { header: 'status', accessor: 'status' },
-        { header: 'destination', accessor: 'destination' },
-        { header: 'recipientPhoneNumber', accessor: 'recipientPhoneNumber' },
-        { header: 'txHash', accessor: 'txHash' },
-        { header: 'phoneNumber', accessor: 'phoneNumber' },
-        { header: 'createdAt', accessor: (r) => r.createdAt?.toISOString?.() || r.createdAt },
-      ]
-    );
-    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
-    res.setHeader('Content-Disposition', 'attachment; filename="transactions-export.csv"');
-    return res.status(200).send(csv);
-  } catch (error) { return next(error); }
-};
+const exportTransactions = createComplianceExport({ prisma, writeAuditLog, transactionWhere });
 
 // Sensitive exports: authorized (route-level requireAdmin), bounded so a single
 // request can never dump the whole table, and always recorded to the audit log.
@@ -1076,9 +1043,9 @@ const getComplianceExpirySummary = async (req, res, next) => {
 const {
   listDeadLetterJobs,
   getDeadLetterJob,
-  replayDeadLetterJob: replayDlqJob,
   discardDeadLetterJob: discardDlqJob,
 } = require('../queues/dlq.service');
+const { requeueJob } = require('../queues/dlqManager');
 
 const getDeadLetterJobs = async (req, res, next) => {
   try {
@@ -1106,7 +1073,8 @@ const getDeadLetterJobById = async (req, res, next) => {
 const replayDeadLetterJobHandler = async (req, res, next) => {
   try {
     const adminId = req.admin?.id || 'system';
-    const result = await replayDlqJob(req.params.id, {
+    // requeueJob supplies the real queue service so the job is actually re-enqueued.
+    const result = await requeueJob(req.params.id, {
       actorId: adminId,
     });
     return sendSuccess(res, result, 'Dead letter job replay processed');

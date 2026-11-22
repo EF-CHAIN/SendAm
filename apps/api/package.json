@@ -11,9 +11,9 @@
     "lint": "eslint .",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
-    "prisma:deploy": "prisma migrate deploy",
+    "prisma:deploy": "node ../../scripts/run-migrations.js",
     "db:validate": "node scripts/validate-production-db.js",
-    "db:provision": "prisma migrate deploy && node scripts/validate-production-db.js",
+    "db:provision": "npm run prisma:deploy && node scripts/validate-production-db.js",
     "whatsapp:webhook:configure": "node scripts/configure-whatsapp-webhook.js",
     "test": "node --test",
     "db:verify-restore": "node scripts/verify-restore-drill.js"
@@ -21,8 +21,13 @@
   "dependencies": {
     "@aws-sdk/client-kms": "^3.1173.0",
     "@jest/globals": "^29.7.0",
+    "@aws-sdk/client-s3": "^3.1175.0",
+    "@aws-sdk/s3-request-presigner": "^3.1175.0",
     "@prisma/adapter-pg": "^7.8.0",
     "@prisma/client": "^7.10.0",
+    "@signpdf/placeholder-pdfkit": "^3.4.0",
+    "@signpdf/signer-p12": "^3.4.0",
+    "@signpdf/signpdf": "^3.4.0",
     "@stellar/stellar-sdk": "^12.0.0",
     "axios": "^1.6.8",
     "bullmq": "^5.79.3",
@@ -34,6 +39,7 @@
     "ioredis": "^5.11.1",
     "libphonenumber-js": "^1.11.4",
     "morgan": "^1.10.0",
+    "pdfkit": "^0.15.2",
     "pg": "^8.22.0"
   },
   "prisma": {

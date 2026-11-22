@@ -98,3 +98,29 @@ Signatures are valid for 24 hours from `signedAt`. Re-sign and redeploy after th
 ## Audit trail
 
 Every startup verification is logged. Failures are reported via `captureException` and the process exits with code 1.
+
+
+## Production containers
+
+Build the API and worker image from the repository root:
+
+```sh
+docker build -f deploy/Dockerfile -t sendam-api:production .
+```
+
+Apply database migrations from a release job with the workspace tools before
+starting the new image. The runtime contains the generated Prisma client and
+production API dependencies. It runs as the `node` user with UID 1000.
+
+Set `SENDAM_API_ENV_FILE` to the secret-backed API environment file and point
+it at the TLS-enabled PostgreSQL and Redis endpoints. The production Compose
+file runs only its database service by default. To start the API and worker
+against your configured endpoints:
+
+```sh
+docker compose -f docker-compose.production.yml up -d --build api worker
+```
+
+The API listens on host loopback port 3002 by default. Set `SENDAM_API_PORT` to
+change the host port. If your release uses a signed deployment manifest, mount
+it read-only and set the configured manifest path to its container location.
