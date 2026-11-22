@@ -49,6 +49,54 @@
         { "expr": "sum by (status) (rate(sendam_webhook_events_total[5m]))", "legendFormat": "{{status}}" }
       ],
       "gridPos": { "h": 8, "w": 8, "x": 16, "y": 8 }
+    },
+    {
+      "id": 6,
+      "title": "Queue depth (waiting jobs)",
+      "type": "timeseries",
+      "targets": [
+        { "expr": "max by (queue) (bullmq_waiting_jobs_count)", "legendFormat": "{{queue}}" }
+      ],
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 }
+    },
+    {
+      "id": 7,
+      "title": "Active jobs",
+      "type": "timeseries",
+      "targets": [
+        { "expr": "max by (queue) (bullmq_active_jobs_count)", "legendFormat": "{{queue}}" }
+      ],
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 }
+    },
+    {
+      "id": 8,
+      "title": "Job duration p95",
+      "type": "timeseries",
+      "targets": [
+        { "expr": "histogram_quantile(0.95, sum by (le, queue) (rate(bullmq_job_duration_seconds_bucket[5m])))", "legendFormat": "{{queue}}" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 24 }
+    },
+    {
+      "id": 9,
+      "title": "Job wait time p95 (worker starvation)",
+      "type": "timeseries",
+      "targets": [
+        { "expr": "histogram_quantile(0.95, sum by (le, queue) (rate(bullmq_job_wait_seconds_bucket[5m])))", "legendFormat": "{{queue}}" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 24 }
+    },
+    {
+      "id": 10,
+      "title": "Redis memory used",
+      "type": "timeseries",
+      "targets": [
+        { "expr": "max(bullmq_redis_memory_used_bytes)", "legendFormat": "used_memory" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "bytes" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 32 }
     }
   ],
   "schemaVersion": 39,

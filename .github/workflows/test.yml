@@ -46,6 +46,11 @@ jobs:
           npm run prisma:deploy
           node -e "const {Client}=require('pg'); (async()=>{const c=new Client({connectionString:process.env.DATABASE_URL}); await c.connect(); await c.query(\`INSERT INTO \"User\" (id,\"phoneNumber\",\"updatedAt\") VALUES ('migration-sentinel','+2348000000101',NOW())\`); await c.end()})().catch(e=>{console.error(e);process.exit(1)})"
           mv /tmp/forward-migration "$forward_migration"
+      - name: Verify concurrent deploys serialize
+        if: matrix.scenario == 'empty'
+        env:
+          MIGRATION_TEST_DATABASE_URL: ${{ env.DATABASE_URL }}
+        run: node --test tests/integration/migrations.test.js
       - name: Apply all forward migrations
         run: npm run db:provision --workspace=apps/api
       - name: Verify existing data survived
@@ -99,6 +104,10 @@ jobs:
       # Unit tests (parser, crypto, admin auth, transfer guardrails, recipient
       # resolution, validators)
       - run: npm test
+      - name: Verify concurrent fee voucher redemption in PostgreSQL
+        env:
+          TEST_DATABASE_URL: postgresql://postgres:password@localhost:5432/sendam_test
+        run: node --test apps/api/test/loyaltyRebate.test.js
 
   frontend-build:
     name: Frontend build

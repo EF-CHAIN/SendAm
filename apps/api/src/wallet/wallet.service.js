@@ -340,11 +340,11 @@ const balancesForUser = async ({ userId, phoneNumber }) => {
   }));
 };
 
-const submitPayment = async ({ wallet, destination, amount, asset, memo, memoType }) => {
+const submitPayment = async ({ wallet, ...payment }) => {
   // Last line of defence before a key is decrypted and used to sign.
   assertUsableOnActiveNetwork(wallet);
   const secretKey = decrypt(wallet.encryptedSecretKey);
-  return stellarAdapter.submitPayment({ secretKey, destination, amount, asset, memo, memoType });
+  return stellarAdapter.submitPayment({ secretKey, ...payment });
 };
 
 const transactionHistory = async ({ userId }) => {

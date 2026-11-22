@@ -36,6 +36,7 @@ test('worker owns job startup and graceful resource shutdown', async () => {
       calls.push('jobs');
       return { stop: async () => calls.push('stop-jobs') };
     },
+    pauseQueueIntake: async () => calls.push('pause-intake'),
     closeQueueResources: async () => calls.push('close-queues'),
     disconnect: async () => calls.push('disconnect-db'),
     createHealth: () => ({
@@ -47,7 +48,7 @@ test('worker owns job startup and graceful resource shutdown', async () => {
   assert.deepEqual(calls, ['connect', 'jobs']);
   await runtime.shutdown('TEST');
   assert.deepEqual(calls, [
-    'connect', 'jobs', 'not-ready', 'close-health', 'stop-jobs', 'close-queues', 'disconnect-db',
+    'connect', 'jobs', 'not-ready', 'pause-intake', 'close-health', 'stop-jobs', 'close-queues', 'disconnect-db',
   ]);
   assert.deepEqual(cancellations, ['worker shutdown: TEST']);
   await runtime.shutdown('TEST_AGAIN');

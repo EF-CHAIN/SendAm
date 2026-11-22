@@ -37,14 +37,14 @@ const checkBalance = async (req, res, next) => {
 
 const sendFunds = async (req, res, next) => {
   try {
-    const { amount, destination } = req.body || {};
+    const { amount, asset, destination, destinationAsset, destinationAmount, quoteId } = req.body || {};
     const idempotencyKey = (req.get ? req.get('Idempotency-Key') : req.headers?.['idempotency-key']) || req.body?.idempotencyKey;
 
     if (idempotencyKey && !validateKey(idempotencyKey)) {
       return sendError(res, 'Idempotency-Key header is required (8-128 URL-safe characters)', 400);
     }
 
-    if (!isValidAmount(amount) || !destination) {
+    if (!isValidAmount(amount, asset) || !destination) {
       return sendError(res, 'A valid amount and destination are required');
     }
     if (!validateAddress(String(destination).trim())) {
@@ -58,7 +58,10 @@ const sendFunds = async (req, res, next) => {
         sender: user,
         destination,
         amount,
-        asset: req.body?.asset,
+        destinationAsset,
+        destinationAmount,
+        quoteId,
+        asset,
         routeType: req.body?.routeType,
         sourceCountry: req.body?.sourceCountry,
         destinationCountry: req.body?.destinationCountry,
@@ -81,7 +84,10 @@ const sendFunds = async (req, res, next) => {
           sender: user,
           destination,
           amount,
-          asset: req.body.asset,
+          destinationAsset,
+          destinationAmount,
+          quoteId,
+          asset,
           routeType: req.body.routeType,
           sourceCountry: req.body.sourceCountry,
           destinationCountry: req.body.destinationCountry,

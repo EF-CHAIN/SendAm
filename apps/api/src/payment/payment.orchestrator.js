@@ -14,6 +14,8 @@ const { withIdAlias } = require('../common/records');
 const { assertValidAmount, percentage } = require('../utils/money');
 const config = require('../config/env');
 const assetIdentity = require('../wallet/assetIdentity');
+const { pathAmount } = require('./pathPaymentRouter');
+const { redeemVoucher, hasLoyaltyReward } = require('../pricing/loyaltyRebate');
 
 const RAIL = 'stellar';
 const NATIVE_ASSET = 'XLM';
@@ -27,10 +29,12 @@ const buildReceipt = ({ transaction }) => {
     transactionId: transaction.id,
     receiptId: `SDA-${transaction.id}`,
     status: transaction.status,
-    amount: transaction.amount,
+    amount: meta.pathPayment?.sourceDebit || transaction.amount,
     asset: transaction.asset,
     rail: transaction.rail,
     receiptUrl: transaction.explorerUrl,
+    ...(meta.pathPayment ? { pathPayment: meta.pathPayment } : {}),
+    ...(meta.loyalty ? { loyalty: meta.loyalty } : {}),
     ...(meta.fee ? { fee: meta.fee } : {}),
     ...(meta.memo ? { memo: meta.memo, memoType: meta.memoType || 'text' } : {}),
   };
@@ -53,6 +57,8 @@ const executePayment = async ({
   memoType,
   quoteId,
   idempotencyKey,
+  destinationAsset,
+  destinationAmount,
 }) => {
   const senderUser = sender;
   if (!senderUser) throw new Error('Sender not found.');
@@ -74,6 +80,17 @@ const executePayment = async ({
   const effectiveAsset = asset || NATIVE_ASSET;
   const effectiveRouteType = routeType || (sourceCountry && destinationCountry && sourceCountry !== destinationCountry ? 'cross_border' : 'domestic');
   const normalizedAmount = assertValidAmount(amount, effectiveAsset);
+
+  let pathPayment;
+  if (destinationAsset !== undefined || destinationAmount !== undefined) {
+    if (!destinationAsset || !destinationAmount || destinationAsset === effectiveAsset) {
+      throw Object.assign(new Error('A different destination asset and its exact receive amount are required.'), { statusCode: 400 });
+    }
+    stellarAdapter.resolveAsset(effectiveAsset, { path: true });
+    const target = stellarAdapter.resolveAsset(destinationAsset, { path: true });
+    pathAmount(destinationAmount);
+    pathPayment = { destinationAsset, destinationAmount, destinationIssuer: target.getIssuer() || null };
+  }
 
   const memoMetadata = (memo !== undefined && memo !== null && memo !== '')
     ? { memo: stellarAdapter.redactMemo ? stellarAdapter.redactMemo(memo) : String(memo), memoType: String(memoType || 'text').toLowerCase() }
@@ -100,7 +117,7 @@ const executePayment = async ({
       const prior = await tx.transaction.findUnique({ where: { idempotencyKey } });
       if (prior) {
         const quote = prior.quoteId ? await tx.quote.findUnique({ where: { id: prior.quoteId } }) : null;
-        return { compliance, quote, transaction: prior };
+        return { quote, transaction: prior, created: false };
       }
     }
 
@@ -125,7 +142,7 @@ const executePayment = async ({
       }
       // Safe to settle: claim the quote so a retry with the same id is rejected.
       quote = await tx.quote.update({
-        where: { id: quoteId },
+        where: { id: quoteId, status: QUOTE_STATUS.ACTIVE },
         data: { status: QUOTE_STATUS.CONSUMED },
       });
     } else {
@@ -177,9 +194,13 @@ const executePayment = async ({
           fiatCurrency: compliance.policySnapshot?.referenceCurrency || (isFirmSep38Quote(quote) ? quote.targetCurrency : undefined),
           fiatAmount: compliance.policySnapshot?.convertedAmount || (isFirmSep38Quote(quote) ? quote.targetAmount : undefined),
           metadata: {
-            fee: calculateFee(normalizedAmount, effectiveAsset),
+            fee: quote.fee ?? calculateFee(normalizedAmount, effectiveAsset),
+            ...(quote.metadata?.loyalty ? { loyalty: quote.metadata.loyalty } : {}),
+            ...(pathPayment ? { pathPayment } : {}),
             userHiddenRail: true,
             riskScore: compliance.riskScore,
+            ...(sourceCountry && destinationCountry
+              ? { corridor: `${sourceCountry}-${destinationCountry}`.toUpperCase() } : {}),
             stateHistory: [{
               from: null,
               to: 'processing',
@@ -207,18 +228,19 @@ const executePayment = async ({
         const existing = await tx.transaction.findUnique({ where: { idempotencyKey } });
         if (existing) {
           const existingQuote = existing.quoteId ? await tx.quote.findUnique({ where: { id: existing.quoteId } }) : null;
-          return { compliance, quote: existingQuote, transaction: existing };
+          return { quote: existingQuote, transaction: existing, created: false };
         }
       }
       throw error;
     }
 
-    return { compliance, quote, transaction };
+    await redeemVoucher({ db: tx, transaction, loyalty: quote.metadata?.loyalty });
+    return { quote, transaction, created: true };
   };
 
-  const { quote, transaction } = await (prisma.$transaction ? prisma.$transaction(runCore) : runCore(prisma));
+  const { quote, transaction, created } = await (prisma.$transaction ? prisma.$transaction(runCore) : runCore(prisma));
 
-  if (transaction.status !== 'processing') {
+  if (!created || transaction.status !== 'processing') {
     return {
       transaction: withIdAlias(transaction),
       quote,
@@ -227,6 +249,8 @@ const executePayment = async ({
   }
 
   let activeTransaction = transaction;
+  let submitted = false;
+  const trackEnvelope = pathPayment || transaction.metadata?.loyalty?.voucherId || hasLoyaltyReward(transaction);
 
   try {
     const wallet = await walletService.createOrGetWallet({ user: senderUser });
@@ -237,7 +261,14 @@ const executePayment = async ({
       asset: effectiveAsset,
       memo,
       memoType,
+      ...(pathPayment ? { pathPayment } : {}),
+      ...(trackEnvelope ? {
+        onEnvelope: async (txHash) => {
+          await prisma.transaction.update({ where: { id: activeTransaction.id }, data: { txHash } });
+        },
+      } : {}),
     });
+    submitted = true;
 
     activeTransaction = await transitionPaymentState({
       db: prisma,
@@ -253,7 +284,7 @@ const executePayment = async ({
       },
     });
 
-    await ledger.postPaymentSettled({ tx: prisma, transaction: activeTransaction });
+    if (!pathPayment) await ledger.postPaymentSettled({ tx: prisma, transaction: activeTransaction });
 
     await appendEvent({
       eventType: EVENT_TYPES.PAYMENT_SUBMITTED,
@@ -273,8 +304,14 @@ const executePayment = async ({
       },
     }).catch(() => {});
 
-    return { transaction: withIdAlias(activeTransaction), quote, receipt: null };
+    return {
+      transaction: withIdAlias(activeTransaction),
+      quote,
+      receipt: null,
+      ...(result.ledgerConfirmed ? { ledgerConfirmed: true } : {}),
+    };
   } catch (error) {
+    if (submitted && trackEnvelope) throw error;
     await markTransactionFailed({
       prisma,
       transactionId: activeTransaction.id,
@@ -301,6 +338,7 @@ const executeRefund = async ({ transactionId, reason, amount, adminId }) => {
   if (!originalTx) throw new Error('Original transaction not found.');
   if (originalTx.status !== 'success') throw new Error('Only successful transactions can be refunded.');
   if (originalTx.type !== 'send') throw new Error('Only payments of type "send" can be refunded.');
+  if (originalTx.metadata?.pathPayment) throw new Error('Path payments require a separate refund settlement.');
 
   const refundAmount = amount ? assertValidAmount(amount, originalTx.asset) : originalTx.amount;
 

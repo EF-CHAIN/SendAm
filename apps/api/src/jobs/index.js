@@ -2,9 +2,13 @@ const { registerWhatsAppJobs } = require('./whatsapp.jobs');
 const { startDepositPoller } = require('./deposits.jobs');
 const { startAuditPoller } = require('./audit.jobs');
 const { JOB_NAME, runRotationHealthCheck, rotateCategorySecret } = require('./secret-rotation.job');
+const { startLedgerReconciliationScheduler } = require('./reconcileLedger.job');
+const { startRecurringPaymentScheduler } = require('../payment/recurringPayments');
 const { startWebhookInboxDrain, startOutboxReconciler } = require('./messaging.jobs');
 const { startSep24Poller } = require('./sep24Poll.job');
 const { startAlertDeliveryTestPoller } = require('../observability/alertDeliveryTest.service');
+const { processReceiptJob, QUEUE_NAME: RECEIPT_QUEUE } = require('./generateReceipt.job');
+const { processPartnerWebhookJob, QUEUE_NAME: PARTNER_WEBHOOK_QUEUE } = require('../services/partnerWebhooks');
 const { enqueue, registerProcessor } = require('../queues/queue.service');
 const config = require('../config/env');
 const prisma = require('../common/prisma');
@@ -38,6 +42,10 @@ const registerSecretRotationJobs = () => {
   return { startRotationScheduler };
 };
 
+const registerPartnerWebhookJobs = () => registerProcessor(PARTNER_WEBHOOK_QUEUE, (job) => processPartnerWebhookJob(job));
+
+const registerReceiptJobs = () => registerProcessor(RECEIPT_QUEUE, (job) => processReceiptJob(job));
+
 const registerJobs = () => {
   const whatsappWorker = registerWhatsAppJobs();
   const depositPoller = startDepositPoller();
@@ -63,6 +71,10 @@ const registerJobs = () => {
     logger.info('sep24_poller_disabled', { reason: 'SEP24_POLL_INTERVAL_MS=0' });
   }
 
+  registerPartnerWebhookJobs();
+  registerReceiptJobs();
+  const ledgerReconciler = startLedgerReconciliationScheduler();
+  const recurringPayments = startRecurringPaymentScheduler();
   return {
     whatsappWorker,
     depositPoller,
@@ -73,6 +85,9 @@ const registerJobs = () => {
     alertDeliveryPoller,
     sep24Poller,
     processorNames: ['whatsapp-inbound'],
+    ledgerReconciler,
+    recurringPayments,
+    processorNames: ['whatsapp-inbound', PARTNER_WEBHOOK_QUEUE, RECEIPT_QUEUE],
     stop: async () => {
       depositPoller.stop();
       auditPoller.stop();
@@ -80,6 +95,8 @@ const registerJobs = () => {
       outboxReconciler.stop();
       alertDeliveryPoller?.stop();
       sep24Poller?.stop();
+      ledgerReconciler.stop();
+      recurringPayments.stop();
     },
   };
 };
