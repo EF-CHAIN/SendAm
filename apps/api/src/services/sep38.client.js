@@ -193,13 +193,13 @@ const getInfo = async ({ quoteServerUrl, jwt } = {}, options = {}) => {
   const baseUrl = normalizeQuoteServerUrl(quoteServerUrl);
   const axiosImpl = options.axiosImpl || axios;
   const timeout = Number(options.timeoutMs ?? config?.requestLimits?.upstreamTimeoutMs ?? 10000);
-  const token = normalizeOptionalJwt(jwt);
+  const authJwt = normalizeOptionalJwt(jwt);
 
   try {
     const response = await axiosImpl.get(`${baseUrl}/info`, {
       headers: {
         ...outboundHeaders(),
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...(authJwt ? { Authorization: `Bearer ${authJwt}` } : {}),
       },
       timeout,
     });
@@ -262,14 +262,14 @@ const getPrices = async (
 
   const axiosImpl = options.axiosImpl || axios;
   const timeout = Number(options.timeoutMs ?? config?.requestLimits?.upstreamTimeoutMs ?? 10000);
-  const token = normalizeOptionalJwt(jwt);
+  const authJwt = normalizeOptionalJwt(jwt);
 
   try {
     const response = await axiosImpl.get(`${baseUrl}/prices`, {
       params,
       headers: {
         ...outboundHeaders(),
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...(authJwt ? { Authorization: `Bearer ${authJwt}` } : {}),
       },
       timeout,
     });
@@ -328,7 +328,7 @@ const getPrice = async (
 
   const axiosImpl = options.axiosImpl || axios;
   const timeout = Number(options.timeoutMs ?? config?.requestLimits?.upstreamTimeoutMs ?? 10000);
-  const token = normalizeOptionalJwt(jwt);
+  const authJwt = normalizeOptionalJwt(jwt);
 
   let data;
   try {
@@ -336,7 +336,7 @@ const getPrice = async (
       params,
       headers: {
         ...outboundHeaders(),
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...(authJwt ? { Authorization: `Bearer ${authJwt}` } : {}),
       },
       timeout,
     });

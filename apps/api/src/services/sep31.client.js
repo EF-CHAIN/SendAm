@@ -269,14 +269,14 @@ const getInfo = async ({ directPaymentServerUrl, lang, jwt } = {}, options = {})
   const baseUrl = normalizeDirectPaymentServerUrl(directPaymentServerUrl);
   const axiosImpl = options.axiosImpl || axios;
   const timeout = Number(options.timeoutMs ?? config?.requestLimits?.upstreamTimeoutMs ?? 10000);
-  const token = normalizeOptionalJwt(jwt);
+  const authJwt = normalizeOptionalJwt(jwt);
 
   try {
     const response = await axiosImpl.get(`${baseUrl}/info`, {
       params: lang ? { lang } : {},
       headers: {
         ...outboundHeaders(),
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...(authJwt ? { Authorization: `Bearer ${authJwt}` } : {}),
       },
       timeout,
     });

@@ -250,10 +250,10 @@ const wrapAxiosError = (error, operation) => {
 const performGet = async ({ url, params, jwt, operation, options = {} }) => {
   const axiosImpl = options.axiosImpl || axios;
   const timeout = Number(options.timeoutMs ?? config?.requestLimits?.upstreamTimeoutMs ?? 10000);
-  const token = normalizeOptionalJwt(jwt);
+  const authJwt = normalizeOptionalJwt(jwt);
   const headers = {
     ...outboundHeaders(),
-    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    ...(authJwt ? { Authorization: `Bearer ${authJwt}` } : {}),
   };
 
   try {
