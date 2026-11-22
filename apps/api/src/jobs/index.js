@@ -6,6 +6,7 @@ const { startLedgerReconciliationScheduler } = require('./reconcileLedger.job');
 const { startRecurringPaymentScheduler } = require('../payment/recurringPayments');
 const { startQueueHistoryPurge } = require('./purgeQueueHistory.job');
 const { startWebhookInboxDrain, startOutboxReconciler } = require('./messaging.jobs');
+const { startSep24Poller } = require('./sep24Poll.job');
 const { startAlertDeliveryTestPoller } = require('../observability/alertDeliveryTest.service');
 const { processReceiptJob, QUEUE_NAME: RECEIPT_QUEUE } = require('./generateReceipt.job');
 const { processPartnerWebhookJob, QUEUE_NAME: PARTNER_WEBHOOK_QUEUE } = require('../services/partnerWebhooks');
@@ -64,6 +65,14 @@ const registerJobs = () => {
     logger.info('alert_delivery_test_poller_disabled', { reason: 'ALERT_DELIVERY_TEST_INTERVAL_MS=0' });
   }
 
+  let sep24Poller = null;
+  const sep24PollIntervalMs = Number(config.stellar?.sep24PollIntervalMs ?? 15000);
+  if (sep24PollIntervalMs > 0) {
+    sep24Poller = startSep24Poller({ intervalMs: sep24PollIntervalMs });
+  } else {
+    logger.info('sep24_poller_disabled', { reason: 'SEP24_POLL_INTERVAL_MS=0' });
+  }
+
   registerPartnerWebhookJobs();
   registerReceiptJobs();
   const ledgerReconciler = startLedgerReconciliationScheduler();
@@ -77,6 +86,7 @@ const registerJobs = () => {
     outboxReconciler,
     queueHistoryPurge,
     alertDeliveryPoller,
+    sep24Poller,
     ledgerReconciler,
     recurringPayments,
     processorNames: ['whatsapp-inbound', PARTNER_WEBHOOK_QUEUE, RECEIPT_QUEUE],
@@ -87,6 +97,7 @@ const registerJobs = () => {
       outboxReconciler.stop();
       queueHistoryPurge.stop();
       alertDeliveryPoller?.stop();
+      sep24Poller?.stop();
       ledgerReconciler.stop();
       recurringPayments.stop();
     },
