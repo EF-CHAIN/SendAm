@@ -3,6 +3,7 @@ const router = express.Router();
 const verifyWebhook = require('../middlewares/verifyWebhook');
 const verifyWhatsappSignature = require('../middlewares/verifyWhatsappSignature');
 const webhookController = require('../controllers/webhook.controller');
+const { createSep24WebhookHandler } = require('../jobs/sep24Poll.job');
 const { validateExternalPayload } = require('../common/validation');
 const { increment } = require('../observability/metrics');
 
@@ -45,6 +46,13 @@ router.post(
   verifyWhatsappSignature,
   validateExternalPayload('whatsapp.message'),
   webhookController.handleIncomingMessage,
+);
+
+// POST endpoint for anchor SEP-24 transaction status callbacks.
+router.post(
+  '/sep24',
+  requestTimeout(30000),
+  createSep24WebhookHandler(),
 );
 
 // Handle errors from body parsing and request timeouts gracefully.

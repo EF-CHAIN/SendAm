@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- API worker purges completed and failed BullMQ job history older than `QUEUE_HISTORY_RETENTION_DAYS` (default 7) daily via `queue.clean()` in bounded batches, keeping Redis memory bounded (#1017).
+- API logger and HTTP access log redact Stellar secret keys, PINs and phone numbers through the shared `middlewares/redactPii` module (#1020).
 - `@sendam/shared` logger keeps the last 100 entries in an in-memory ring buffer, with `logger.getRecentLogs()`, `logger.downloadLogs()` and `logger.clearLogs()` for support tickets (#811).
 - `@sendam/shared` `StellarAddress` component renders `GABC...WXYZ` with a full-address tooltip and one-click copy (#808).
 - `@sendam/shared` `formatRelativeTime` ("Just now", "5m ago", "2h ago", absolute after 24 hours) with live `subscribeRelativeTime` ticks and a `useRelativeTime` hook (#805).
