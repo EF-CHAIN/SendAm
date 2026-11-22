@@ -40,7 +40,7 @@ const getPrisma = () => {
 
 let redisClient;
 
-if (config.redis && config.redis.url) {
+if (config.redis && (config.redis.url || config.redis.clusterNodes)) {
   try {
     // Share the process-wide connection configured in src/config/redis.js so
     // the DLQ inherits the same TLS / backoff / timeout / topology policy and
@@ -148,6 +148,7 @@ async function moveToDeadLetterQueue(job, error, options = {}) {
     sender: redact(String(job.data?.from || job.data?.recipient || '')),
     whatsappMessageId: job.data?.whatsappMessageId || job.id || null,
     failureReason: redact(error?.message || String(error || 'Unknown job failure')),
+    failureStack: error?.stack ? redact(String(error.stack)).slice(0, 4000) : null,
     attempts: job.attemptsMade || 3,
     failedAt: new Date().toISOString(),
     payload: sanitizePayload(job.data || {}),

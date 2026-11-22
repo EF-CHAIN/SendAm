@@ -23,6 +23,12 @@ const hasTls = (url, protocol) => {
 const validateEnv = (config) => {
   const problems = [];
 
+  for (const [asset, issuer] of Object.entries(config.stellar?.pathIssuers || {})) {
+    if (issuer && !require('@stellar/stellar-sdk').StrKey.isValidEd25519PublicKey(issuer)) {
+      problems.push(`STELLAR_${asset}_ISSUER must be a valid Stellar account for the configured network.`);
+    }
+  }
+
   if (!config.encryptionKey || Buffer.from(config.encryptionKey, 'hex').length !== 32) {
     problems.push('ENCRYPTION_KEY must be a 64-character hex string (32 bytes). Generate one with: openssl rand -hex 32');
   }
@@ -43,7 +49,7 @@ const validateEnv = (config) => {
     if (!config.databaseUrl || !hasTls(config.databaseUrl, 'postgres')) {
       problems.push('DATABASE_URL must use PostgreSQL TLS (sslmode=require, verify-ca, or verify-full) in production.');
     }
-    if (!config.redis?.url || !hasTls(config.redis.url, 'redis')) {
+    if (!config.redis?.clusterNodes && (!config.redis?.url || !hasTls(config.redis.url, 'redis'))) {
       problems.push('REDIS_URL or UPSTASH_REDIS_URL must use rediss:// TLS in production.');
     }
     if (!Number.isInteger(config.databasePool?.max) || config.databasePool.max < 1) {
@@ -138,7 +144,7 @@ const validateEnv = (config) => {
 
 const validateWorkerEnv = (config) => {
   const problems = [];
-  if (!config.redis?.url) problems.push('REDIS_URL or UPSTASH_REDIS_URL must be set for the background worker.');
+  if (!config.redis?.url && !config.redis?.clusterNodes) problems.push('REDIS_URL, UPSTASH_REDIS_URL or REDIS_CLUSTER_NODES must be set for the background worker.');
   if (!Number.isInteger(config.worker?.concurrency) || config.worker.concurrency < 1) {
     problems.push('WORKER_CONCURRENCY must be a positive integer.');
   }
