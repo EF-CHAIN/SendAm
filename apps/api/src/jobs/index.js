@@ -4,6 +4,7 @@ const { startAuditPoller } = require('./audit.jobs');
 const { JOB_NAME, runRotationHealthCheck, rotateCategorySecret } = require('./secret-rotation.job');
 const { startLedgerReconciliationScheduler } = require('./reconcileLedger.job');
 const { startRecurringPaymentScheduler } = require('../payment/recurringPayments');
+const { startQueueHistoryPurge } = require('./purgeQueueHistory.job');
 const { startWebhookInboxDrain, startOutboxReconciler } = require('./messaging.jobs');
 const { startAlertDeliveryTestPoller } = require('../observability/alertDeliveryTest.service');
 const { processReceiptJob, QUEUE_NAME: RECEIPT_QUEUE } = require('./generateReceipt.job');
@@ -52,6 +53,7 @@ const registerJobs = () => {
   const rotationJobs = registerSecretRotationJobs();
   const inboxDrain = startWebhookInboxDrain();
   const outboxReconciler = startOutboxReconciler();
+  const queueHistoryPurge = startQueueHistoryPurge();
 
   // Only start the alert delivery test poller when at least one route is
   // configured. An interval of 0 is an explicit disable signal.
@@ -73,6 +75,7 @@ const registerJobs = () => {
     rotationJobs,
     inboxDrain,
     outboxReconciler,
+    queueHistoryPurge,
     alertDeliveryPoller,
     ledgerReconciler,
     recurringPayments,
@@ -82,6 +85,7 @@ const registerJobs = () => {
       auditPoller.stop();
       inboxDrain.stop();
       outboxReconciler.stop();
+      queueHistoryPurge.stop();
       alertDeliveryPoller?.stop();
       ledgerReconciler.stop();
       recurringPayments.stop();
