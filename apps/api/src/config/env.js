@@ -34,6 +34,30 @@ module.exports = {
   encryptionKey: process.env.ENCRYPTION_KEY,
   activeKeyVersion: process.env.ACTIVE_KEY_VERSION || 'v1',
   kmsKeyVersions: process.env.KMS_KEY_VERSIONS ? JSON.parse(process.env.KMS_KEY_VERSIONS) : null,
+  kms: {
+    provider: process.env.KMS_PROVIDER || 'local',
+    aws: {
+      region: process.env.AWS_KMS_REGION || process.env.AWS_REGION || 'us-east-1',
+      keyId: process.env.AWS_KMS_KEY_ID || null,
+      endpoint: process.env.AWS_KMS_ENDPOINT || null,
+    },
+    vault: {
+      address: process.env.VAULT_ADDR || null,
+      token: process.env.VAULT_TOKEN || null,
+      namespace: process.env.VAULT_NAMESPACE || null,
+      mount: process.env.VAULT_TRANSIT_MOUNT || 'transit',
+      keyName: process.env.VAULT_TRANSIT_KEY || 'sendam-wallet-key',
+      timeoutMs: Number(process.env.VAULT_TIMEOUT_MS || 5000),
+      tokenRenewThresholdSec: Number(process.env.VAULT_TOKEN_RENEW_THRESHOLD_SEC || 300),
+    },
+  },
+  hsm: {
+    enabled: String(process.env.HSM_ENABLED || '').toLowerCase() === 'true',
+    endpoint: process.env.HSM_ENDPOINT || null,
+    apiKey: process.env.HSM_API_KEY || null,
+    timeoutMs: Number(process.env.HSM_TIMEOUT_MS || 5000),
+    maxRetries: Number(process.env.HSM_MAX_RETRIES || 2),
+  },
   // Comma-separated list of origins allowed to call the REST API. Empty means
   // "no allowlist configured" — see app.js for the dev/prod behaviour.
   corsOrigins: (process.env.CORS_ORIGINS || '')

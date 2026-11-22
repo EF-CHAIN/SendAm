@@ -1,201 +1,513 @@
-// VaultTransitProvider implementation using CommonJS
-// Provides encryption, decryption, data‑key handling and token renewal via HashiCorp Vault Transit engine.
+'use strict';
 
 const axios = require('axios');
-const { Buffer } = require('buffer');
+const logger = require('../../utils/logger');
+
+const DEFAULT_MOUNT = 'transit';
+const DEFAULT_KEY_NAME = 'sendam-wallet-key';
+const DEFAULT_TIMEOUT_MS = 5000;
+const DEFAULT_RENEW_THRESHOLD_SEC = 300;
+const EXPECTED_DEK_BYTES = 32;
+
+const VAULT_ERROR_CODES = Object.freeze({
+  MISCONFIGURED: 'VAULT_MISCONFIGURED',
+  AUTH_FAILED: 'VAULT_AUTH_FAILED',
+  TOKEN_RENEWAL_FAILED: 'VAULT_TOKEN_RENEWAL_FAILED',
+  INVALID_CIPHERTEXT: 'VAULT_INVALID_CIPHERTEXT',
+  KEY_NOT_FOUND: 'VAULT_KEY_NOT_FOUND',
+  UNAVAILABLE: 'VAULT_UNAVAILABLE',
+  PROVIDER_ERROR: 'VAULT_PROVIDER_ERROR',
+});
+
+const redactVaultError = (message, token) => {
+  let safe = String(message || 'Vault Transit request failed')
+    .replace(/S[A-Z2-7]{55}/g, '[REDACTED_SECRET]');
+  if (token && token.length >= 6) {
+    safe = safe.split(token).join('[REDACTED_VAULT_TOKEN]');
+  }
+  return safe;
+};
+
+const classifyVaultError = (error, operation, token) => {
+  const status = error?.response?.status;
+  const vaultErrors = Array.isArray(error?.response?.data?.errors)
+    ? error.response.data.errors.join('; ')
+    : '';
+  const rawMessage = vaultErrors || error?.message || 'Unknown Vault error';
+  const safeMsg = redactVaultError(rawMessage, token);
+
+  if (status === 403 || status === 401) {
+    return Object.assign(
+      new Error(`Vault Transit ${operation} unauthorized: ${safeMsg}`),
+      { code: VAULT_ERROR_CODES.AUTH_FAILED, statusCode: status, retryable: false, cause: error },
+    );
+  }
+
+  if (status === 404) {
+    return Object.assign(
+      new Error(`Vault Transit key or path not found during ${operation}: ${safeMsg}`),
+      { code: VAULT_ERROR_CODES.KEY_NOT_FOUND, statusCode: 404, retryable: false, cause: error },
+    );
+  }
+
+  if (status === 400) {
+    return Object.assign(
+      new Error(`Vault Transit ${operation} rejected request: ${safeMsg}`),
+      { code: VAULT_ERROR_CODES.INVALID_CIPHERTEXT, statusCode: 400, retryable: false, cause: error },
+    );
+  }
+
+  if (status === 503 || error?.code === 'ECONNREFUSED' || error?.code === 'ETIMEDOUT' || error?.code === 'ECONNABORTED') {
+    return Object.assign(
+      new Error(`Vault Transit unavailable during ${operation}: ${safeMsg}`),
+      { code: VAULT_ERROR_CODES.UNAVAILABLE, statusCode: status || 503, retryable: true, cause: error },
+    );
+  }
+
+  return Object.assign(
+    new Error(`Vault Transit ${operation} failed: ${safeMsg}`),
+    { code: VAULT_ERROR_CODES.PROVIDER_ERROR, statusCode: status || 502, retryable: status >= 500, cause: error },
+  );
+};
+
+const encodeBase64 = (value) => {
+  if (Buffer.isBuffer(value)) return value.toString('base64');
+  return Buffer.from(String(value), 'utf8').toString('base64');
+};
+
+const encodeContext = (context) => {
+  if (!context) return undefined;
+  if (typeof context === 'string') return encodeBase64(context);
+  if (Buffer.isBuffer(context)) return context.toString('base64');
+  if (typeof context === 'object') {
+    const sorted = Object.keys(context)
+      .sort()
+      .reduce((acc, key) => {
+        if (context[key] !== undefined && context[key] !== null) {
+          acc[key] = String(context[key]);
+        }
+        return acc;
+      }, {});
+    return encodeBase64(JSON.stringify(sorted));
+  }
+  return undefined;
+};
 
 /**
- * Factory function to create a VaultTransitProvider.
- * @param {Object} options
- * @param {string} options.endpoint - Base URL of the Vault server (e.g., http://localhost:8200).
- * @param {string} options.token - Initial Vault token.
- * @param {string} options.keyName - Name of the transit key.
- * @param {string} [options.mountPath='transit'] - Mount path of the transit engine.
- * @param {object} [options.httpClient] - Optional custom axios instance.
- * @param {number} [options.tokenRenewalIntervalMs] - Interval (ms) for automatic token renewal.
- * @returns {VaultTransitProvider}
+ * Creates a HashiCorp Vault Transit Secret Engine provider.
+ *
+ * Supports both:
+ * 1. Zero-exposure direct Transit encryption/decryption/rewrap (`encrypt`, `decrypt`, `rewrap`)
+ *    where raw master keys never leave Vault.
+ * 2. Envelope KMS provider compatibility (`generateDataKey`, `decryptDataKey`) so it can plug
+ *    directly into `crypto.service.js` via `setKmsProvider(...)`.
+ * 3. Automatic Vault token lease tracking and renewal (`/v1/auth/token/renew-self`).
  */
-function createVaultTransitProvider(options) {
-  return new VaultTransitProvider(options);
-}
+const createVaultTransitProvider = ({
+  address = process.env.VAULT_ADDR,
+  token = process.env.VAULT_TOKEN,
+  namespace = process.env.VAULT_NAMESPACE || null,
+  mount = process.env.VAULT_TRANSIT_MOUNT || DEFAULT_MOUNT,
+  keyName = process.env.VAULT_TRANSIT_KEY || DEFAULT_KEY_NAME,
+  timeoutMs = Number(process.env.VAULT_TIMEOUT_MS || DEFAULT_TIMEOUT_MS),
+  tokenRenewThresholdSec = Number(process.env.VAULT_TOKEN_RENEW_THRESHOLD_SEC || DEFAULT_RENEW_THRESHOLD_SEC),
+  tokenRenewIncrement = process.env.VAULT_TOKEN_RENEW_INCREMENT || undefined,
+  autoRenewToken = true,
+  httpClient = null,
+} = {}) => {
+  const normalizedAddr = String(address || '').replace(/\/+$/, '');
+  if (!normalizedAddr) {
+    throw Object.assign(new Error('VAULT_ADDR is required for Vault Transit provider.'), {
+      code: VAULT_ERROR_CODES.MISCONFIGURED,
+    });
+  }
+  if (!token || typeof token !== 'string') {
+    throw Object.assign(new Error('VAULT_TOKEN is required for Vault Transit provider.'), {
+      code: VAULT_ERROR_CODES.MISCONFIGURED,
+    });
+  }
 
-class VaultTransitProvider {
-  /** @param {Object} opts */
-  constructor(opts) {
-    if (!opts || typeof opts !== 'object') {
-      throw new Error('Provider options must be an object');
+  let currentToken = token;
+  let tokenExpiresAtMs = null;
+  let tokenRenewable = true;
+  let renewalInFlight = null;
+  let renewalTimer = null;
+
+  const client = httpClient || axios.create({
+    baseURL: normalizedAddr,
+    timeout: timeoutMs,
+  });
+
+  const buildHeaders = () => ({
+    'X-Vault-Token': currentToken,
+    'Content-Type': 'application/json',
+    ...(namespace ? { 'X-Vault-Namespace': namespace } : {}),
+  });
+
+  const transitPath = (action, targetKey) => {
+    const cleanMount = String(mount || DEFAULT_MOUNT).replace(/^\/+|\/+$/g, '');
+    const resolvedKey = encodeURIComponent(targetKey || keyName);
+    return `/v1/${cleanMount}/${action}/${resolvedKey}`;
+  };
+
+  /**
+   * Inspects the current token lease via `/v1/auth/token/lookup-self`.
+   */
+  const lookupToken = async () => {
+    try {
+      const response = await client.get('/v1/auth/token/lookup-self', {
+        headers: buildHeaders(),
+      });
+      const data = response?.data?.data || {};
+      const ttl = Number(data.ttl || 0);
+      tokenRenewable = Boolean(data.renewable);
+      tokenExpiresAtMs = ttl > 0 ? Date.now() + ttl * 1000 : null;
+      return {
+        renewable: tokenRenewable,
+        ttl,
+        policies: data.policies || [],
+        accessor: data.accessor || null,
+      };
+    } catch (error) {
+      throw classifyVaultError(error, 'lookupToken', currentToken);
     }
-    const {
-      endpoint,
-      token,
-      keyName,
-      mountPath = 'transit',
-      httpClient,
-      tokenRenewalIntervalMs,
-    } = opts;
+  };
 
-    if (!endpoint) throw new Error('endpoint is required');
-    if (!token) throw new Error('token is required');
-    if (!keyName) throw new Error('keyName is required');
+  /**
+   * Renews the active Vault token lease via `/v1/auth/token/renew-self`.
+   * Coalesces concurrent renewal calls so only one request is in flight at a time.
+   */
+  const renewToken = async ({ increment = tokenRenewIncrement } = {}) => {
+    if (renewalInFlight) {
+      return renewalInFlight;
+    }
 
-    this.endpoint = endpoint.replace(/\/*$/g, ''); // trim trailing slash
-    this.token = token;
-    this.keyName = keyName;
-    this.mountPath = mountPath.replace(/^\/*|\/*$/g, ''); // trim leading/trailing slashes
-    this.http = httpClient || axios.create({ baseURL: this.endpoint });
+    renewalInFlight = (async () => {
+      try {
+        const body = increment ? { increment } : {};
+        const response = await client.post('/v1/auth/token/renew-self', body, {
+          headers: buildHeaders(),
+        });
+        const auth = response?.data?.auth || {};
+        if (auth.client_token) {
+          currentToken = auth.client_token;
+        }
+        const leaseDuration = Number(auth.lease_duration || 0);
+        tokenRenewable = auth.renewable !== false;
+        tokenExpiresAtMs = leaseDuration > 0 ? Date.now() + leaseDuration * 1000 : null;
+        logger.info('vault_token_renewed', {
+          leaseDuration,
+          renewable: tokenRenewable,
+        });
+        return {
+          leaseDuration,
+          renewable: tokenRenewable,
+          policies: auth.policies || [],
+        };
+      } catch (error) {
+        const classified = classifyVaultError(error, 'renewToken', currentToken);
+        classified.code = VAULT_ERROR_CODES.TOKEN_RENEWAL_FAILED;
+        logger.error('vault_token_renewal_failed', { error: classified.message });
+        throw classified;
+      } finally {
+        renewalInFlight = null;
+      }
+    })();
 
-    // Attach interceptor to add the X-Vault-Token header to every request
-    this.http.interceptors.request.use((config) => {
-      config.headers = config.headers || {};
-      config.headers['X-Vault-Token'] = this.token;
-      return config;
+    return renewalInFlight;
+  };
+
+  const ensureValidToken = async () => {
+    if (!autoRenewToken || !tokenRenewable || !tokenExpiresAtMs) {
+      return;
+    }
+    const remainingSec = (tokenExpiresAtMs - Date.now()) / 1000;
+    if (remainingSec <= tokenRenewThresholdSec) {
+      await renewToken();
+    }
+  };
+
+  const requestWithRenewal = async (operation, fn) => {
+    await ensureValidToken();
+    try {
+      return await fn();
+    } catch (error) {
+      const status = error?.response?.status;
+      if (status === 403 && autoRenewToken && tokenRenewable) {
+        try {
+          await renewToken();
+          return await fn();
+        } catch (_retryError) {
+          throw classifyVaultError(error, operation, currentToken);
+        }
+      }
+      throw classifyVaultError(error, operation, currentToken);
+    }
+  };
+
+  /**
+   * Delegates direct encryption to Vault Transit (`POST /v1/<mount>/encrypt/<key>`).
+   */
+  const encrypt = async ({
+    plaintext,
+    keyName: targetKey = keyName,
+    context = null,
+    keyVersion = undefined,
+  } = {}) => {
+    if (plaintext === undefined || plaintext === null || plaintext === '') {
+      throw Object.assign(new Error('plaintext is required for Vault Transit encryption.'), {
+        code: VAULT_ERROR_CODES.INVALID_CIPHERTEXT,
+      });
+    }
+
+    const payload = {
+      plaintext: encodeBase64(plaintext),
+      ...(context ? { context: encodeContext(context) } : {}),
+      ...(Number.isInteger(keyVersion) ? { key_version: keyVersion } : {}),
+    };
+
+    const response = await requestWithRenewal('encrypt', () =>
+      client.post(transitPath('encrypt', targetKey), payload, {
+        headers: buildHeaders(),
+      }),
+    );
+
+    const data = response?.data?.data;
+    if (!data?.ciphertext) {
+      throw Object.assign(new Error('Vault Transit encrypt returned no ciphertext.'), {
+        code: VAULT_ERROR_CODES.PROVIDER_ERROR,
+      });
+    }
+
+    return {
+      ciphertext: data.ciphertext,
+      keyVersion: data.key_version != null ? `v${data.key_version}` : 'v1',
+      keyName: targetKey,
+    };
+  };
+
+  /**
+   * Delegates direct decryption to Vault Transit (`POST /v1/<mount>/decrypt/<key>`).
+   */
+  const decrypt = async ({
+    ciphertext,
+    keyName: targetKey = keyName,
+    context = null,
+    asBuffer = false,
+  } = {}) => {
+    if (typeof ciphertext !== 'string' || !ciphertext.startsWith('vault:v')) {
+      throw Object.assign(new Error('Malformed Vault Transit ciphertext: expected vault:v<n>:... format.'), {
+        code: VAULT_ERROR_CODES.INVALID_CIPHERTEXT,
+      });
+    }
+
+    const payload = {
+      ciphertext,
+      ...(context ? { context: encodeContext(context) } : {}),
+    };
+
+    const response = await requestWithRenewal('decrypt', () =>
+      client.post(transitPath('decrypt', targetKey), payload, {
+        headers: buildHeaders(),
+      }),
+    );
+
+    const data = response?.data?.data;
+    if (typeof data?.plaintext !== 'string') {
+      throw Object.assign(new Error('Vault Transit decrypt returned no plaintext.'), {
+        code: VAULT_ERROR_CODES.PROVIDER_ERROR,
+      });
+    }
+
+    const decoded = Buffer.from(data.plaintext, 'base64');
+    if (asBuffer) return decoded;
+    const text = decoded.toString('utf8');
+    decoded.fill(0);
+    return text;
+  };
+
+  /**
+   * Rewraps ciphertext to the latest Vault Transit key version without exposing plaintext.
+   */
+  const rewrap = async ({
+    ciphertext,
+    keyName: targetKey = keyName,
+    context = null,
+    keyVersion = undefined,
+  } = {}) => {
+    if (typeof ciphertext !== 'string' || !ciphertext.startsWith('vault:v')) {
+      throw Object.assign(new Error('Malformed Vault Transit ciphertext for rewrap.'), {
+        code: VAULT_ERROR_CODES.INVALID_CIPHERTEXT,
+      });
+    }
+
+    const payload = {
+      ciphertext,
+      ...(context ? { context: encodeContext(context) } : {}),
+      ...(Number.isInteger(keyVersion) ? { key_version: keyVersion } : {}),
+    };
+
+    const response = await requestWithRenewal('rewrap', () =>
+      client.post(transitPath('rewrap', targetKey), payload, {
+        headers: buildHeaders(),
+      }),
+    );
+
+    const data = response?.data?.data;
+    if (!data?.ciphertext) {
+      throw Object.assign(new Error('Vault Transit rewrap returned no ciphertext.'), {
+        code: VAULT_ERROR_CODES.PROVIDER_ERROR,
+      });
+    }
+
+    return {
+      ciphertext: data.ciphertext,
+      keyVersion: data.key_version != null ? `v${data.key_version}` : 'v1',
+      keyName: targetKey,
+    };
+  };
+
+  /**
+   * KMS Provider Interface: generates a 256-bit DEK via Vault Transit datakey endpoint.
+   */
+  const generateDataKey = async ({
+    keyVersion = 'v1',
+    keyName: targetKey = keyName,
+    encryptionContext = null,
+    bits = 256,
+  } = {}) => {
+    const payload = {
+      bits,
+      ...(encryptionContext ? { context: encodeContext(encryptionContext) } : {}),
+    };
+
+    const response = await requestWithRenewal('generateDataKey', () =>
+      client.post(transitPath('datakey/plaintext', targetKey), payload, {
+        headers: buildHeaders(),
+      }),
+    );
+
+    const data = response?.data?.data;
+    if (!data?.plaintext || !data?.ciphertext) {
+      throw Object.assign(new Error('Vault Transit datakey returned incomplete key material.'), {
+        code: VAULT_ERROR_CODES.PROVIDER_ERROR,
+      });
+    }
+
+    const plaintextKey = Buffer.from(data.plaintext, 'base64');
+    if (plaintextKey.length !== EXPECTED_DEK_BYTES) {
+      plaintextKey.fill(0);
+      throw Object.assign(
+        new Error(`Unexpected DEK length from Vault Transit: expected ${EXPECTED_DEK_BYTES} bytes, got ${plaintextKey.length}.`),
+        { code: VAULT_ERROR_CODES.PROVIDER_ERROR },
+      );
+    }
+
+    return {
+      plaintextKey,
+      encryptedDataKey: data.ciphertext,
+      keyId: targetKey,
+      keyVersion: data.key_version != null ? `v${data.key_version}` : keyVersion,
+    };
+  };
+
+  /**
+   * KMS Provider Interface: decrypts a Vault-wrapped DEK ciphertext.
+   */
+  const decryptDataKey = async ({
+    encryptedDataKey,
+    keyName: targetKey = keyName,
+    encryptionContext = null,
+  } = {}) => {
+    const plaintextKey = await decrypt({
+      ciphertext: encryptedDataKey,
+      keyName: targetKey,
+      context: encryptionContext,
+      asBuffer: true,
     });
 
-    this._autoRenewTimer = null;
-    if (tokenRenewalIntervalMs) {
-      this.startAutoTokenRenewal(tokenRenewalIntervalMs);
+    if (plaintextKey.length !== EXPECTED_DEK_BYTES) {
+      plaintextKey.fill(0);
+      throw Object.assign(
+        new Error(`Unexpected decrypted DEK length from Vault Transit: expected ${EXPECTED_DEK_BYTES} bytes, got ${plaintextKey.length}.`),
+        { code: VAULT_ERROR_CODES.PROVIDER_ERROR },
+      );
     }
-  }
 
-  /** Build API path for a given action */
-  _path(action) {
-    return `/v1/${this.mountPath}/${action}/${this.keyName}`;
-  }
+    return plaintextKey;
+  };
 
-  /** Encrypt plaintext using the transit key.
-   * @param {string|Buffer} plaintext
-   * @param {Object} [opts]
-   * @param {string|Buffer} [opts.context]
-   * @param {number} [opts.keyVersion]
-   * @returns {Promise<string>} Vault‑formatted ciphertext.
+  /**
+   * Starts a background token renewal interval that unrefs itself so it never blocks shutdown.
    */
-  async encrypt(plaintext, opts = {}) {
-    const payload = {
-      plaintext: Buffer.isBuffer(plaintext)
-        ? plaintext.toString('base64')
-        : Buffer.from(plaintext).toString('base64'),
-    };
-    if (opts.context !== undefined) {
-      payload.context = Buffer.isBuffer(opts.context)
-        ? opts.context.toString('base64')
-        : Buffer.from(opts.context).toString('base64');
-    }
-    if (opts.keyVersion !== undefined) {
-      payload.key_version = opts.keyVersion;
-    }
-
-    const resp = await this.http.post(this._path('encrypt'), payload);
-    return resp.data && resp.data.data && resp.data.data.ciphertext;
-  }
-
-  /** Decrypt ciphertext using the transit key.
-   * @param {string} ciphertext - Vault‑formatted ciphertext.
-   * @param {Object} [opts]
-   * @param {string|Buffer} [opts.context]
-   * @returns {Promise<string>} Decrypted plaintext.
-   */
-  async decrypt(ciphertext, opts = {}) {
-    const payload = { ciphertext };
-    if (opts.context !== undefined) {
-      payload.context = Buffer.isBuffer(opts.context)
-        ? opts.context.toString('base64')
-        : Buffer.from(opts.context).toString('base64');
-    }
-    const resp = await this.http.post(this._path('decrypt'), payload);
-    const b64 = resp.data && resp.data.data && resp.data.data.plaintext;
-    return Buffer.from(b64, 'base64').toString();
-  }
-
-  /** Generate a data key (plaintext + encrypted) using the transit key.
-   * @param {Object} [opts]
-   * @param {string|Buffer} [opts.context]
-   * @param {number} [opts.bits=256]
-   * @returns {Promise<{plaintextKey: Buffer, encryptedDataKey: string}>}
-   */
-  async generateDataKey(opts = {}) {
-    const { context, bits = 256 } = opts;
-    const payload = { bits };
-    if (context !== undefined) {
-      payload.context = Buffer.isBuffer(context)
-        ? context.toString('base64')
-        : Buffer.from(context).toString('base64');
-    }
-    const resp = await this.http.post(this._path('datakey/plaintext'), payload);
-    const data = resp.data && resp.data.data;
-    return {
-      plaintextKey: Buffer.from(data.plaintext, 'base64'),
-      encryptedDataKey: data.ciphertext,
-    };
-  }
-
-  /** Decrypt an encrypted data key.
-   * @param {string|Object} ciphertextKeyOrOptions - Either ciphertext string or { ciphertext, context }.
-   * @param {string|Buffer} [context]
-   * @returns {Promise<Buffer>} Plaintext key.
-   */
-  async decryptDataKey(ciphertextKeyOrOptions, context) {
-    let ciphertext;
-    let opts = {};
-    if (typeof ciphertextKeyOrOptions === 'object' && ciphertextKeyOrOptions !== null && ciphertextKeyOrOptions.ciphertext) {
-      ciphertext = ciphertextKeyOrOptions.ciphertext;
-      opts = ciphertextKeyOrOptions;
-    } else {
-      ciphertext = ciphertextKeyOrOptions;
-      if (context !== undefined) opts.context = context;
-    }
-    if (!ciphertext) {
-      throw new Error('ciphertext is required');
-    }
-    const payload = { ciphertext };
-    if (opts.context !== undefined) {
-      payload.context = Buffer.isBuffer(opts.context)
-        ? opts.context.toString('base64')
-        : Buffer.from(opts.context).toString('base64');
-    }
-    const resp = await this.http.post(this._path('decrypt'), payload);
-    const b64 = resp.data && resp.data.data && resp.data.data.plaintext;
-    return Buffer.from(b64, 'base64');
-  }
-
-  /** Renew the current token.
-   * @param {Object} [opts]
-   * @param {number} [opts.increment] - Seconds to extend the lease.
-   * @returns {Promise<Object>} Auth information returned by Vault.
-   */
-  async renewToken(opts = {}) {
-    const payload = {};
-    if (opts.increment !== undefined) payload.increment = opts.increment;
-    const resp = await this.http.post('/v1/auth/token/renew-self', payload);
-    const auth = resp.data && resp.data.auth;
-    if (auth && auth.client_token) {
-      this.token = auth.client_token;
-    }
-    return auth;
-  }
-
-  /** Start automatic token renewal.
-   * @param {number} intervalMs
-   */
-  startAutoTokenRenewal(intervalMs) {
-    if (this._autoRenewTimer) clearInterval(this._autoRenewTimer);
-    this._autoRenewTimer = setInterval(() => {
-      this.renewToken().catch(() => {});
+  const startTokenRenewalLoop = (intervalMs = 60_000) => {
+    stopTokenRenewalLoop();
+    renewalTimer = setInterval(async () => {
+      try {
+        await ensureValidToken();
+      } catch (error) {
+        logger.warn('vault_background_token_renewal_error', { error: error.message });
+      }
     }, intervalMs);
-  }
-
-  /** Stop automatic token renewal. */
-  stopAutoTokenRenewal() {
-    if (this._autoRenewTimer) {
-      clearInterval(this._autoRenewTimer);
-      this._autoRenewTimer = null;
+    if (typeof renewalTimer.unref === 'function') {
+      renewalTimer.unref();
     }
-  }
+    return renewalTimer;
+  };
 
-  /** Simple health‑check call. */
-  async healthCheck() {
-    const resp = await this.http.get('/v1/sys/health');
-    return resp.data;
-  }
-}
+  const stopTokenRenewalLoop = () => {
+    if (renewalTimer) {
+      clearInterval(renewalTimer);
+      renewalTimer = null;
+    }
+  };
 
-module.exports = { VaultTransitProvider, createVaultTransitProvider };
+  const healthCheck = async () => {
+    try {
+      const response = await client.get('/v1/sys/health', {
+        headers: buildHeaders(),
+        validateStatus: (status) => status < 500 || status === 429 || status === 472 || status === 473,
+      });
+      return {
+        ok: response.status === 200 || response.status === 429 || response.status === 472 || response.status === 473,
+        initialized: Boolean(response?.data?.initialized),
+        sealed: Boolean(response?.data?.sealed),
+        status: response.status,
+      };
+    } catch (error) {
+      throw classifyVaultError(error, 'healthCheck', currentToken);
+    }
+  };
+
+  const getTokenMetadata = () => ({
+    expiresAtMs: tokenExpiresAtMs,
+    renewable: tokenRenewable,
+  });
+
+  const setTokenExpiresAtMs = (ts) => {
+    tokenExpiresAtMs = ts;
+  };
+
+  return {
+    name: 'vault-transit',
+    encrypt,
+    decrypt,
+    rewrap,
+    generateDataKey,
+    decryptDataKey,
+    lookupToken,
+    renewToken,
+    ensureValidToken,
+    startTokenRenewalLoop,
+    stopTokenRenewalLoop,
+    healthCheck,
+    getTokenMetadata,
+    setTokenExpiresAtMs,
+  };
+};
+
+module.exports = {
+  VAULT_ERROR_CODES,
+  createVaultTransitProvider,
+  classifyVaultError,
+};
