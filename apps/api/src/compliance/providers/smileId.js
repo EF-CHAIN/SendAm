@@ -23,7 +23,7 @@ function signatureFor(timestamp) {
     .digest('base64');
 }
 
-async function submitBvnVerification({ jobId, userId, phoneNumber, applicant }) {
+async function submitBvnVerification({ jobId, _userId, phoneNumber, applicant }) {
   const smile = getSmileIdConfig();
   if (!smile) throw new ProviderSkippedError('Smile ID KYC is not configured');
 
@@ -35,7 +35,7 @@ async function submitBvnVerification({ jobId, userId, phoneNumber, applicant }) 
     signature: signatureFor(timestamp),
     timestamp,
     callback_url: smile.callbackUrl,
-    partner_params: { job_id: jobId, user_id: userId, job_type: 5 },
+    partner_params: { job_id: jobId, user_id: _userId, job_type: 5 },
     phone_number: phoneNumber,
     country: applicant.country,
     id_type: 'BVN',
@@ -57,7 +57,7 @@ async function submitBvnVerification({ jobId, userId, phoneNumber, applicant }) 
   return { accepted: true, providerReference: response.data?.job_id || jobId };
 }
 
-async function submitNinVerification({ jobId, userId, phoneNumber, applicant }) {
+async function submitNinVerification({ jobId, _userId, phoneNumber, applicant }) {
   const smile = getSmileIdConfig();
   if (!smile) throw new ProviderSkippedError('Smile ID KYC is not configured');
 
@@ -69,7 +69,7 @@ async function submitNinVerification({ jobId, userId, phoneNumber, applicant }) 
     signature: signatureFor(timestamp),
     timestamp,
     callback_url: smile.callbackUrl,
-    partner_params: { job_id: jobId, user_id: userId, job_type: 5 },
+    partner_params: { job_id: jobId, user_id: _userId, job_type: 5 },
     phone_number: phoneNumber,
     country: applicant.country,
     id_type: 'NIN',
