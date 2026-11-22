@@ -51,6 +51,7 @@ model User {
   userErasures            UserErasure[]
 
   voiceProfile            VoiceProfile?
+  kycVerifications        KycVerification[]
 
   @@index([anonymizedAt])
   @@index([createdAt, id])
