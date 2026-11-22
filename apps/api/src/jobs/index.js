@@ -2,6 +2,7 @@ const { registerWhatsAppJobs } = require('./whatsapp.jobs');
 const { startDepositPoller } = require('./deposits.jobs');
 const { startAuditPoller } = require('./audit.jobs');
 const { JOB_NAME, runRotationHealthCheck, rotateCategorySecret } = require('./secret-rotation.job');
+const { registerKeyRotationJob } = require('./keyRotation.job');
 const { startLedgerReconciliationScheduler } = require('./reconcileLedger.job');
 const { startRecurringPaymentScheduler } = require('../payment/recurringPayments');
 const { startQueueHistoryPurge } = require('./purgeQueueHistory.job');
@@ -52,6 +53,7 @@ const registerJobs = () => {
   const depositPoller = startDepositPoller();
   const auditPoller = startAuditPoller();
   const rotationJobs = registerSecretRotationJobs();
+  registerKeyRotationJob(registerProcessor);
   const inboxDrain = startWebhookInboxDrain();
   const outboxReconciler = startOutboxReconciler();
   const queueHistoryPurge = startQueueHistoryPurge();
