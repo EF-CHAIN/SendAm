@@ -6,6 +6,7 @@ members = [
     "contracts/settlement",
     "contracts/attestation",
     "contracts/escrow-harness",
+    "contracts/common",
 ]
 
 [workspace.package]
