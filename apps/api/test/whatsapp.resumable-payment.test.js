@@ -140,3 +140,43 @@ if (process.env.DATABASE_URL && !process.env.DATABASE_URL.includes('postgresql:/
     await prisma.user.deleteMany({ where: { phoneNumber: phone } });
   });
 }
+
+test('a fuzzy contact choice validates the current prompt before asking for payment authorization', async () => {
+  const phone = '+2348000999888';
+  const user = { id: 'owner', phoneNumber: phone, pendingSend: null };
+  const otherAddress = require('../src/wallet/stellar.adapter').createWallet().publicKey;
+  const replies = [];
+  const options = {
+    notify: async (_to, body) => replies.push(body),
+    prisma: {
+      user: {
+        findUnique: async () => user,
+        update: async ({ data }) => Object.assign(user, data),
+      },
+      alias: {
+        findUnique: async () => null,
+        findFirst: async () => null,
+        findMany: async ({ where }) => {
+          assert.deepEqual(where, { userId: user.id });
+          return [{ alias: 'Chizom', target: VALID_STELLAR_ADDR }, { alias: 'Chison', target: otherAddress }];
+        },
+      },
+      contact: {
+        findMany: async ({ where }) => {
+          assert.equal(where.ownerId, user.id);
+          return [];
+        },
+      },
+      transaction: { findFirst: async () => null },
+    },
+  };
+  await processMessage(phone, 'Owner', 'send 5 XLM to Chisom', options);
+  assert.match(replies.at(-1), /Which saved contact/);
+  assert.equal(user.pendingSend.step, 'AWAITING_CONTACT');
+  const { token, candidates } = user.pendingSend;
+  await processMessage(phone, 'Owner', `contact:${'0'.repeat(24)}:1`, options);
+  assert.equal(user.pendingSend.step, 'AWAITING_CONTACT');
+  await processMessage(phone, 'Owner', `contact:${token}:1`, options);
+  assert.equal(user.pendingSend.destination, candidates[0].target);
+  assert.equal(user.pendingSend.step, 'AWAITING_HIGH_RISK_CONFIRMATION');
+});

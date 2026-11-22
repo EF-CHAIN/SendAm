@@ -1,6 +1,43 @@
 name: sendam-production
 
+x-app: &app
+  image: sendam-api:production
+  build:
+    context: .
+    dockerfile: deploy/Dockerfile
+  profiles: [app]
+  env_file:
+    - path: ${SENDAM_API_ENV_FILE:-./apps/api/.env}
+      required: false
+  restart: unless-stopped
+  init: true
+  read_only: true
+  tmpfs:
+    - /tmp
+  cap_drop: [ALL]
+  security_opt:
+    - no-new-privileges:true
+  networks:
+    - default
+    - database
+
 services:
+  api:
+    <<: *app
+    ports:
+      - '127.0.0.1:${SENDAM_API_PORT:-3002}:3002'
+    environment:
+      PORT: '3002'
+    healthcheck:
+      test: ['CMD', 'node', '-e', 'fetch("http://127.0.0.1:3002/health/live").then(r => { if (!r.ok) process.exit(1) }, () => process.exit(1))']
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  worker:
+    <<: *app
+    command: ['node', 'src/worker.js']
+
   postgres:
     image: postgres:16-alpine
     restart: unless-stopped

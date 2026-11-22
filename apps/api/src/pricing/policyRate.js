@@ -13,7 +13,7 @@ const COINGECKO_ASSET_IDS = Object.freeze({
   XLM: 'stellar',
 });
 
-const FIAT_SOURCES = new Set(['USD', 'EUR', 'GBP']);
+const FIAT_SOURCES = new Set(['NGN', 'GHS', 'USD', 'EUR', 'GBP']);
 
 class PolicyError extends Error {
   constructor(code, message) {

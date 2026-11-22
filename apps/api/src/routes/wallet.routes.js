@@ -88,7 +88,7 @@ router.post(
   sendLimiter,
   validateRequest({
     body: {
-      allowedKeys: ['phoneNumber', 'amount', 'destination', 'asset', 'routeType', 'sourceCountry', 'destinationCountry'],
+      allowedKeys: ['phoneNumber', 'amount', 'destination', 'asset', 'routeType', 'sourceCountry', 'destinationCountry', 'destinationAsset', 'destinationAmount', 'quoteId'],
       required: ['amount', 'destination'],
       fields: {
         phoneNumber: {
@@ -111,6 +111,9 @@ router.post(
           message: 'Destination must be a valid Stellar address',
         },
         asset: { type: 'string', optional: true },
+        destinationAsset: { type: 'string', optional: true, trim: true },
+        destinationAmount: { type: 'string', optional: true, trim: true },
+        quoteId: { type: 'string', optional: true, trim: true },
         routeType: { type: 'string', optional: true },
         sourceCountry: { type: 'string', optional: true },
         destinationCountry: { type: 'string', optional: true },
