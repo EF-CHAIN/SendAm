@@ -1,5 +1,3 @@
-const crypto = require('crypto');
-const _config = require('../config/env');
 const prisma = require('../common/prisma');
 const logger = require('../utils/logger');
 const { classifyRiskScore, RISK_THRESHOLDS } = require('./kycDecision.service');
