@@ -15,6 +15,7 @@ const walletService = require('../wallet/wallet.service');
 const { getRotationStatus, rotateSecret: performSecretRotation, SECRET_CATEGORIES } = require('../services/secret-rotation.service');
 const { getExchangeRate } = require('../pricing/pricing.service');
 const { getAssetRule } = require('../utils/money');
+const { getStellarTomlContent, validateStellarToml: validateStellarTomlService } = require('../services/stellarToml.service');
 
 // Build an inclusive [gte, lte] range from `from`/`to` query params. Tolerant of
 // bare dates ("2024-01-01") and full ISO timestamps; invalid input is ignored
@@ -1095,6 +1096,42 @@ const discardDeadLetterJobHandler = async (req, res, next) => {
   }
 };
 
+const getStellarToml = async (req, res, next) => {
+  try {
+    const toml = getStellarTomlContent({ req });
+    const validation = validateStellarTomlService(toml);
+    return sendSuccess(res, {
+      toml,
+      parsed: validation.parsed,
+      valid: validation.valid,
+      summary: validation.summary,
+    }, 'Stellar TOML retrieved successfully');
+  } catch (error) {
+    next(error);
+  }
+};
+
+const validateStellarToml = async (req, res, next) => {
+  try {
+    const candidateToml = req.body?.toml || req.query?.toml;
+    const tomlToValidate = candidateToml || getStellarTomlContent({ req });
+    const result = validateStellarTomlService(tomlToValidate);
+
+    await writeAuditLog({
+      actorType: 'administrator',
+      actorId: req.admin?.id || 'system',
+      action: 'admin.stellar.toml.verify',
+      entityType: 'StellarToml',
+      metadata: { valid: result.valid, errorCount: result.errors.length, isCandidate: Boolean(candidateToml) },
+      req,
+    });
+
+    return sendSuccess(res, result, result.valid ? 'Stellar TOML is valid' : 'Stellar TOML has validation errors');
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   login,
   acceptInvite,
@@ -1149,6 +1186,8 @@ module.exports = {
   getDeadLetterJobById,
   replayDeadLetterJob: replayDeadLetterJobHandler,
   discardDeadLetterJob: discardDeadLetterJobHandler,
+  getStellarToml,
+  validateStellarToml,
 };
 
 
