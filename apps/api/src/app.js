@@ -14,6 +14,9 @@ const authRoutes = require('./routes/auth.routes');
 const sep24Routes = require('./routes/sep24.routes');
 const receiptRoutes = require('./routes/receipt.routes');
 const retentionRoutes = require('./routes/retention.routes');
+const federationRoutes = require('./routes/federation.routes');
+const healthRoutes = require('./routes/health.routes');
+const wellKnownRoutes = require('./routes/wellKnown.routes');
 
 const errorHandler = require('./middlewares/errorHandler');
 const notFound = require('./middlewares/notFound');
@@ -25,7 +28,8 @@ const logger = require('./utils/logger');
 const prisma = require('./common/prisma');
 const { AppError } = require('./errors');
 const { correlationMiddleware, getContext } = require('./observability/context');
-const { requestMetrics, getMetricSnapshot, metricsHandler, increment } = require('./observability/metrics');
+const { requestMetrics, getMetricSnapshot, increment } = require('./observability/metrics');
+const { createQueueMetricsHandler } = require('./observability/queueMetrics');
 const { pingRedis } = require('./queues/queue.service');
 
 const app = express();
@@ -59,6 +63,12 @@ app.use((req, res, next) => {
   res.setHeader('Permissions-Policy', 'geolocation=(), microphone=(), camera=()');
   next();
 });
+
+// SEP-1 Stellar Ecosystem Discovery (Issue #941).
+// The /.well-known/stellar.toml specification mandates that CORS must be enabled
+// for all origins (Access-Control-Allow-Origin: *). Mounted before the restricted
+// application CORS middleware so external wallets and ecosystem scanners can read it.
+app.use(wellKnownRoutes);
 
 // CORS: explicitly define origin allowlists by environment. 
 // Cross-origin access strictly requires configuration.
@@ -132,7 +142,9 @@ app.use('/api/', limiter);
 
 // Prometheus scrape endpoint. It is deliberately outside the API limiter so a
 // traffic spike cannot blind monitoring, and protected by a dedicated token.
-app.get('/metrics', metricsHandler);
+app.get('/metrics', createQueueMetricsHandler());
+
+app.use(healthRoutes);
 
 app.get('/health/live', (_req, res) => {
   res.status(200).json({ status: 'ok', uptime: process.uptime() });
@@ -171,6 +183,7 @@ app.get('/metrics', (_req, res) => {
 });
 
 // Routes
+app.use('/federation', federationRoutes);
 app.use('/webhook', webhookRoutes);
 app.use('/auth', authRoutes);
 app.use('/api/auth', authRoutes);

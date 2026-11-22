@@ -185,3 +185,185 @@ module.exports = {
   getRotationDueDate,
   isRotationExpiringSoon,
 };
+
+// Checkpoint store
+const fs = require('fs').promises;
+
+function createCheckpointStore(type = 'memory', options = {}) {
+  if (type === 'memory') {
+    const store = new Map();
+    return {
+      async getCheckpoint(targetVersion) {
+        return store.get(targetVersion) ?? null;
+      },
+      async saveCheckpoint(targetVersion, data) {
+        store.set(targetVersion, data);
+      },
+      async clearCheckpoint(targetVersion) {
+        store.delete(targetVersion);
+      },
+    };
+  }
+  if (type === 'file') {
+    const filePath = options.filePath;
+    if (!filePath) {
+      throw new Error('filePath is required for file checkpoint store');
+    }
+    async function readAll() {
+      try {
+        const text = await fs.readFile(filePath, 'utf8');
+        return JSON.parse(text);
+      } catch (_e) {
+        return {};
+      }
+    }
+    async function writeAll(data) {
+      await fs.writeFile(filePath, JSON.stringify(data, null, 2), 'utf8');
+    }
+    return {
+      async getCheckpoint(targetVersion) {
+        const data = await readAll();
+        return data[targetVersion] ?? null;
+      },
+      async saveCheckpoint(targetVersion, checkpoint) {
+        const data = await readAll();
+        data[targetVersion] = checkpoint;
+        await writeAll(data);
+      },
+      async clearCheckpoint(targetVersion) {
+        const data = await readAll();
+        delete data[targetVersion];
+        await writeAll(data);
+      },
+    };
+  }
+  throw new Error(`Unsupported checkpoint store type: ${type}`);
+}
+
+// Rotate wallet keys batch
+async function rotateWalletKeysBatch({
+  prisma,
+  targetVersion,
+  batchSize = 100,
+  lastProcessedId = null,
+  checkpointStore = null,
+  dryRun = false,
+  signal = null,
+  onProgress = null,
+}) {
+  // Initialize checkpoint store
+  const store = checkpointStore ?? createCheckpointStore();
+
+  // Load existing checkpoint if present
+  if (lastProcessedId === null) {
+    const cp = await store.getCheckpoint(targetVersion);
+    if (cp && cp.lastProcessedId != null) {
+      lastProcessedId = cp.lastProcessedId;
+    }
+  }
+
+  // Initialize counters
+  let scannedCount = 0;
+  let rotatedCount = 0;
+  let failedCount = 0;
+
+  // Helper to build where filter
+  const buildWhere = (cursor) => {
+    const base = {
+      keyVersion: { not: targetVersion },
+      encryptedSecretKey: { not: null },
+    };
+    if (cursor) {
+      base.id = { gt: cursor };
+    }
+    return base;
+  };
+
+  const cryptoService = require('./crypto.service');
+
+  while (true) {
+    if (signal?.aborted) {
+      await store.saveCheckpoint(targetVersion, {
+        lastProcessedId,
+        targetVersion,
+        scannedCount,
+        rotatedCount,
+        failedCount,
+        status: 'in_progress',
+        updatedAt: new Date().toISOString(),
+      });
+      return { status: 'interrupted', lastProcessedId, scannedCount, rotatedCount, failedCount };
+    }
+
+    const where = buildWhere(lastProcessedId);
+    const wallets = await prisma.wallet.findMany({
+      where,
+      orderBy: { id: 'asc' },
+      take: batchSize,
+    });
+
+    if (wallets.length === 0) {
+      // Completed processing
+      await store.saveCheckpoint(targetVersion, {
+        lastProcessedId,
+        targetVersion,
+        scannedCount,
+        rotatedCount,
+        failedCount,
+        status: 'completed',
+        updatedAt: new Date().toISOString(),
+      });
+      return { status: 'completed', lastProcessedId, scannedCount, rotatedCount, failedCount };
+    }
+
+    for (const w of wallets) {
+      scannedCount++;
+      try {
+        const oldCipher = w.encryptedSecretKey;
+        const plaintext = cryptoService.decrypt(oldCipher);
+        const newCipher = cryptoService.encrypt(plaintext, targetVersion);
+        if (!dryRun) {
+          await prisma.wallet.update({
+            where: { id: w.id },
+            data: { encryptedSecretKey: newCipher, keyVersion: targetVersion },
+          });
+        }
+        rotatedCount++;
+      } catch (err) {
+        failedCount++;
+        const redacted = err.message.replace(/S[A-Z0-9]{55}/g, '[REDACTED]');
+        logger.warn(`Failed rotating wallet ${w.id}: ${redacted}`);
+      }
+      if (onProgress) {
+        onProgress(w.id);
+      }
+      lastProcessedId = w.id;
+    }
+
+    // Save checkpoint after each batch
+    await store.saveCheckpoint(targetVersion, {
+      lastProcessedId,
+      targetVersion,
+      scannedCount,
+      rotatedCount,
+      failedCount,
+      status: 'in_progress',
+      updatedAt: new Date().toISOString(),
+    });
+  }
+}
+
+module.exports = {
+  SECRET_CATEGORIES,
+  ROTATION_CADENCE_DAYS,
+  ROTATION_OWNERS,
+  evaluateRotationHealth,
+  rotateSecret,
+  getRotationStatus,
+  generateSecretValue,
+  getSecretHash,
+  getRotationDueDate,
+  isRotationExpiringSoon,
+  createCheckpointStore,
+  rotateWalletKeysBatch,
+};
