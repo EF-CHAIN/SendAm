@@ -7,6 +7,7 @@ members = [
     "contracts/attestation",
     "contracts/escrow-harness",
     "contracts/common",
+    "contracts/oracle",
 ]
 
 [workspace.package]
