@@ -8,7 +8,12 @@ const {
   getRedisStatus,
   redisIsAvailable,
   resetRedisConnection,
+  bullPrefix,
 } = require('../config/redis');
+
+// Hash-tagged prefix when running against Redis Cluster; undefined otherwise.
+const queuePrefix = bullPrefix(config.redis);
+const prefixOpts = queuePrefix ? { prefix: queuePrefix } : {};
 
 let Queue;
 let Worker;
@@ -27,25 +32,42 @@ try {
 const inlineProcessors = new Map();
 const queues = new Map();
 const workers = new Map();
+// Jobs currently executing in this process (queue worker or inline fallback).
+// Graceful shutdown waits for this to reach zero before closing connections.
+const inFlight = new Map();
+
+const trackInFlight = (name, delta) => {
+  const next = Math.max(0, (inFlight.get(name) || 0) + delta);
+  if (next === 0) inFlight.delete(name);
+  else inFlight.set(name, next);
+};
+
+const getInFlightCount = (name) => (name
+  ? inFlight.get(name) || 0
+  : [...inFlight.values()].reduce((sum, count) => sum + count, 0));
 
 const getQueue = (name) => {
   if (!Queue || !connection) return null;
-  if (!queues.has(name)) queues.set(name, new Queue(name, { connection }));
+  if (!queues.has(name)) queues.set(name, new Queue(name, { connection, ...prefixOpts }));
   return queues.get(name);
 };
 
-const { moveToDeadLetterQueue } = require('./dlq.service');
+const { handleExhaustedJob } = require('./dlqManager');
+const { bullBackoffStrategy, FULL_JITTER_BACKOFF_TYPE } = require('./retryStrategy');
 
-const registerProcessor = (name, processor) => {
+const registerProcessor = (name, processor, { concurrency, lockDuration } = {}) => {
   setGauge('sendam_worker_last_successful_processing_timestamp_seconds', 0, { queue: name });
   const observedProcessor = async (job, token) => {
     const correlationId = correlationIdFrom(job.data?.correlationId || String(job.id || ''));
+    trackInFlight(name, 1);
     return runWithContext({ correlationId, jobId: job.id, queue: name }, async () => {
       const started = process.hrtime.bigint();
       increment('sendam_queue_jobs_total', { queue: name, status: 'active' });
       const enqueuedAt = Number(job.timestamp);
       if (Number.isFinite(enqueuedAt)) {
-        observeDuration('sendam_queue_job_age_seconds', { queue: name }, Math.max(0, (Date.now() - enqueuedAt) / 1000));
+        const waitSeconds = Math.max(0, (Date.now() - enqueuedAt) / 1000);
+        observeDuration('sendam_queue_job_age_seconds', { queue: name }, waitSeconds);
+        observeDuration('bullmq_job_wait_seconds', { queue: name }, waitSeconds);
       }
       try {
         const result = await processor(job, token);
@@ -59,17 +81,16 @@ const registerProcessor = (name, processor) => {
 
         const maxAttempts = job?.opts?.attempts || 3;
         if (job && (job.attemptsMade || 1) >= maxAttempts) {
-          moveToDeadLetterQueue(job, error, { queueName: name }).catch((dlqErr) => {
+          handleExhaustedJob(job, error, { queueName: name }).catch((dlqErr) => {
             logger.error('dlq_move_failed', { queue: name, jobId: job.id, error: dlqErr.message });
           });
         }
         throw error;
       } finally {
-        observeDuration(
-          'sendam_queue_job_duration_seconds',
-          { queue: name },
-          Number(process.hrtime.bigint() - started) / 1e9,
-        );
+        trackInFlight(name, -1);
+        const durationSeconds = Number(process.hrtime.bigint() - started) / 1e9;
+        observeDuration('sendam_queue_job_duration_seconds', { queue: name }, durationSeconds);
+        observeDuration('bullmq_job_duration_seconds', { queue: name }, durationSeconds);
       }
     });
   };
@@ -78,8 +99,13 @@ const registerProcessor = (name, processor) => {
     if (workers.has(name)) return workers.get(name);
     const worker = new Worker(name, observedProcessor, {
       connection,
-      concurrency: config.worker.concurrency,
-      lockDuration: config.worker.lockDurationMs,
+      ...prefixOpts,
+      // Per-queue overrides isolate a slow queue (e.g. payments) from the rest.
+      concurrency: concurrency || config.worker.concurrency,
+      lockDuration: lockDuration || config.worker.lockDurationMs,
+      // Full-jitter retry delays (see retryStrategy.js) so retries during a
+      // Horizon 429 / outage spread out instead of arriving together.
+      settings: { backoffStrategy: bullBackoffStrategy },
     });
     worker.on('completed', (job) => logger.info('queue_job_completed', {
       queue: name,
@@ -96,7 +122,7 @@ const registerProcessor = (name, processor) => {
       });
       const maxAttempts = job?.opts?.attempts || 3;
       if (job && (job.attemptsMade || 1) >= maxAttempts) {
-        moveToDeadLetterQueue(job, error, { queueName: name }).catch((dlqErr) => {
+        handleExhaustedJob(job, error, { queueName: name }).catch((dlqErr) => {
           logger.error('dlq_move_failed', { queue: name, jobId: job?.id, error: dlqErr.message });
         });
       }
@@ -122,7 +148,7 @@ const enqueue = async (name, jobName, data, options = {}) => {
   if (queue) {
     const job = await queue.add(jobName, correlatedData, {
       attempts: 3,
-      backoff: { type: 'exponential', delay: 5000 },
+      backoff: { type: FULL_JITTER_BACKOFF_TYPE, delay: 5000 },
       removeOnComplete: 1000,
       removeOnFail: 5000,
       ...options,
@@ -153,6 +179,8 @@ const enqueue = async (name, jobName, data, options = {}) => {
   increment('sendam_queue_jobs_total', { queue: name, status: 'failed' });
   throw new Error(`Queue "${name}" is unavailable: configure REDIS_URL and run the worker process`);
 };
+
+const getWorkers = () => [...workers.entries()].map(([name, worker]) => ({ name, worker }));
 
 const closeQueues = async () => {
   await Promise.all([...workers.values()].map((worker) => worker.pause()));
@@ -186,7 +214,17 @@ const getQueueReadiness = async () => {
 
 const getRegisteredProcessors = () => [...inlineProcessors.keys()];
 
+/** Queue handle for observability readers; null when Redis/BullMQ is unavailable. */
+const getQueueHandle = (name) => getQueue(name);
+
+/** Redis INFO for memory metrics; null when Redis is unavailable. */
+const getRedisInfo = async (section = 'memory') => {
+  if (!connection || !redisIsAvailable()) return null;
+  return connection.info(section);
+};
+
 const collectQueueMetrics = async () => {
+  await require('../observability/queueMetrics').collectBullmqMetrics().catch(() => {});
   for (const name of getRegisteredProcessors()) {
     const queue = getQueue(name);
     if (!queue) continue;
@@ -206,8 +244,12 @@ module.exports = {
   getQueue,
   registerProcessor,
   closeQueues,
+  getWorkers,
+  getInFlightCount,
   pingRedis,
   getQueueReadiness,
   getRegisteredProcessors,
+  getQueueHandle,
+  getRedisInfo,
   collectQueueMetrics,
 };

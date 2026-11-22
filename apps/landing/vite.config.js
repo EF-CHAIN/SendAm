@@ -6,6 +6,9 @@ import { VitePWA } from 'vite-plugin-pwa';
 import offlinePage from './build/offlinePage.js';
 import criticalCss from './build/criticalCss.js';
 import { renderAboveTheFold } from './build/renderShell.js';
+import { enforceEntryChunkBudget, splitVendorChunks } from '../../scripts/vite-bundle-budget.mjs';
+
+const MAX_ENTRY_CHUNK_KB = 250;
 
 const alias = {
   '@': path.resolve(__dirname, './src'),
@@ -14,7 +17,14 @@ const alias = {
 
 // https://vite.dev/config/
 export default defineConfig({
-  plugins: [react(), offlinePage(), visualizer(), criticalCss({
+  plugins: [react(), offlinePage(), visualizer({
+    filename: path.resolve(__dirname, 'dist/stats.html'),
+    title: 'SendAm Landing Bundle Analysis',
+    template: 'treemap',
+    gzipSize: true,
+    brotliSize: true,
+    open: false,
+  }), enforceEntryChunkBudget({ maxEntryKb: MAX_ENTRY_CHUNK_KB }), criticalCss({
     // Inline the CSS used by the navbar + hero; load the rest of Tailwind async.
     renderMarkup: () => renderAboveTheFold({ root: __dirname, alias, plugins: [react()] }),
   }), VitePWA({
@@ -27,6 +37,7 @@ export default defineConfig({
     filename: 'sw.js',
     injectManifest: {
       globPatterns: ['**/*.{js,css,html,ico,png,svg,woff2}'],
+      globIgnores: ['stats.html'],
       rollupFormat: 'iife',
     },
     includeAssets: ['favicon.svg', 'icons/*.png', 'icons/*.svg'],
@@ -114,6 +125,14 @@ export default defineConfig({
       type: 'module',
     },
   })],
+  build: {
+    chunkSizeWarningLimit: MAX_ENTRY_CHUNK_KB,
+    rollupOptions: {
+      output: {
+        manualChunks: splitVendorChunks,
+      },
+    },
+  },
   resolve: {
     dedupe: ['react', 'react-dom'],
     alias,

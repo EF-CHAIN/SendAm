@@ -13,6 +13,7 @@ const { canonicalizePhoneNumber, isValidPhoneNumber } = require('../utils/valida
 const { parseConsentCommand, applyConsentKeyword, isMessageAllowed } = require('../compliance/consent.service');
 const { t, SUPPORTED_LOCALES } = require('../i18n/messages');
 const { formatAmountByLocale } = require('../i18n/formatters');
+const { handleRecurringMessage } = require('../payment/recurringPayments');
 const { buildStandardReceipt, formatChannelReceiptMessage } = require('../services/receipt.service');
 
 const { matchContacts } = require('../services/contactMatcher');
@@ -20,6 +21,20 @@ const { sendMetaMessage } = require('../services/whatsappMedia');
 const { sendVoiceReceipt } = require('../voice/voiceReceipt');
 const config = require('../config/env');
 const logger = require('../utils/logger');
+
+// Hand PDF rendering to the background worker (#1014). Never blocks or fails
+// the reply: the text receipt has already been sent.
+const queuePdfReceipt = (transactionId) => {
+  if (!config.receipts?.bucket) return;
+  try {
+    const { enqueueReceiptGeneration } = require('../jobs/generateReceipt.job');
+    Promise.resolve(enqueueReceiptGeneration(transactionId)).catch((error) => {
+      logger.warn('receipt_pdf_enqueue_failed', { transactionId, message: error.message });
+    });
+  } catch (error) {
+    logger.warn('receipt_pdf_enqueue_failed', { transactionId, message: error.message });
+  }
+};
 
 const PENDING_SEND_TTL_MS = 10 * 60 * 1000;
 const NATIVE_ASSET = 'XLM';
@@ -203,7 +218,8 @@ const requestConfirmation = async ({ phoneNumber, user, intent, notify, selected
     amount: intent.amount,
     asset: intent.asset,
     quoteId: quote?.id,
-    quoteExpiresAt: quote?.expiresAt,
+    quoteExpiresAt: quote?.expiresAt && new Date(quote.expiresAt).toISOString(),
+    quoteFee: quote?.fee,
     destination: recipient.destination,
     alias: recipient.label,
     memo: intent.memo,
@@ -227,13 +243,14 @@ const requestConfirmation = async ({ phoneNumber, user, intent, notify, selected
   } else {
     const formattedAmount = formatAmountByLocale(intent.amount, intent.asset, locale);
     const memoLine = intent.memo ? `\nMemo (${intent.memoType || 'text'}): ${intent.memo}` : '';
+    const feeLine = quote?.fee ? `${t('payment_fee', { amount: formatAmountByLocale(quote.fee, intent.asset, locale) }, locale)}\n` : '';
     const quoteLine = quote?.expiresAt ? `Quote expires: ${new Date(quote.expiresAt).toISOString()}\n` : '';
     const confirmMsg = t('payment_confirm', {
       amount: formattedAmount,
       asset: intent.asset,
       label: recipient.label,
       memoLine,
-      quoteLine,
+      quoteLine: feeLine + quoteLine,
     }, locale);
     await notify(phoneNumber, confirmMsg);
   }
@@ -284,7 +301,8 @@ const handlePendingPin = async ({ phoneNumber, user, text, notify, db = defaultP
   if (isHighRiskStep) {
     if (lowered === 'yes' || lowered === 'oui' || lowered === 'si') {
       const now = new Date();
-      const newExpiresAt = new Date(now.getTime() + PENDING_SEND_TTL_MS);
+      const quoteExpiresAt = pendingState.quoteExpiresAt ? new Date(pendingState.quoteExpiresAt).getTime() : Infinity;
+      const newExpiresAt = new Date(Math.min(now.getTime() + PENDING_SEND_TTL_MS, quoteExpiresAt));
       const updatedPending = {
         ...pendingState,
         step: 'AWAITING_PIN',
@@ -298,13 +316,16 @@ const handlePendingPin = async ({ phoneNumber, user, text, notify, db = defaultP
       });
 
       const memoLine = updatedPending.memo ? `Memo (${updatedPending.memoType || 'text'}): ${updatedPending.memo}\n` : '';
+      const feeLine = updatedPending.quoteFee ? `${t('payment_fee', {
+        amount: formatAmountByLocale(updatedPending.quoteFee, updatedPending.asset, locale),
+      }, locale)}\n` : '';
       const quoteLine = updatedPending.quoteExpiresAt ? `Quote expires: ${new Date(updatedPending.quoteExpiresAt).toISOString()}\n` : '';
       const confirmMsg = t('payment_confirm_high_risk', {
         amount: updatedPending.amount,
         asset: updatedPending.asset,
         fingerprint: updatedPending.fingerprint,
         memoLine,
-        quoteLine,
+        quoteLine: feeLine + quoteLine,
       }, locale);
       await notify(phoneNumber, confirmMsg);
       return true;
@@ -347,6 +368,7 @@ const handlePendingPin = async ({ phoneNumber, user, text, notify, db = defaultP
     memo: pending.memo,
     memoType: pending.memoType,
     routeType: pending.routeType,
+    ...(pending.quoteId ? { quoteId: pending.quoteId } : {}),
   });
 
   const standardReceipt = buildStandardReceipt(result.transaction, { mask: true });
@@ -371,6 +393,7 @@ const handlePendingPin = async ({ phoneNumber, user, text, notify, db = defaultP
     },
   });
   await voiceReceipt;
+  queuePdfReceipt(result.transaction.id);
   return true;
 };
 
@@ -416,6 +439,13 @@ const processMessage = async (phoneNumber, whatsappName, text, options = {}) => 
     return;
   }
 
+  // Recurring payment mandates (#1005): schedule/list/pause/resume/cancel and
+  // the PIN reply that activates a schedule. A pending one-off send keeps
+  // priority for bare PIN replies.
+  if (await handleRecurringMessage({
+    phoneNumber, user, text, notify, prisma: db, hasPendingSend: Boolean(user.pendingSend?.destination),
+  })) return;
+
   if (await handlePendingPin({ phoneNumber, user, text, notify, db })) return;
   if (normalized.startsWith('contact:')) return;
 
@@ -433,7 +463,12 @@ const processMessage = async (phoneNumber, whatsappName, text, options = {}) => 
     const balances = await walletService.balancesForUser({ userId: user.id });
     const lines = balances.flatMap((b) => {
       if (b.error) return [`${b.chain}: unavailable (${b.error})`];
-      return (b.assets || []).map((a) => `${a.asset}: ${formatAmountByLocale(a.value, a.asset, locale)}`);
+      return (b.assets || []).map((a) => {
+        const total = `${a.asset}: ${formatAmountByLocale(a.value, a.asset, locale)}`;
+        return a.spendable === undefined ? total : `${total} (${t('balance_spendable', {
+          amount: formatAmountByLocale(a.spendable, a.asset, locale),
+        }, locale)})`;
+      });
     });
     const headerMsg = t('balances_header', { lines: lines.join('\n') }, locale);
     await notify(phoneNumber, headerMsg);

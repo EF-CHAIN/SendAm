@@ -30,7 +30,7 @@ const buildStandardReceipt = (transaction, options = {}) => {
     transactionId: transaction.id,
     transactionHash: transaction.txHash || 'pending',
     asset: transaction.asset || 'XLM',
-    amount: transaction.amount || '0',
+    amount: meta.pathPayment?.sourceDebit || transaction.amount || '0',
     fee: meta.fee || '0.0000000',
     status: transaction.status || 'success',
     timestamp,
@@ -49,6 +49,8 @@ const buildStandardReceipt = (transaction, options = {}) => {
       memoType: meta.memoType || null,
       network: transaction.network || null,
       assetIssuer: transaction.assetIssuer || null,
+      ...(meta.pathPayment ? { pathPayment: meta.pathPayment } : {}),
+      ...(meta.loyalty ? { loyalty: meta.loyalty } : {}),
     },
   };
 };

@@ -104,6 +104,10 @@ jobs:
       # Unit tests (parser, crypto, admin auth, transfer guardrails, recipient
       # resolution, validators)
       - run: npm test
+      - name: Verify concurrent fee voucher redemption in PostgreSQL
+        env:
+          TEST_DATABASE_URL: postgresql://postgres:password@localhost:5432/sendam_test
+        run: node --test apps/api/test/loyaltyRebate.test.js
 
   frontend-build:
     name: Frontend build
