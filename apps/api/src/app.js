@@ -13,6 +13,7 @@ const simRoutes = require('./routes/sim.routes');
 const authRoutes = require('./routes/auth.routes');
 const receiptRoutes = require('./routes/receipt.routes');
 const retentionRoutes = require('./routes/retention.routes');
+const federationRoutes = require('./routes/federation.routes');
 const healthRoutes = require('./routes/health.routes');
 
 const errorHandler = require('./middlewares/errorHandler');
@@ -174,6 +175,7 @@ app.get('/metrics', (_req, res) => {
 });
 
 // Routes
+app.use('/federation', federationRoutes);
 app.use('/webhook', webhookRoutes);
 app.use('/api/auth', authRoutes);
 app.use('/api/receipts', receiptRoutes);
