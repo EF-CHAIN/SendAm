@@ -1,5 +1,5 @@
 const crypto = require('crypto');
-const config = require('../config/env');
+const _config = require('../config/env');
 const prisma = require('../common/prisma');
 const logger = require('../utils/logger');
 const { classifyRiskScore, RISK_THRESHOLDS } = require('./kycDecision.service');
@@ -15,15 +15,6 @@ const HIGH_RISK_ASN_PREFIXES = new Set([
 const TOR_EXIT_NODE_IPS = new Set();
 const TOR_EXIT_NODE_CACHE_TTL = 60 * 60 * 1000;
 let torCacheTimestamp = 0;
-
-const VPN_PROXY_DETECTION_SERVICES = [
-  { name: 'ipapi', url: 'http://ip-api.com/json/' },
-  { name: 'ipinfo', url: 'https://ipinfo.io/' },
-];
-
-function hashIP(ip) {
-  return crypto.createHash('sha256').update(ip).digest('hex').slice(0, 16);
-}
 
 async function fetchTorExitNodes() {
   const now = Date.now();
@@ -139,7 +130,7 @@ async function calculateVelocityScore(userId, windowHours = 24) {
   return { score: Math.min(score, 40), reasons };
 }
 
-function calculateDeviceFingerprintScore(deviceInfo, userId) {
+function calculateDeviceFingerprintScore(deviceInfo, _userId) {
   if (!deviceInfo) return { score: 5, reason: 'no_device_info' };
 
   let score = 0;
@@ -218,7 +209,7 @@ async function enrichIPInfo(ip) {
   return data;
 }
 
-async function extractRiskFeatures({ userId, phoneNumber, ip, deviceInfo, destinationCountry, recipientPhoneNumber, amount, asset, routeType }) {
+async function extractRiskFeatures({ userId, phoneNumber, ip, deviceInfo, destinationCountry, _recipientPhoneNumber, amount, asset, routeType }) {
   await fetchTorExitNodes();
 
   const phoneCountry = phoneNumber?.startsWith('+234') ? 'NG' : phoneNumber?.startsWith('+') ? phoneNumber.slice(1, 3) : 'NG';
