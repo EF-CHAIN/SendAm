@@ -13,6 +13,7 @@ const { canonicalizePhoneNumber, isValidPhoneNumber } = require('../utils/valida
 const { parseConsentCommand, applyConsentKeyword, isMessageAllowed } = require('../compliance/consent.service');
 const { t, SUPPORTED_LOCALES } = require('../i18n/messages');
 const { formatAmountByLocale } = require('../i18n/formatters');
+const { handleRecurringMessage } = require('../payment/recurringPayments');
 const { buildStandardReceipt, formatChannelReceiptMessage } = require('../services/receipt.service');
 
 const { matchContacts } = require('../services/contactMatcher');
@@ -437,6 +438,13 @@ const processMessage = async (phoneNumber, whatsappName, text, options = {}) => 
     await notify(phoneNumber, t(msgKey, {}, user.locale));
     return;
   }
+
+  // Recurring payment mandates (#1005): schedule/list/pause/resume/cancel and
+  // the PIN reply that activates a schedule. A pending one-off send keeps
+  // priority for bare PIN replies.
+  if (await handleRecurringMessage({
+    phoneNumber, user, text, notify, prisma: db, hasPendingSend: Boolean(user.pendingSend?.destination),
+  })) return;
 
   if (await handlePendingPin({ phoneNumber, user, text, notify, db })) return;
   if (normalized.startsWith('contact:')) return;

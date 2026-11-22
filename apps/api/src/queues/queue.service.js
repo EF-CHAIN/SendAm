@@ -32,6 +32,19 @@ try {
 const inlineProcessors = new Map();
 const queues = new Map();
 const workers = new Map();
+// Jobs currently executing in this process (queue worker or inline fallback).
+// Graceful shutdown waits for this to reach zero before closing connections.
+const inFlight = new Map();
+
+const trackInFlight = (name, delta) => {
+  const next = Math.max(0, (inFlight.get(name) || 0) + delta);
+  if (next === 0) inFlight.delete(name);
+  else inFlight.set(name, next);
+};
+
+const getInFlightCount = (name) => (name
+  ? inFlight.get(name) || 0
+  : [...inFlight.values()].reduce((sum, count) => sum + count, 0));
 
 const getQueue = (name) => {
   if (!Queue || !connection) return null;
@@ -42,10 +55,11 @@ const getQueue = (name) => {
 const { handleExhaustedJob } = require('./dlqManager');
 const { bullBackoffStrategy, FULL_JITTER_BACKOFF_TYPE } = require('./retryStrategy');
 
-const registerProcessor = (name, processor) => {
+const registerProcessor = (name, processor, { concurrency, lockDuration } = {}) => {
   setGauge('sendam_worker_last_successful_processing_timestamp_seconds', 0, { queue: name });
   const observedProcessor = async (job, token) => {
     const correlationId = correlationIdFrom(job.data?.correlationId || String(job.id || ''));
+    trackInFlight(name, 1);
     return runWithContext({ correlationId, jobId: job.id, queue: name }, async () => {
       const started = process.hrtime.bigint();
       increment('sendam_queue_jobs_total', { queue: name, status: 'active' });
@@ -73,6 +87,7 @@ const registerProcessor = (name, processor) => {
         }
         throw error;
       } finally {
+        trackInFlight(name, -1);
         const durationSeconds = Number(process.hrtime.bigint() - started) / 1e9;
         observeDuration('sendam_queue_job_duration_seconds', { queue: name }, durationSeconds);
         observeDuration('bullmq_job_duration_seconds', { queue: name }, durationSeconds);
@@ -85,8 +100,9 @@ const registerProcessor = (name, processor) => {
     const worker = new Worker(name, observedProcessor, {
       connection,
       ...prefixOpts,
-      concurrency: config.worker.concurrency,
-      lockDuration: config.worker.lockDurationMs,
+      // Per-queue overrides isolate a slow queue (e.g. payments) from the rest.
+      concurrency: concurrency || config.worker.concurrency,
+      lockDuration: lockDuration || config.worker.lockDurationMs,
       // Full-jitter retry delays (see retryStrategy.js) so retries during a
       // Horizon 429 / outage spread out instead of arriving together.
       settings: { backoffStrategy: bullBackoffStrategy },
@@ -164,6 +180,8 @@ const enqueue = async (name, jobName, data, options = {}) => {
   throw new Error(`Queue "${name}" is unavailable: configure REDIS_URL and run the worker process`);
 };
 
+const getWorkers = () => [...workers.entries()].map(([name, worker]) => ({ name, worker }));
+
 const closeQueues = async () => {
   await Promise.all([...workers.values()].map((worker) => worker.pause()));
   await Promise.all([...workers.values()].map((worker) => worker.close()));
@@ -225,6 +243,8 @@ module.exports = {
   enqueue,
   registerProcessor,
   closeQueues,
+  getWorkers,
+  getInFlightCount,
   pingRedis,
   getQueueReadiness,
   getRegisteredProcessors,

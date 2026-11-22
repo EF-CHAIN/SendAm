@@ -123,7 +123,11 @@ module.exports = {
     heartbeatIntervalMs: Number(process.env.WORKER_HEARTBEAT_INTERVAL_MS || 30000),
     heartbeatFreshnessMs: Number(process.env.WORKER_HEARTBEAT_FRESHNESS_MS || 90000),
     metricsIntervalMs: Number(process.env.WORKER_METRICS_INTERVAL_MS || 15000),
-    shutdownTimeoutMs: Number(process.env.WORKER_SHUTDOWN_TIMEOUT_MS || 10000),
+    // Time active jobs get to finish after SIGTERM/SIGINT before shutdown
+    // gives up waiting for them (queue intake is paused immediately).
+    drainTimeoutMs: Number(process.env.WORKER_DRAIN_TIMEOUT_MS || 30000),
+    // Hard process deadline; must exceed drainTimeoutMs to leave time to close.
+    shutdownTimeoutMs: Number(process.env.WORKER_SHUTDOWN_TIMEOUT_MS || 45000),
   },
   health: {
     timeoutMs: Number(process.env.HEALTH_CHECK_TIMEOUT_MS || 1000),
