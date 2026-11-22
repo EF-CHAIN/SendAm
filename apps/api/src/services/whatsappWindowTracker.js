@@ -68,7 +68,7 @@ function isWithinConversationWindow(lastInboundAt) {
   return Date.now() - lastTime <= CONVERSATION_WINDOW_MS;
 }
 
-async function checkAndSetTemplateFallback(phoneNumber, templateName, languageCode = 'en') {
+async function checkAndSetTemplateFallback(phoneNumber, templateName, _languageCode = 'en') {
   const lastInboundAt = await getLastInboundAt(phoneNumber);
   const withinWindow = isWithinConversationWindow(lastInboundAt);
 

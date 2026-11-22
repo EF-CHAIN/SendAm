@@ -7,7 +7,7 @@ const { enqueue } = require('../queues/queue.service');
 const { increment } = require('../observability/metrics');
 const { outboundHeaders } = require('../observability/context');
 const { ProviderSkippedError } = require('../compliance/providerErrors');
-const { getLastInboundAt, isWithinConversationWindow } = require('./whatsappWindowTracker');
+const { isWithinConversationWindow } = require('./whatsappWindowTracker');
 
 const RETRYABLE_META_STATUS_CODES = new Set([429, 500, 502, 503, 504]);
 
