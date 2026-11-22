@@ -4,6 +4,7 @@ const { test, describe, before, after, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
 const http = require('node:http');
 const crypto = require('node:crypto');
+const { Keypair } = require('@stellar/stellar-sdk');
 
 process.env.ENCRYPTION_KEY = process.env.ENCRYPTION_KEY || 'a'.repeat(64);
 process.env.JWT_SECRET = process.env.JWT_SECRET || 'test-jwt-secret-that-is-at-least-32-chars';
@@ -232,7 +233,7 @@ describe('HashiCorp Vault Transit Engine Provider (#955)', () => {
       keyName: 'sendam-wallet-key',
     });
 
-    const secret = 'SBGWSG6BTNCKCOB3DIFBGCVMUPQFYPA2G4O34RMTB343OYPXU5DJDVMN';
+    const secret = Keypair.random().secret();
     const enc = await provider.encrypt({
       plaintext: secret,
       context: { walletId: 'w_vault_1' },

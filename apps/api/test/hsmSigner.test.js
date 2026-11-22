@@ -3,6 +3,7 @@
 const { test, describe, before, after, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
 const http = require('node:http');
+const crypto = require('node:crypto');
 
 process.env.ENCRYPTION_KEY = process.env.ENCRYPTION_KEY || 'a'.repeat(64);
 process.env.JWT_SECRET = process.env.JWT_SECRET || 'test-jwt-secret-that-is-at-least-32-chars';
@@ -18,7 +19,7 @@ const stellarAdapter = require('../src/wallet/stellar.adapter');
  */
 const startMockHsmServer = async () => {
   const keysById = new Map();
-  const apiKey = 'hsm-test-bearer-token';
+  const apiKey = crypto.randomBytes(16).toString('hex');
   let transientFailuresRemaining = 0;
   let forceBadSignature = false;
   let denyPolicy = false;

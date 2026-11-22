@@ -3,6 +3,7 @@
 const { test, describe, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
+const { Keypair } = require('@stellar/stellar-sdk');
 
 process.env.ENCRYPTION_KEY = process.env.ENCRYPTION_KEY || 'a'.repeat(64);
 process.env.JWT_SECRET = process.env.JWT_SECRET || 'test-jwt-secret-that-is-at-least-32-chars';
@@ -177,7 +178,7 @@ describe('AWS KMS Provider (#954)', () => {
 
     setKmsProvider(provider);
 
-    const secret = 'SCZANGBA5YHTNYVVV4C3U252E2B6P6F5T3U6MM63WBSBZATAQI3EBTQ4';
+    const secret = Keypair.random().secret();
     const envelope = await encryptEnvelope(secret, {
       keyVersion: 'v2',
       encryptionContext: { walletId: 'wallet_123' },
