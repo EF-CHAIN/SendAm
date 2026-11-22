@@ -203,6 +203,7 @@ export default function OnboardingWizard() {
   const [recipient, setRecipient] = useState(initialDraft?.recipient ?? DEFAULT_RECIPIENT);
   const [simulating, setSimulating] = useState(false);
   const [completed, setCompleted] = useState(false);
+  const [stepError, setStepError] = useState('');
   const [idDocs, setIdDocs] = useState([]);
   const [dragActive, setDragActive] = useState(false);
   const browseInputRef = useRef(null);
@@ -292,13 +293,48 @@ export default function OnboardingWizard() {
   }, [phone, transferAmount, recipient, currentStep, completed]);
 
   const handlePinChange = (index, value) => {
-    if (value.length > 1) value = value.slice(-1);
+    const cleaned = value.replace(/\D/g, '');
+    const digit = cleaned.length > 1 ? cleaned.slice(-1) : cleaned;
     const newPin = [...pin];
-    newPin[index] = value;
+    newPin[index] = digit;
     setPin(newPin);
+    if (stepError) setStepError('');
+  };
+
+  const validateCurrentStep = () => {
+    if (currentStep === 1) {
+      if (!selectedCountry.regex.test(phone.replace(/\s/g, ''))) {
+        return `Please enter a valid ${selectedCountry.name} phone number (e.g. ${selectedCountry.placeholder}).`;
+      }
+      return '';
+    }
+    if (currentStep === 2) {
+      if (!pin.every((d) => /^\d$/.test(d))) {
+        return 'Please enter all 4 digits of your security PIN to continue.';
+      }
+      return '';
+    }
+    if (currentStep === 3) {
+      const amount = Number(transferAmount);
+      if (!transferAmount.trim() || !Number.isFinite(amount) || amount <= 0) {
+        return 'Please enter a valid transfer amount greater than 0.';
+      }
+      if (digitsOnly(recipient).length < 7) {
+        return 'Please enter a valid recipient phone number.';
+      }
+      return '';
+    }
+    return '';
   };
 
   const handleNext = () => {
+    const validationError = validateCurrentStep();
+    if (validationError) {
+      setStepError(validationError);
+      return;
+    }
+    setStepError('');
+
     if (currentStep < 3) {
       setCurrentStep((s) => s + 1);
     } else {
@@ -315,6 +351,7 @@ export default function OnboardingWizard() {
     if (currentStep > 1) {
       setCurrentStep((s) => s - 1);
       setCompleted(false);
+      setStepError('');
     }
   };
 
@@ -323,6 +360,7 @@ export default function OnboardingWizard() {
     setCurrentStep(1);
     setCompleted(false);
     setSimulating(false);
+    setStepError('');
     setPin(['', '', '', '']);
     setSelectedCountry(DEFAULT_COUNTRY);
     setPhone(`${DEFAULT_COUNTRY.dialCode} ${DEFAULT_COUNTRY.format('8012345678')}`);
@@ -334,6 +372,7 @@ export default function OnboardingWizard() {
   const handleClearDraft = () => {
     clearDraft();
     setCurrentStep(1);
+    setStepError('');
     setPin(['', '', '', '']);
     setSelectedCountry(DEFAULT_COUNTRY);
     setPhone(`${DEFAULT_COUNTRY.dialCode} ${DEFAULT_COUNTRY.format('8012345678')}`);
@@ -446,9 +485,15 @@ export default function OnboardingWizard() {
                       </label>
                       <CountryPhonePicker
                         country={selectedCountry}
-                        onCountryChange={setSelectedCountry}
+                        onCountryChange={(preset) => {
+                          setSelectedCountry(preset);
+                          if (stepError) setStepError('');
+                        }}
                         phone={phone}
-                        onPhoneChange={setPhone}
+                        onPhoneChange={(nextPhone) => {
+                          setPhone(nextPhone);
+                          if (stepError) setStepError('');
+                        }}
                       />
                     </div>
                     {/* Identity document upload */}
@@ -608,16 +653,18 @@ export default function OnboardingWizard() {
                       </p>
                     </div>
                     <div>
-                      <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-2">
+                      <span id="wizard-pin-label" className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-2">
                         4-Digit PIN
-                      </label>
-                      <div className="flex gap-3 max-w-xs">
+                      </span>
+                      <div role="group" aria-labelledby="wizard-pin-label" className="flex gap-3 max-w-xs">
                         {[0, 1, 2, 3].map((idx) => (
                           <input
                             key={idx}
                             id={`wizard-pin-${idx}`}
                             type="password"
+                            inputMode="numeric"
                             maxLength={1}
+                            aria-label={`PIN digit ${idx + 1}`}
                             value={pin[idx]}
                             onChange={(e) => handlePinChange(idx, e.target.value)}
                             className="w-12 h-14 text-center text-xl font-bold rounded-xl border border-slate-200 text-slate-900 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition"
@@ -653,7 +700,10 @@ export default function OnboardingWizard() {
                           id="wizard-amount"
                           type="text"
                           value={transferAmount}
-                          onChange={(e) => setTransferAmount(e.target.value)}
+                          onChange={(e) => {
+                            setTransferAmount(e.target.value);
+                            if (stepError) setStepError('');
+                          }}
                           className="w-full px-4 py-3 rounded-xl border border-slate-200 text-slate-900 font-bold focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition"
                         />
                       </div>
@@ -665,7 +715,10 @@ export default function OnboardingWizard() {
                           id="wizard-recipient"
                           type="text"
                           value={recipient}
-                          onChange={(e) => setRecipient(e.target.value)}
+                          onChange={(e) => {
+                            setRecipient(e.target.value);
+                            if (stepError) setStepError('');
+                          }}
                           className="w-full px-4 py-3 rounded-xl border border-slate-200 text-slate-900 font-medium focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition"
                         />
                       </div>
@@ -707,6 +760,17 @@ export default function OnboardingWizard() {
                     Reset Simulation
                   </button>
                 </div>
+              </div>
+            )}
+
+            {/* Validation Error Alert */}
+            {!completed && stepError && (
+              <div
+                role="alert"
+                data-testid="wizard-step-error"
+                className="mt-5 px-4 py-3 rounded-xl bg-red-50 border border-red-200 text-sm font-medium text-red-700"
+              >
+                {stepError}
               </div>
             )}
 
