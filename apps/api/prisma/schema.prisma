@@ -1010,6 +1010,36 @@ model WebhookInboxEvent {
   @@index([status, receivedAt])
 }
 
+/// IP reputation cache for Geo-IP and threat intelligence lookups
+model IpReputationCache {
+  id        String   @id @default(cuid())
+  ip        String   @unique
+  data      Json
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([updatedAt])
+}
+
+/// Risk assessment record for transaction-level compliance decisions
+model RiskAssessment {
+  id        String   @id @default(cuid())
+  userId    String
+  score     Int
+  riskClass String
+  factors   Json
+  reasons   String[]
+  action    String
+  metadata  Json?
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([score])
+  @@index([action])
+}
+
 /// Per-category messaging consent (#310). One row per (user, category); the
 /// absence of a row means "never asked", which resolves to the category
 /// default rather than to a denial.
