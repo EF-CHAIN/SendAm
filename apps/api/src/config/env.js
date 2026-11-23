@@ -270,6 +270,11 @@ module.exports = {
       appId: process.env.DOJAH_APP_ID,
       secretKey: process.env.DOJAH_SECRET_KEY,
     },
+    sanctions: {
+      apiKey: process.env.OPENSANCTIONS_API_KEY,
+      baseUrl: process.env.OPENSANCTIONS_BASE_URL || 'https://api.opensanctions.org',
+      timeoutMs: Number(process.env.OPENSANCTIONS_TIMEOUT_MS || 5000),
+    },
     pinPepper: process.env.PIN_PEPPER,
     pinFailureLimit: Number(process.env.PIN_FAILURE_LIMIT || 5),
     pinLockoutMs: Number(process.env.PIN_LOCKOUT_MS || 10 * 60 * 1000),

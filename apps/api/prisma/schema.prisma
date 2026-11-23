@@ -18,6 +18,7 @@ model User {
   pinLockedUntil      DateTime?
   pendingSend         Json?
   confirmationVersion Int       @default(0)
+  supportUnrecognizedCount Int   @default(0)
   welcomeSentAt       DateTime?
   contactsJson        Json?
   deletedAt           DateTime?
@@ -460,6 +461,8 @@ model AuditLog {
   updatedAt    DateTime @updatedAt
   previousHash String?  @unique
   hash         String?  @unique
+  currentHash  String?  @unique
+  hashAlgorithm String  @default("legacy-hmac-sha256")
 
   @@index([actorType])
   @@index([action])
@@ -470,6 +473,12 @@ model AuditLog {
   @@index([entityType, createdAt])
   @@index([entityId, createdAt])
   @@index([actorId, createdAt])
+}
+
+model AuditChainHead {
+  id         String   @id @default("primary")
+  currentHash String?
+  updatedAt  DateTime @updatedAt
 }
 
 model AdminUser {
