@@ -55,7 +55,7 @@ describe('factor scoring', () => {
 
   test('phone country is resolved to ISO-3166 from E.164 or wa_id', () => {
     assert.equal(risk.phoneCountry('+2348012345678'), 'NG');
-    assert.equal(risk.phoneCountry('447911123456'), 'GB');
+    assert.equal(risk.phoneCountry('442071838750'), 'GB');
     assert.equal(risk.phoneCountry(null), null);
   });
 
