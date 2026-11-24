@@ -40,6 +40,27 @@ router.post(
   controller.startKyc,
 );
 
+// Customer Tier-1 BVN/NIN verification (#982)
+router.post(
+  '/kyc/bvn-nin',
+  requireRestApiEnabled,
+  requireRestSession,
+  validateRequest({
+    body: {
+      allowedKeys: ['idType', 'idNumber', 'firstName', 'lastName', 'dob'],
+      required: ['idType', 'idNumber', 'firstName', 'lastName', 'dob'],
+      fields: {
+        idType: { type: 'string', trim: true, custom: (value) => /^(BVN|NIN)$/i.test(value), message: 'idType must be BVN or NIN' },
+        idNumber: { type: 'string', trim: true, custom: (value) => /^\d{11}$/.test(value), message: 'idNumber must be 11 digits' },
+        firstName: { type: 'string', trim: true, custom: (value) => value.length > 0 && value.length <= 100, message: 'firstName is required' },
+        lastName: { type: 'string', trim: true, custom: (value) => value.length > 0 && value.length <= 100, message: 'lastName is required' },
+        dob: { type: 'string', trim: true, custom: (value) => value.length <= 20, message: 'dob is required' },
+      },
+    },
+  }),
+  controller.verifyBvnNin,
+);
+
 // Provider callback for Smile ID
 router.post('/kyc/callback/smileid', controller.smileIdCallback);
 

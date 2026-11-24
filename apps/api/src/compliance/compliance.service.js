@@ -6,10 +6,10 @@ const { assertValidAmount, add, compare, formatUnits, getAssetRule, parseUnits }
 const { getPolicyConversionSnapshot, PolicyError, POLICY_ERROR_CODES } = require('../pricing/policyRate');
 
 const defaultTierLimits = {
-  0: { daily: '0.00', single: '0.00' },
-  1: { daily: '50000.00', single: '20000.00' },
-  2: { daily: '500000.00', single: '200000.00' },
-  3: { daily: '5000000.00', single: '1000000.00' },
+  0: { dailyUsd: '50.00', singleUsd: '50.00' },
+  1: { dailyUsd: '500.00', singlePolicy: '20000.00' },
+  2: { dailyUsd: '5000.00', singlePolicy: '200000.00' },
+  3: { dailyUsd: '5000.00', singlePolicy: '1000000.00' },
 };
 
 const policyCurrency = () => String(config.compliance?.policyCurrency || 'NGN').trim().toUpperCase();
@@ -19,13 +19,24 @@ const canonicalizePolicyAmount = (value, currency) => {
   return formatUnits(parseUnits(String(value), rule.precision, { rejectExcessPrecision: false }), rule.precision);
 };
 
-const tierLimitsFor = (tier) => {
-  const configured = config.compliance?.tierLimits || defaultTierLimits;
-  const limits = configured[tier] || configured[0] || defaultTierLimits[0];
+const tierLimitsFor = async (tier) => {
   const currency = policyCurrency();
+  const configured = config.compliance?.tierLimits;
+  if (configured) {
+    const limits = configured[tier] || configured[0] || { daily: '0.00', single: '0.00' };
+    return {
+      daily: canonicalizePolicyAmount(limits.daily, currency),
+      single: canonicalizePolicyAmount(limits.single, currency),
+    };
+  }
+  const limits = defaultTierLimits[tier] || defaultTierLimits[0];
+  const dailySnapshot = await getPolicyConversionSnapshot({ sourceAsset: 'USD', amount: limits.dailyUsd });
+  const singleSnapshot = limits.singleUsd
+    ? await getPolicyConversionSnapshot({ sourceAsset: 'USD', amount: limits.singleUsd })
+    : null;
   return {
-    daily: canonicalizePolicyAmount(limits.daily, currency),
-    single: canonicalizePolicyAmount(limits.single, currency),
+    daily: canonicalizePolicyAmount(dailySnapshot.convertedAmount, currency),
+    single: canonicalizePolicyAmount(singleSnapshot?.convertedAmount || limits.singlePolicy, currency),
   };
 };
 
@@ -519,7 +530,7 @@ const enforceTransactionPolicy = async ({
   fetchCryptoUsdRate,
 }) => {
   const profile = await getOrCreateKycProfile(user);
-  const limits = tierLimitsFor(profile.tier);
+  const limits = await tierLimitsFor(profile.tier);
   const referenceCurrency = policyCurrency();
   const settlementAsset = String(asset || referenceCurrency).trim().toUpperCase();
   assertValidAmount(amount, settlementAsset);

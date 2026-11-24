@@ -25,6 +25,7 @@ const KNOWN_QUEUES = Object.freeze([
   'partner-webhooks',
   'receipts',
   'batch-settlements',
+  'payment-reversals',
 ]);
 
 const COLLECT_TIMEOUT_MS = 2000;
