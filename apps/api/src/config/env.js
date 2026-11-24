@@ -297,6 +297,9 @@ module.exports = {
     provider: process.env.VOICE_PROVIDER || 'deepgram',
     deepgramApiKey: process.env.DEEPGRAM_API_KEY,
     whisperApiKey: process.env.WHISPER_API_KEY || process.env.OPENAI_API_KEY,
+    whisperBaseUrl: process.env.WHISPER_BASE_URL || process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1',
+    whisperModel: process.env.WHISPER_MODEL || 'whisper-1',
+    whisperTimeoutMs: Number(process.env.WHISPER_TIMEOUT_MS || 30000),
     speakerConfidenceThreshold: Number(process.env.VOICE_SPEAKER_CONFIDENCE_THRESHOLD || 0.75),
   },
   // Request body limits and timeout tuning. Limits are route-appropriate;
