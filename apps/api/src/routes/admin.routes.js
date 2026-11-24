@@ -94,6 +94,8 @@ router.get('/users/:userId/onboarding', requireAdmin('admin.read'), adminControl
 router.post('/users/:userId/deactivate', requireAdmin('operations.write'), adminController.deactivateUserAccount);
 router.post('/users/:userId/reactivate', requireAdmin('operations.write'), adminController.reactivateUserAccount);
 router.get('/users/:userId/account-status', requireAdmin('admin.read'), adminController.getUserAccountStatusHistory);
+router.post('/users/:userId/unlock-pin', requireAdmin('operations.write'), adminController.unlockUserPin);
+router.post('/users/:id/unlock-pin', requireAdmin('operations.write'), adminController.unlockUserPin);
 
 // ── Issue #308: Customer Statement generation (admin view) ────────────────────
 router.get('/users/:userId/statement', requireAdmin('compliance.read'), adminController.getUserStatement);

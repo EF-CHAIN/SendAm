@@ -700,6 +700,24 @@ const recoverWallet = async (req, res, next) => {
   }
 };
 
+const { operatorUnlockPin } = require('../compliance/pinLockout');
+
+const unlockUserPin = async (req, res, next) => {
+  try {
+    const userId = req.params.userId || req.params.id;
+    const result = await operatorUnlockPin({
+      prisma,
+      userId,
+      adminId: req.admin?.id || 'system',
+      reason: req.body?.reason || 'Manual operator unlock after security verification',
+    });
+    return sendSuccess(res, result, 'User PIN lockout cleared by operator');
+  } catch (error) {
+    if (error.statusCode) return sendError(res, error.message, error.statusCode);
+    return next(error);
+  }
+};
+
 const getSecretRotationStatus = async (req, res, next) => {
   try {
     const status = await getRotationStatus();
@@ -1180,6 +1198,7 @@ module.exports = {
   reactivateUserAccount,
   getUserAccountStatusHistory,
   getUserStatement,
+  unlockUserPin,
   getKycExpiryStatus,
   getComplianceExpirySummary,
   getDeadLetterJobs,
