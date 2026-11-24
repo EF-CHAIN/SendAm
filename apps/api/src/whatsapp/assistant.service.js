@@ -481,6 +481,13 @@ const processMessage = async (phoneNumber, whatsappName, text, options = {}) => 
   }
   if (normalized.startsWith('contact:')) return;
 
+  // Regional KYC automated prompts and verification for Ghana & Kenya (#983)
+  const { handleRegionalKycPrompt } = require('../compliance/providers/ghanaKenyaKyc');
+  if (await handleRegionalKycPrompt({ phoneNumber, user, text, notify, db })) {
+    await resetUnrecognizedCount({ prisma: db, user });
+    return;
+  }
+
   if (normalized === 'help') {
     const supportCase = await handoffByRequest({ prisma: db, user });
     await notify(phoneNumber, `I've connected you with human support. Your case number is ${supportCase.caseNumber}. Automated assistance will resume after the case is closed.`);

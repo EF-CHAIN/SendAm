@@ -25,6 +25,15 @@ const mockPrisma = {
     findFirst: async () => null,
     create: async ({ data }) => { state.audits.push(data); return data; },
   },
+  auditChainHead: {
+    findUnique: async () => null,
+    update: async () => null,
+    create: async () => null,
+  },
+  workflowEvent: {
+    findFirst: async () => null,
+    create: async () => null,
+  },
 };
 mockPrisma.$transaction = async (fn) => fn(mockPrisma);
 require.cache[require.resolve('../src/common/prisma')] = { exports: mockPrisma };
