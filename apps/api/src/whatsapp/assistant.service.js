@@ -15,6 +15,12 @@ const { t, SUPPORTED_LOCALES } = require('../i18n/messages');
 const { formatAmountByLocale } = require('../i18n/formatters');
 const { handleRecurringMessage } = require('../payment/recurringPayments');
 const { buildStandardReceipt, formatChannelReceiptMessage } = require('../services/receipt.service');
+const {
+  findOpenHandoff,
+  handoffUnrecognizedMessage,
+  handoffByRequest,
+  resetUnrecognizedCount,
+} = require('../support/agentHandoff');
 
 const { matchContacts } = require('../services/contactMatcher');
 const { sendMetaMessage } = require('../services/whatsappMedia');
@@ -94,6 +100,15 @@ const parsePaymentIntent = (text) => {
 
 const requestConfirmation = async ({ phoneNumber, user, intent, notify, selectedContact, db = defaultPrisma }) => {
   const resolveRecipient = createRecipientResolver({ prisma: db, walletService });
+  const alias = !selectedContact && db.alias?.findUnique
+    ? await db.alias.findUnique({
+      where: { userId_alias: { userId: user.id, alias: String(intent.recipient).toLowerCase() } },
+    })
+    : null;
+  const phoneCandidate = selectedContact?.target || alias?.target || intent.recipient;
+  const recipientPhoneNumber = isValidPhoneNumber(phoneCandidate)
+    ? canonicalizePhoneNumber(phoneCandidate)
+    : undefined;
   let recipient;
   if (selectedContact) {
     const { label, target } = selectedContact;
@@ -225,6 +240,7 @@ const requestConfirmation = async ({ phoneNumber, user, intent, notify, selected
     memo: intent.memo,
     memoType: intent.memoType,
     routeType: 'domestic',
+    recipientPhoneNumber,
     requestedAt: now.toISOString(),
     expiresAt: expiresAt.toISOString(),
     isHighRisk,
@@ -362,6 +378,7 @@ const handlePendingPin = async ({ phoneNumber, user, text, notify, db = defaultP
 
   const result = await executePayment({
     sender: user,
+    recipientPhoneNumber: pending.recipientPhoneNumber,
     destination: pending.destination,
     amount: pending.amount,
     asset: pending.asset,
@@ -405,10 +422,18 @@ const processMessage = async (phoneNumber, whatsappName, text, options = {}) => 
   const locale = user.locale || 'en';
 
   const normalized = String(text || '').trim().toLowerCase();
+  const activeHandoff = db.supportCase?.findFirst
+    ? await findOpenHandoff(db, user.id)
+    : null;
+  if (activeHandoff) {
+    await notify(phoneNumber, `Your support request ${activeHandoff.caseNumber} is with our human support team. Automated assistance will resume after the case is closed.`);
+    return;
+  }
 
   // Language/locale selection command (#192)
   const langMatch = normalized.match(/^(?:lang|language|locale)\s+([a-z]{2})$/i);
   if (langMatch) {
+    await resetUnrecognizedCount({ prisma: db, user });
     const requestedLang = langMatch[1].toLowerCase();
     const newLocale = SUPPORTED_LOCALES.includes(requestedLang) ? requestedLang : 'en';
     const updatedUser = await db.user.update({
@@ -423,6 +448,7 @@ const processMessage = async (phoneNumber, whatsappName, text, options = {}) => 
   // Opt-out / Opt-in consent handling (#191)
   const consentCmd = parseConsentCommand(text);
   if (consentCmd.isConsentCommand) {
+    await resetUnrecognizedCount({ prisma: db, user });
     // Applies the keyword across every optional category, not just the
     // global flag: a customer who says STOP means stop, and leaving service
     // messages running because they are "useful" is what erodes trust in the
@@ -444,12 +470,25 @@ const processMessage = async (phoneNumber, whatsappName, text, options = {}) => 
   // priority for bare PIN replies.
   if (await handleRecurringMessage({
     phoneNumber, user, text, notify, prisma: db, hasPendingSend: Boolean(user.pendingSend?.destination),
-  })) return;
+  })) {
+    await resetUnrecognizedCount({ prisma: db, user });
+    return;
+  }
 
-  if (await handlePendingPin({ phoneNumber, user, text, notify, db })) return;
+  if (await handlePendingPin({ phoneNumber, user, text, notify, db })) {
+    await resetUnrecognizedCount({ prisma: db, user });
+    return;
+  }
   if (normalized.startsWith('contact:')) return;
 
-  if (['hi', 'hello', 'help', 'menu'].includes(normalized)) {
+  if (normalized === 'help') {
+    const supportCase = await handoffByRequest({ prisma: db, user });
+    await notify(phoneNumber, `I've connected you with human support. Your case number is ${supportCase.caseNumber}. Automated assistance will resume after the case is closed.`);
+    return;
+  }
+
+  if (['hi', 'hello', 'menu'].includes(normalized)) {
+    await resetUnrecognizedCount({ prisma: db, user });
     if (!isMessageAllowed({ user, isTransactional: false })) {
       await notify(phoneNumber, t('opted_out_blocked', {}, locale));
       return;
@@ -459,6 +498,7 @@ const processMessage = async (phoneNumber, whatsappName, text, options = {}) => 
   }
 
   if (normalized.includes('balance')) {
+    await resetUnrecognizedCount({ prisma: db, user });
     await walletService.ensureWalletsForUser({ user });
     const balances = await walletService.balancesForUser({ userId: user.id });
     const lines = balances.flatMap((b) => {
@@ -476,6 +516,7 @@ const processMessage = async (phoneNumber, whatsappName, text, options = {}) => 
   }
 
   if (normalized.includes('receive')) {
+    await resetUnrecognizedCount({ prisma: db, user });
     const wallets = await walletService.ensureWalletsForUser({ user });
     const lines = wallets.map((w) => `${w.chain}: ${w.publicKey}`);
     const headerMsg = t('receive_header', { lines: lines.join('\n') }, locale);
@@ -484,6 +525,7 @@ const processMessage = async (phoneNumber, whatsappName, text, options = {}) => 
   }
 
   if (normalized.includes('history') || normalized.includes('transactions')) {
+    await resetUnrecognizedCount({ prisma: db, user });
     const transactions = db.transaction?.findMany ? await db.transaction.findMany({
       where: { userId: user.id },
       orderBy: { createdAt: 'desc' },
@@ -497,10 +539,16 @@ const processMessage = async (phoneNumber, whatsappName, text, options = {}) => 
 
   const paymentIntent = parsePaymentIntent(text);
   if (paymentIntent) {
+    await resetUnrecognizedCount({ prisma: db, user });
     await requestConfirmation({ phoneNumber, user, intent: paymentIntent, notify, db });
     return;
   }
 
+  const handoff = await handoffUnrecognizedMessage({ prisma: db, user });
+  if (handoff.escalated) {
+    await notify(phoneNumber, `I've connected you with human support. Your case number is ${handoff.supportCase.caseNumber}. Automated assistance is paused until the case is closed.`);
+    return;
+  }
   await notify(phoneNumber, t('fallback_menu', {}, locale));
 };
 
