@@ -38,14 +38,15 @@ const registerWhatsAppJobs = ({ orderingStore } = {}) => {
       });
     }
 
+    // Record the inbound first so replies sent while processing see an open
+    // 24h window (#969). Never throws: Redis is best-effort here.
+    await setLastInboundAt(from);
+
     if (messageType === 'audio' || messageType === 'voice') {
       await processVoiceMessage({ phoneNumber: from, whatsappName, mediaId, whatsappMessageId });
     } else {
       await processMessage(from, whatsappName, text);
     }
-
-    // Update last inbound timestamp for 24h conversation window tracking
-    await setLastInboundAt(from);
 
     if (whatsappMessageId) {
       try {

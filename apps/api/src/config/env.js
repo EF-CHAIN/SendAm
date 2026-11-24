@@ -86,6 +86,11 @@ module.exports = {
     responseTimeoutMs: Number(process.env.WHATSAPP_RESPONSE_TIMEOUT_MS || 10000),
     maxSendRetries: Number(process.env.WHATSAPP_SEND_MAX_RETRIES || 2),
     retryBaseDelayMs: Number(process.env.WHATSAPP_SEND_RETRY_BASE_DELAY_MS || 250),
+    // Approved Meta template with a single {{1}} body variable, used to deliver
+    // notifications outside the 24h customer care window (#969). Unset = no
+    // automatic fallback (free-form send, as before).
+    fallbackTemplateName: process.env.WHATSAPP_FALLBACK_TEMPLATE_NAME || null,
+    fallbackTemplateLanguage: process.env.WHATSAPP_FALLBACK_TEMPLATE_LANGUAGE || 'en',
   },
   limits: {
     maxSendAmount: Number(process.env.MAX_SEND_AMOUNT || 1000),
