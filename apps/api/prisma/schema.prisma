@@ -58,6 +58,8 @@ model User {
   muxedSubAccounts MuxedSubAccount[]
   depositCredits   DepositCredit[]
 
+  mnemonicExportGrants MnemonicExportGrant[]
+
   @@index([anonymizedAt])
   @@index([createdAt, id])
   @@index([deactivatedAt])
@@ -129,6 +131,7 @@ model Wallet {
 
   user User @relation(fields: [userId], references: [id], onDelete: Restrict)
 
+  mnemonicExportGrants MnemonicExportGrant[]
   muxedSubAccounts MuxedSubAccount[]
   depositCredits   DepositCredit[]
 
@@ -1161,6 +1164,13 @@ model RecurringPayment {
   @@index([status, nextRunAt])
   @@index([userId, status])
 }
+/// A one-time authorization to export a wallet's recovery material (#960).
+///
+/// Holds NO secret material: only the HASH of the out-of-band challenge code,
+/// plus the state machine that enforces PIN + out-of-band verification, an
+/// expiry window, bounded attempts and single use. The mnemonic itself is
+/// never persisted here or anywhere else.
+model MnemonicExportGrant {
 /// A virtual sub-wallet addressed by a Stellar MED25519 muxed address (#958).
 ///
 /// Muxed accounts do NOT create on-chain accounts: every sub-account shares
@@ -1173,6 +1183,25 @@ model MuxedSubAccount {
   userId   String
   walletId String
 
+  /// pending | authorized | consumed | expired | revoked
+  status String @default("pending")
+
+  /// HMAC of the out-of-band challenge code. The plaintext code is sent to the
+  /// user's own channel and never stored, logged or returned by the API.
+  challengeHash String
+
+  challengeExpiresAt DateTime
+  challengeAttempts  Int      @default(0)
+
+  pinVerifiedAt DateTime?
+  otpVerifiedAt DateTime?
+  authorizedAt  DateTime?
+  /// Set the moment the export is served. A consumed grant can never be
+  /// replayed — a second export needs a fresh grant.
+  consumedAt    DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
   /// The 64-bit muxed sub-account id, held as a decimal STRING. A JS Number
   /// cannot represent the full uint64 range (2^53-1 < 2^64-1), so every read
   /// and write of this value goes through BigInt. Never parse it with
@@ -1230,6 +1259,8 @@ model DepositCredit {
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
   wallet Wallet @relation(fields: [walletId], references: [id], onDelete: Cascade)
 
+  @@index([userId, status])
+  @@index([status, challengeExpiresAt])
   @@index([userId, createdAt])
   @@index([walletId, createdAt])
 }
