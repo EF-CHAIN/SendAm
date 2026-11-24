@@ -87,6 +87,7 @@ const buildPrisma = () => {
     legalHold: createCollection(),
     privacyProviderTask: createCollection(),
     auditLog: createCollection(),
+    auditChainHead: createCollection(),
   };
   // A real Prisma transaction operates on the same data; reuse this instance so
   // seeded rows are visible inside the transaction callback.
