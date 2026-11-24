@@ -4,7 +4,6 @@ const logger = require('../utils/logger');
 const smileId = require('./smileId.provider');
 const { assertValidAmount, add, compare, formatUnits, getAssetRule, parseUnits } = require('../utils/money');
 const { getPolicyConversionSnapshot, PolicyError, POLICY_ERROR_CODES } = require('../pricing/policyRate');
-const { evaluateTransactionRisk } = require('./riskEngine');
 
 const defaultTierLimits = {
   0: { daily: '0.00', single: '0.00' },
@@ -518,8 +517,6 @@ const enforceTransactionPolicy = async ({
   now,
   fetchFiatRate,
   fetchCryptoUsdRate,
-  ip,
-  deviceInfo,
 }) => {
   const profile = await getOrCreateKycProfile(user);
   const limits = tierLimitsFor(profile.tier);
@@ -599,33 +596,19 @@ const enforceTransactionPolicy = async ({
     throw new Error(`This payment requires manual compliance review: ${sanctionsResult.reason}`);
   }
 
-  const riskContext = {
-    userId: user.id,
-    phoneNumber: user.phoneNumber,
-    ip: ip || '127.0.0.1',
-    deviceInfo,
-    destinationCountry,
-    recipientPhoneNumber,
+  const riskScore = calculateRiskScore({
     amount: convertedAmount,
     asset: referenceCurrency,
     routeType,
-  };
+    destinationCountry,
+    profileRiskScore: profile.riskScore,
+  });
 
-  const riskAssessment = await evaluateTransactionRisk(riskContext);
-  const riskScore = riskAssessment.score;
-
-  if (riskAssessment.action === 'blocked') {
-    throw Object.assign(
-      new Error('Transaction blocked due to critical risk assessment.'),
-      { statusCode: 403, code: 'CRITICAL_RISK_BLOCK', riskAssessment }
-    );
+  if (riskScore >= RISK_THRESHOLDS.CRITICAL_MIN) {
+    throw new Error('This payment requires manual compliance review.');
   }
 
-  if (riskAssessment.action === 'step_up_required') {
-    logger.warn('step_up_authentication_required', { userId: user.id, riskScore, reasons: riskAssessment.reasons });
-  }
-
-  return { profile, riskScore, riskAssessment, policySnapshot, limits };
+  return { profile, riskScore, policySnapshot, limits };
 };
 
 module.exports = {

@@ -51,6 +51,7 @@ model User {
   userErasures            UserErasure[]
 
   voiceProfile            VoiceProfile?
+  riskAssessments         RiskAssessment[]
 
   @@index([anonymizedAt])
   @@index([createdAt, id])

@@ -5,6 +5,7 @@ const { isFirmSep38Quote, assertFirmQuoteValidForExecution } = require('../prici
 const { writeAuditLog } = require('../common/audit.service');
 const { appendEvent, EVENT_TYPES } = require('../common/event.service');
 const { enforceTransactionPolicy } = require('../compliance/compliance.service');
+const { evaluateTransactionRisk, assertRiskAllowsPayment } = require('../compliance/riskEngine');
 const { assertAccountActive } = require('../compliance/account.service');
 const { markTransactionFailed } = require('./markFailed');
 const { transitionPaymentState } = require('./payment.transitions');
@@ -60,6 +61,9 @@ const executePayment = async ({
   idempotencyKey,
   destinationAsset,
   destinationAmount,
+  // Channel-provided risk signals (#992): { ip, deviceInfo, stepUpVerified }.
+  // WhatsApp traffic has none; web/app channels pass what they have.
+  riskSignals = {},
 }) => {
   const senderUser = sender;
   if (!senderUser) throw new Error('Sender not found.');
@@ -96,6 +100,20 @@ const executePayment = async ({
   const memoMetadata = (memo !== undefined && memo !== null && memo !== '')
     ? { memo: stellarAdapter.redactMemo ? stellarAdapter.redactMemo(memo) : String(memo), memoType: String(memoType || 'text').toLowerCase() }
     : {};
+
+  // Dynamic risk scoring runs before the DB transaction: it may call out to
+  // IP-reputation sources and must not hold the transaction open meanwhile.
+  const riskAssessment = await evaluateTransactionRisk({
+    userId: senderUser.id,
+    phoneNumber: senderUser.phoneNumber,
+    ip: riskSignals.ip,
+    deviceInfo: riskSignals.deviceInfo,
+    destinationCountry,
+    amount: normalizedAmount,
+    asset: effectiveAsset,
+    routeType: effectiveRouteType,
+  });
+  assertRiskAllowsPayment(riskAssessment, { stepUpVerified: riskSignals.stepUpVerified === true });
 
   // Core runs inside a single Prisma transaction so the quote and the payment
   // reservation commit together (or not at all).

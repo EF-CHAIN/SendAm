@@ -1,4 +1,6 @@
-const { test, beforeEach, afterEach, describe } = require('node:test');
+'use strict';
+
+const { test, beforeEach, describe } = require('node:test');
 const assert = require('node:assert/strict');
 
 const mockPrisma = {
@@ -10,251 +12,170 @@ const mockPrisma = {
 
 require.cache[require.resolve('../src/common/prisma')] = { exports: mockPrisma };
 
-const {
-  calculateIPRiskScore,
-  calculateCountryMismatchScore,
-  calculateAccountAgeScore,
-  calculateDeviceFingerprintScore,
-  computeRiskScore,
-  evaluateTransactionRisk,
-  RISK_THRESHOLDS,
-  classifyRiskScore,
-} = require('../src/compliance/riskEngine');
+const risk = require('../src/compliance/riskEngine');
 
-describe('riskEngine', () => {
-  beforeEach(() => {
-    mockPrisma.user.findUnique = async () => ({ id: 'user-1', createdAt: new Date('2024-01-01') });
-    mockPrisma.transaction.findMany = async () => [];
-    mockPrisma.ipReputationCache.findUnique = async () => null;
-    mockPrisma.ipReputationCache.upsert = async () => {};
-    mockPrisma.riskAssessment.create = async () => {};
+const DAY = 24 * 60 * 60 * 1000;
+const NOW = Date.parse('2026-11-24T12:00:00Z');
+const TOR_IP = '185.220.101.1';
+
+// Fake network: Tor list contains TOR_IP; the IP lookup returns `ipData`.
+const fakeHttp = (ipData) => {
+  const calls = [];
+  const httpGet = async (url) => {
+    calls.push(url);
+    if (url.includes('torbulkexitlist')) return `# exit list\n${TOR_IP}\n203.0.113.9\n`;
+    return ipData;
+  };
+  return { httpGet, calls };
+};
+
+let persisted;
+
+beforeEach(() => {
+  risk.resetTorCache();
+  persisted = [];
+  mockPrisma.user.findUnique = async () => ({ createdAt: new Date(NOW - 400 * DAY) });
+  mockPrisma.transaction.findMany = async () => [];
+  mockPrisma.ipReputationCache.findUnique = async () => null;
+  mockPrisma.ipReputationCache.upsert = async () => {};
+  mockPrisma.riskAssessment.create = async ({ data }) => { persisted.push(data); return data; };
+});
+
+describe('factor scoring', () => {
+  test('IP risk: Tor + hosting + high-risk country + hosting ASN, capped', () => {
+    const r = risk.calculateIPRiskScore({ isTor: true, isHosting: true, country: 'ir', asn: 'AS16509 Amazon.com, Inc.' });
+    assert.equal(r.score, risk.FACTOR_CAPS.ipRisk);
+    assert.ok(r.reasons.includes('tor_exit_node'));
+    assert.ok(r.reasons.includes('high_risk_asn'), 'ASN parsed from ip-api "AS123 Name" format');
   });
 
-  afterEach(() => {});
-
-  describe('classifyRiskScore', () => {
-    test('low risk 0-29', () => {
-      assert.equal(classifyRiskScore(0), 'low');
-      assert.equal(classifyRiskScore(29), 'low');
-    });
-    test('medium risk 30-59', () => {
-      assert.equal(classifyRiskScore(30), 'medium');
-      assert.equal(classifyRiskScore(59), 'medium');
-    });
-    test('high risk 60-79', () => {
-      assert.equal(classifyRiskScore(60), 'high');
-      assert.equal(classifyRiskScore(79), 'high');
-    });
-    test('critical risk 80-100', () => {
-      assert.equal(classifyRiskScore(80), 'critical');
-      assert.equal(classifyRiskScore(95), 'critical');
-      assert.equal(classifyRiskScore(100), 'critical');
-    });
+  test('IP risk: no IP means no points', () => {
+    assert.deepEqual(risk.calculateIPRiskScore(null), { score: 0, reasons: ['ip_not_provided'] });
   });
 
-  describe('calculateIPRiskScore', () => {
-    test('tor exit node adds 40', () => {
-      const result = calculateIPRiskScore({ isTor: true, country: 'US' });
-      assert.ok(result.score >= 40);
-      assert.ok(result.reasons.includes('tor_exit_node'));
-    });
-
-    test('proxy/vpn/hosting adds 25', () => {
-      const result = calculateIPRiskScore({ isProxy: true, country: 'US' });
-      assert.ok(result.score >= 25);
-      assert.ok(result.reasons.includes('proxy_vpn_hosting'));
-    });
-
-    test('high risk country adds 20', () => {
-      const result = calculateIPRiskScore({ country: 'KP' });
-      assert.ok(result.score >= 20);
-      assert.ok(result.reasons.includes('high_risk_country'));
-    });
-
-    test('high risk ASN adds 15', () => {
-      const result = calculateIPRiskScore({ asn: 'AS16276' });
-      assert.ok(result.score >= 15);
-      assert.ok(result.reasons.includes('high_risk_asn'));
-    });
-
-    test('clean IP has low score', () => {
-      const result = calculateIPRiskScore({ country: 'US', isProxy: false, isVPN: false, isHosting: false });
-      assert.equal(result.score, 0);
-    });
+  test('phone country is resolved to ISO-3166 from E.164 or wa_id', () => {
+    assert.equal(risk.phoneCountry('+2348012345678'), 'NG');
+    assert.equal(risk.phoneCountry('447911123456'), 'GB');
+    assert.equal(risk.phoneCountry(null), null);
   });
 
-  describe('calculateCountryMismatchScore', () => {
-    test('matching countries returns 0', () => {
-      const result = calculateCountryMismatchScore('NG', 'NG');
-      assert.equal(result.score, 0);
-      assert.equal(result.reason, 'match');
-    });
-
-    test('NG phone with foreign IP adds 15', () => {
-      const result = calculateCountryMismatchScore('NG', 'US');
-      assert.equal(result.score, 15);
-      assert.equal(result.reason, 'ng_phone_foreign_ip');
-    });
-
-    test('foreign phone with NG IP adds 10', () => {
-      const result = calculateCountryMismatchScore('US', 'NG');
-      assert.equal(result.score, 10);
-      assert.equal(result.reason, 'foreign_phone_ng_ip');
-    });
-
-    test('other mismatch adds 12', () => {
-      const result = calculateCountryMismatchScore('US', 'GB');
-      assert.equal(result.score, 12);
-      assert.equal(result.reason, 'country_mismatch');
-    });
+  test('country mismatch compares ISO codes', () => {
+    assert.equal(risk.calculateCountryMismatchScore('NG', 'NG').score, 0);
+    assert.equal(risk.calculateCountryMismatchScore('NG', 'GB').score, 15);
+    assert.equal(risk.calculateCountryMismatchScore('GB', 'NG').score, 10);
+    assert.equal(risk.calculateCountryMismatchScore('NG', null).score, 0);
   });
 
-  describe('calculateAccountAgeScore', () => {
-    test('less than 1 day adds 25', () => {
-      const recent = new Date(Date.now() - 12 * 60 * 60 * 1000);
-      const result = calculateAccountAgeScore(recent);
-      assert.equal(result.score, 25);
-      assert.equal(result.reason, 'account_age_lt_1_day');
-    });
-
-    test('less than 1 week adds 15', () => {
-      const recent = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000);
-      const result = calculateAccountAgeScore(recent);
-      assert.equal(result.score, 15);
-      assert.equal(result.reason, 'account_age_lt_1_week');
-    });
-
-    test('less than 1 month adds 8', () => {
-      const recent = new Date(Date.now() - 15 * 24 * 60 * 60 * 1000);
-      const result = calculateAccountAgeScore(recent);
-      assert.equal(result.score, 8);
-      assert.equal(result.reason, 'account_age_lt_1_month');
-    });
-
-    test('established account adds 0', () => {
-      const old = new Date(Date.now() - 365 * 24 * 60 * 60 * 1000);
-      const result = calculateAccountAgeScore(old);
-      assert.equal(result.score, 0);
-      assert.equal(result.reason, 'established_account');
-    });
+  test('account age buckets', () => {
+    assert.equal(risk.calculateAccountAgeScore(new Date(NOW - 2 * 60 * 60 * 1000), NOW).score, 25);
+    assert.equal(risk.calculateAccountAgeScore(new Date(NOW - 3 * DAY), NOW).score, 15);
+    assert.equal(risk.calculateAccountAgeScore(new Date(NOW - 400 * DAY), NOW).score, 0);
   });
 
-  describe('calculateDeviceFingerprintScore', () => {
-    test('new device adds 15', () => {
-      const result = calculateDeviceFingerprintScore({ isNewDevice: true }, 'user-1');
-      assert.ok(result.score >= 15);
-      assert.ok(result.reasons.includes('new_device'));
-    });
-
-    test('emulator adds 30', () => {
-      const result = calculateDeviceFingerprintScore({ isEmulator: true }, 'user-1');
-      assert.ok(result.score >= 30);
-      assert.ok(result.reasons.includes('emulator_detected'));
-    });
-
-    test('rooted/jailbroken adds 25', () => {
-      const result = calculateDeviceFingerprintScore({ isRooted: true }, 'user-1');
-      assert.ok(result.score >= 25);
-      assert.ok(result.reasons.includes('rooted_jailbroken'));
-    });
-
-    test('no device info returns 5', () => {
-      const result = calculateDeviceFingerprintScore(null, 'user-1');
-      assert.equal(result.score, 5);
-    });
+  test('velocity counts sends and distinct recipients', () => {
+    const sends = Array.from({ length: 25 }, (_, i) => ({ recipientPhoneNumber: `+23480000000${i % 12}` }));
+    const r = risk.scoreVelocity(sends);
+    assert.equal(r.sendCount, 25);
+    assert.equal(r.recipients, 12);
+    assert.equal(r.score, 30);
   });
 
-  describe('computeRiskScore', () => {
-    test('combines weighted factors', () => {
-      const features = {
-        ipRisk: { score: 50, reasons: ['tor_exit_node'] },
-        countryMismatch: { score: 15, reason: 'ng_phone_foreign_ip' },
-        accountAge: { score: 10, reason: 'account_age_lt_1_week' },
-        velocity: { score: 20, reasons: ['high_frequency_gt_10'] },
-        deviceFingerprint: { score: 30, reasons: ['new_device'] },
-      };
-      const result = computeRiskScore(features);
-      assert.ok(result.score > 0 && result.score <= 100);
-      assert.ok(['low', 'medium', 'high', 'critical'].includes(result.riskClass));
-      assert.ok(result.reasons.length > 0);
-    });
-
-    test('critical score returns critical class', () => {
-      const features = {
-        ipRisk: { score: 100, reasons: ['tor_exit_node'] },
-        countryMismatch: { score: 15, reason: 'ng_phone_foreign_ip' },
-        accountAge: { score: 25, reason: 'account_age_lt_1_day' },
-        velocity: { score: 40, reasons: ['high_frequency_gt_20'] },
-        deviceFingerprint: { score: 50, reasons: ['emulator_detected'] },
-      };
-      const result = computeRiskScore(features);
-      assert.equal(result.riskClass, 'critical');
-    });
+  test('device: absence is not a signal; emulator + rooted is', () => {
+    assert.equal(risk.calculateDeviceFingerprintScore(undefined).score, 0);
+    assert.equal(risk.calculateDeviceFingerprintScore({ isEmulator: true, isRooted: true }).score, risk.FACTOR_CAPS.deviceFingerprint);
   });
 
-  describe('evaluateTransactionRisk', () => {
-    test('returns blocked for critical score', async () => {
-      mockPrisma.user.findUnique = async () => ({ id: 'user-1', createdAt: new Date('2024-01-01'), phoneNumber: '+2348000000001' });
-      mockPrisma.transaction.findMany = async () => Array(25).fill({ type: 'send', amount: '10000' });
-      mockPrisma.ipReputationCache.findUnique = async () => null;
-      mockPrisma.ipReputationCache.upsert = async () => ({ data: { country: 'KP', isProxy: false, isVPN: false, isHosting: false } });
+  test('private and loopback IPs are not looked up', () => {
+    for (const ip of ['127.0.0.1', '10.1.2.3', '192.168.1.1', '172.20.0.1', '::1', 'fd00::1', 'nonsense']) {
+      assert.equal(risk.isPublicIp(ip), false, ip);
+    }
+    assert.equal(risk.isPublicIp('8.8.8.8'), true);
+  });
+});
 
-      const result = await evaluateTransactionRisk({
-        userId: 'user-1',
-        phoneNumber: '+2348000000001',
-        ip: '1.2.3.4',
-        deviceInfo: { isEmulator: true },
-        destinationCountry: 'US',
-        amount: '100000',
-        asset: 'NGN',
-        routeType: 'cross_border',
-      });
+describe('score and action thresholds (#992)', () => {
+  test('total is additive and capped at 100', () => {
+    const f = (score) => ({ score, reasons: [] });
+    const r = risk.computeRiskScore({ ipRisk: f(60), countryMismatch: f(15), accountAge: f(25), velocity: f(30), deviceFingerprint: f(40) });
+    assert.equal(r.score, 100);
+  });
 
-      assert.equal(result.action, 'blocked');
-      assert.ok(result.score >= RISK_THRESHOLDS.CRITICAL_MIN);
-    });
+  test('> 80 requires step-up, > 95 blocks, boundaries inclusive of approval', () => {
+    assert.equal(risk.decideAction(80), 'approved');
+    assert.equal(risk.decideAction(81), 'step_up_required');
+    assert.equal(risk.decideAction(95), 'step_up_required');
+    assert.equal(risk.decideAction(96), 'blocked');
+  });
 
-    test('returns step_up_required for high score', async () => {
-      mockPrisma.user.findUnique = async () => ({ id: 'user-1', createdAt: new Date('2024-01-01'), phoneNumber: '+2348000000001' });
-      mockPrisma.transaction.findMany = async () => Array(15).fill({ type: 'send', amount: '10000' });
-      mockPrisma.ipReputationCache.findUnique = async () => null;
-      mockPrisma.ipReputationCache.upsert = async () => ({ data: { country: 'US', isProxy: true, isVPN: false, isHosting: false } });
+  test('a WhatsApp payment from an established user is approved and recorded', async () => {
+    const r = await risk.evaluateTransactionRisk({ userId: 'u1', phoneNumber: '+2348012345678' }, { now: NOW });
+    assert.equal(r.action, 'approved');
+    assert.equal(r.score, 0);
+    assert.equal(persisted.length, 1);
+    assert.equal(persisted[0].action, 'approved');
+    assert.equal(JSON.stringify(persisted[0]).includes('+2348012345678'), false, 'no phone numbers persisted');
+  });
 
-      const result = await evaluateTransactionRisk({
-        userId: 'user-1',
-        phoneNumber: '+2348000000001',
-        ip: '1.2.3.4',
-        deviceInfo: { isNewDevice: true },
-        destinationCountry: 'US',
-        amount: '50000',
-        asset: 'NGN',
-        routeType: 'cross_border',
-      });
+  test('Tor + hosting from a new account with a NG phone abroad requires step-up', async () => {
+    mockPrisma.user.findUnique = async () => ({ createdAt: new Date(NOW - 3 * DAY) });
+    const { httpGet } = fakeHttp({ status: 'success', countryCode: 'DE', as: 'AS24940 Hetzner', hosting: true });
+    const r = await risk.evaluateTransactionRisk(
+      { userId: 'u1', phoneNumber: '+2348012345678', ip: TOR_IP },
+      { now: NOW, httpGet, lookupUrl: 'https://ip.example/json/{ip}' },
+    );
+    // ip 40+25=65 (cap 60) + mismatch 15 + age 15 = 90
+    assert.equal(r.score, 90);
+    assert.equal(r.action, 'step_up_required');
+    assert.throws(() => risk.assertRiskAllowsPayment(r), (e) => e.code === 'STEP_UP_REQUIRED' && e.statusCode === 403);
+    assert.doesNotThrow(() => risk.assertRiskAllowsPayment(r, { stepUpVerified: true }));
+  });
 
-      assert.equal(result.action, 'step_up_required');
-      assert.ok(result.score >= RISK_THRESHOLDS.HIGH_MAX);
-      assert.ok(result.score < RISK_THRESHOLDS.CRITICAL_MIN);
-    });
+  test('stacked red flags block the transfer even after step-up', async () => {
+    mockPrisma.user.findUnique = async () => ({ createdAt: new Date(NOW - 60 * 60 * 1000) });
+    const { httpGet } = fakeHttp({ status: 'success', countryCode: 'RU', as: 'AS9009 M247', proxy: true });
+    const r = await risk.evaluateTransactionRisk(
+      { userId: 'u1', phoneNumber: '+2348012345678', ip: TOR_IP, deviceInfo: { isEmulator: true } },
+      { now: NOW, httpGet, lookupUrl: 'https://ip.example/json/{ip}' },
+    );
+    assert.ok(r.score > 95, `score ${r.score}`);
+    assert.equal(r.action, 'blocked');
+    assert.throws(() => risk.assertRiskAllowsPayment(r, { stepUpVerified: true }), (e) => e.code === 'CRITICAL_RISK_BLOCK');
+  });
+});
 
-    test('returns approved for low score', async () => {
-      mockPrisma.user.findUnique = async () => ({ id: 'user-1', createdAt: new Date('2022-01-01'), phoneNumber: '+2348000000001' });
-      mockPrisma.transaction.findMany = async () => [{ type: 'send', amount: '1000' }];
-      mockPrisma.ipReputationCache.findUnique = async () => null;
-      mockPrisma.ipReputationCache.upsert = async () => ({ data: { country: 'NG', isProxy: false, isVPN: false, isHosting: false } });
+describe('resilience', () => {
+  test('without RISK_IP_LOOKUP_URL the user IP is never sent to a third party', async () => {
+    const { httpGet, calls } = fakeHttp({});
+    await risk.evaluateTransactionRisk({ userId: 'u1', ip: '8.8.8.8' }, { now: NOW, httpGet, lookupUrl: null });
+    assert.deepEqual(calls.filter((u) => !u.includes('torbulkexitlist')), []);
+  });
 
-      const result = await evaluateTransactionRisk({
-        userId: 'user-1',
-        phoneNumber: '+2348000000001',
-        ip: '1.2.3.4',
-        deviceInfo: {},
-        destinationCountry: 'NG',
-        amount: '5000',
-        asset: 'NGN',
-        routeType: 'domestic',
-      });
+  test('a failing Tor list fetch is not retried on every payment', async () => {
+    let torCalls = 0;
+    const httpGet = async () => { torCalls += 1; throw new Error('ETIMEDOUT'); };
+    await risk.evaluateTransactionRisk({ userId: 'u1', ip: '8.8.8.8' }, { now: NOW, httpGet });
+    await risk.evaluateTransactionRisk({ userId: 'u1', ip: '8.8.8.8' }, { now: NOW + 60 * 1000, httpGet });
+    assert.equal(torCalls, 1);
+  });
 
-      assert.equal(result.action, 'approved');
-      assert.ok(result.score < RISK_THRESHOLDS.HIGH_MAX);
-    });
+  test('database errors in factors or persistence do not throw', async () => {
+    mockPrisma.user.findUnique = async () => { throw new Error('db down'); };
+    mockPrisma.transaction.findMany = async () => { throw new Error('db down'); };
+    mockPrisma.riskAssessment.create = async () => { throw new Error('db down'); };
+    const r = await risk.evaluateTransactionRisk({ userId: 'u1' }, { now: NOW });
+    assert.equal(r.action, 'approved');
+    assert.ok(r.reasons.includes('accountAge:unavailable'));
+    assert.ok(r.reasons.includes('velocity:unavailable'));
+  });
+
+  test('cached IP reputation is reused without a lookup', async () => {
+    mockPrisma.ipReputationCache.findUnique = async () => ({ data: { country: 'NG' }, updatedAt: new Date(NOW - 60 * 1000) });
+    const { httpGet, calls } = fakeHttp({});
+    const r = await risk.evaluateTransactionRisk(
+      { userId: 'u1', phoneNumber: '+2348012345678', ip: '102.89.1.1' },
+      { now: NOW, httpGet, lookupUrl: 'https://ip.example/json/{ip}' },
+    );
+    assert.deepEqual(calls.filter((u) => u.includes('ip.example')), []);
+    assert.ok(r.reasons.includes('countryMismatch:match'));
   });
 });
