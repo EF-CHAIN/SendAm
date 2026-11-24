@@ -51,6 +51,7 @@ model User {
   userErasures            UserErasure[]
 
   voiceProfile            VoiceProfile?
+  riskAssessments         RiskAssessment[]
 
   @@index([anonymizedAt])
   @@index([createdAt, id])
@@ -1008,6 +1009,36 @@ model WebhookInboxEvent {
   @@unique([provider, eventKey])
   @@index([status, nextAttemptAt])
   @@index([status, receivedAt])
+}
+
+/// IP reputation cache for Geo-IP and threat intelligence lookups
+model IpReputationCache {
+  id        String   @id @default(cuid())
+  ip        String   @unique
+  data      Json
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([updatedAt])
+}
+
+/// Risk assessment record for transaction-level compliance decisions
+model RiskAssessment {
+  id        String   @id @default(cuid())
+  userId    String
+  score     Int
+  riskClass String
+  factors   Json
+  reasons   String[]
+  action    String
+  metadata  Json?
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([score])
+  @@index([action])
 }
 
 /// Per-category messaging consent (#310). One row per (user, category); the

@@ -259,6 +259,9 @@ module.exports = {
   },
   compliance: {
     provider: process.env.KYC_PROVIDER || 'smileid',
+    // Opt-in IP reputation lookup for risk scoring (#992): URL template with
+    // `{ip}` returning ip-api.com-shaped JSON. Sends user IPs to that service.
+    riskIpLookupUrl: process.env.RISK_IP_LOOKUP_URL || null,
     smileId: {
       partnerId: process.env.SMILE_ID_PARTLNER_ID,
       apiKey: process.env.SMILE_ID_API_KEY,
