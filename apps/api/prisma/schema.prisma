@@ -244,6 +244,25 @@ model LedgerPosting {
   @@index([asset, createdAt])
 }
 
+model LedgerEntry {
+  id              String   @id @default(cuid())
+  debitAccountId  String
+  creditAccountId String
+  amount          String
+  currency        String
+  description     String?
+  transactionId   String?
+  reference       String?
+  metadata        Json     @default("{}")
+  createdAt       DateTime @default(now())
+
+  @@index([debitAccountId])
+  @@index([creditAccountId])
+  @@index([currency, createdAt])
+  @@index([transactionId])
+  @@index([createdAt])
+}
+
 model PaymentIdempotency {
   id                    String   @id @default(cuid())
   userId                String
