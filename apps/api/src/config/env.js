@@ -282,6 +282,11 @@ module.exports = {
       ),
       timeoutMs: Number(process.env.DOJAH_TIMEOUT_MS || 10000),
     },
+    sanctions: {
+      apiKey: process.env.OPENSANCTIONS_API_KEY,
+      baseUrl: process.env.OPENSANCTIONS_BASE_URL || 'https://api.opensanctions.org',
+      timeoutMs: Number(process.env.OPENSANCTIONS_TIMEOUT_MS || 5000),
+    },
     // Key for HMAC-hashing BVN/NIN numbers before storage (#982).
     kycIdHashSecret: process.env.KYC_ID_HASH_SECRET,
     pinPepper: process.env.PIN_PEPPER,
