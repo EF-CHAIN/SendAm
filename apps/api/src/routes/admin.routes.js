@@ -2,8 +2,10 @@ const express = require('express');
 const rateLimit = require('express-rate-limit');
 const router = express.Router();
 const adminController = require('../controllers/admin.controller');
+const feeRuleController = require('../controllers/feeRule.controller');
 const privacyController = require('../compliance/privacy.controller');
 const requireAdmin = require('../middlewares/requireAdmin');
+const { validateRequest } = require('../middlewares/validateRequest');
 
 // Tighter limiter on the credential endpoint to slow password brute-forcing,
 // independent of the broader /api limiter.
@@ -102,5 +104,61 @@ router.get('/users/:userId/statement', requireAdmin('compliance.read'), adminCon
 router.get('/stellar/toml', requireAdmin('admin.read'), adminController.getStellarToml);
 router.get('/stellar/toml/validate', requireAdmin('admin.read'), adminController.validateStellarToml);
 router.post('/stellar/toml/validate', requireAdmin('admin.read'), adminController.validateStellarToml);
+
+// ── Issue #997: Per-corridor fee schedule ───────────────────────────────────
+// Rules are stored in FeeRule and picked up by the next quote, so pricing can
+// be retuned without a redeploy. Writes are validated (minFee > baseCost keeps
+// the margin positive) and audited by the service.
+const feeRuleBodyFields = {
+  sourceCurrency: { type: 'string', optional: true, trim: true },
+  targetCurrency: { type: 'string', optional: true, trim: true },
+  rateBps: { optional: true, coerce: (value) => Number(value), custom: (value) => Number.isInteger(value) && value >= 0 && value <= 10000, message: 'rateBps must be an integer between 0 and 10000' },
+  baseCost: { type: 'string', optional: true, trim: true },
+  minFee: { type: 'string', optional: true, trim: true },
+  maxFee: { optional: true },
+  priority: { optional: true, coerce: (value) => Number(value), custom: (value) => Number.isInteger(value), message: 'priority must be an integer' },
+  active: { optional: true, coerce: (value) => value === true || value === 'true', custom: (value) => typeof value === 'boolean', message: 'active must be a boolean' },
+  description: { type: 'string', optional: true, trim: true },
+};
+const feeRuleAllowedKeys = Object.keys(feeRuleBodyFields);
+
+router.get('/fee-rules', requireAdmin('admin.read'), feeRuleController.getFeeRules);
+router.get('/fee-rules/:id', requireAdmin('admin.read'), feeRuleController.getFeeRule);
+router.post(
+  '/fee-rules/preview',
+  requireAdmin('admin.read'),
+  validateRequest({
+    body: {
+      allowedKeys: ['amount', 'asset', 'sourceCurrency', 'targetCurrency'],
+      required: ['amount'],
+      fields: {
+        amount: { type: 'string', trim: true, custom: (value) => Number(value) > 0, message: 'amount must be greater than zero' },
+        asset: { type: 'string', optional: true, trim: true },
+        sourceCurrency: { type: 'string', optional: true, trim: true },
+        targetCurrency: { type: 'string', optional: true, trim: true },
+      },
+    },
+  }),
+  feeRuleController.preview,
+);
+router.post(
+  '/fee-rules',
+  requireAdmin('operations.write'),
+  validateRequest({
+    body: {
+      allowedKeys: feeRuleAllowedKeys,
+      required: ['minFee'],
+      fields: feeRuleBodyFields,
+    },
+  }),
+  feeRuleController.create,
+);
+router.patch(
+  '/fee-rules/:id',
+  requireAdmin('operations.write'),
+  validateRequest({ body: { allowedKeys: feeRuleAllowedKeys, fields: feeRuleBodyFields } }),
+  feeRuleController.update,
+);
+router.delete('/fee-rules/:id', requireAdmin('operations.write'), feeRuleController.remove);
 
 module.exports = router;
