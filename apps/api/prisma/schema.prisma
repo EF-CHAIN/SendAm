@@ -54,6 +54,7 @@ model User {
   voiceProfile            VoiceProfile?
   kycVerifications        KycVerification[]
   riskAssessments         RiskAssessment[]
+  sarReports              SarReport[]
 
   @@index([anonymizedAt])
   @@index([createdAt, id])
@@ -1154,4 +1155,25 @@ model RecurringPayment {
   @@unique([userId, reference])
   @@index([status, nextRunAt])
   @@index([userId, status])
+}
+
+model SarReport {
+  id             String    @id @default(cuid())
+  userId         String
+  reportNumber   String    @unique
+  status         String    @default("draft") // draft | under_review | filed | dismissed
+  reason         String    // e.g. STRUCTURING_DETECTED, SMURFING_SUB_THRESHOLD
+  narrative      String    // Structured regulatory narrative describing detected activity
+  transactionIds String[]  // Array of suspicious transaction IDs
+  totalAmountUsd Decimal
+  detectionRule  String
+  metadata       Json      @default("{}")
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([status])
+  @@index([detectionRule])
 }
