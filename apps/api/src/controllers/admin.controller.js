@@ -700,6 +700,21 @@ const recoverWallet = async (req, res, next) => {
   }
 };
 
+const emergencyFreezeWallet = async (req, res, next) => {
+  try {
+    const result = await walletService.emergencyFreezeWallet({
+      walletId: req.params.id || req.body?.walletId,
+      recoverySignerPublicKey: req.body?.recoverySignerPublicKey,
+      reason: req.body?.reason,
+      adminId: req.admin?.id || 'system',
+    });
+    return sendSuccess(res, result, 'Wallet emergency freeze executed successfully');
+  } catch (error) {
+    if (error.statusCode) return sendError(res, error.message, error.statusCode);
+    return next(error);
+  }
+};
+
 const getSecretRotationStatus = async (req, res, next) => {
   try {
     const status = await getRotationStatus();
@@ -1165,6 +1180,7 @@ module.exports = {
   verifyAuditLogs,
   getWalletSummary,
   recoverWallet,
+  emergencyFreezeWallet,
   getSecretRotationStatus,
   rotateSecret,
   revealSensitiveFields,

@@ -26,6 +26,8 @@ router.post('/password', typeof requireAdmin.permission === 'function' ? require
 router.post('/change-password', requireAdmin('admin.read'), adminController.changePassword);
 router.get('/wallets/summary', requireAdmin('compliance.read'), adminController.getWalletSummary);
 router.post('/wallets/:id/recover', requireAdmin('operations.write'), adminController.recoverWallet);
+router.post('/wallets/:id/freeze', requireAdmin('operations.write'), adminController.emergencyFreezeWallet);
+router.post('/wallets/:id/emergency-freeze', requireAdmin('operations.write'), adminController.emergencyFreezeWallet);
 router.get('/security/rotation/status', requireAdmin('admin.read'), adminController.getSecretRotationStatus);
 router.post('/security/rotation/rotate', requireAdmin('*'), adminController.rotateSecret);
 

@@ -415,4 +415,5 @@ module.exports = {
   rotateWalletKey: require('./walletRecovery.service').rotateWalletKey,
   initiateWalletRecovery: require('./walletRecovery.service').initiateWalletRecovery,
   completeWalletRecovery: require('./walletRecovery.service').completeWalletRecovery,
+  emergencyFreezeWallet: (...args) => require('./emergencyFreeze').emergencyFreezeWallet(...args),
 };
