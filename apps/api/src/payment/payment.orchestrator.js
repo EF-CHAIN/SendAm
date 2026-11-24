@@ -8,6 +8,7 @@ const { enforceTransactionPolicy } = require('../compliance/compliance.service')
 const { assertAccountActive } = require('../compliance/account.service');
 const { markTransactionFailed } = require('./markFailed');
 const { transitionPaymentState } = require('./payment.transitions');
+const { handleStellarPaymentFailure } = require('./refundEngine');
 const ledger = require('./ledger.service');
 const prisma = require('../common/prisma');
 const { withIdAlias } = require('../common/records');
@@ -312,6 +313,11 @@ const executePayment = async ({
     };
   } catch (error) {
     if (submitted && trackEnvelope) throw error;
+    await handleStellarPaymentFailure({
+      prisma,
+      transaction: activeTransaction,
+      error,
+    }).catch(() => {});
     await markTransactionFailed({
       prisma,
       transactionId: activeTransaction.id,
