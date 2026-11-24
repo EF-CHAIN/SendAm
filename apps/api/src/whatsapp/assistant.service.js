@@ -25,6 +25,11 @@ const {
 const { matchContacts } = require('../services/contactMatcher');
 const { sendMetaMessage } = require('../services/whatsappMedia');
 const { sendVoiceReceipt } = require('../voice/voiceReceipt');
+const {
+  processPinVerification,
+  generateEphemeralPinToken,
+  getWebPinEntryUrl,
+} = require('./pinFlow');
 const config = require('../config/env');
 const logger = require('../utils/logger');
 
@@ -226,6 +231,9 @@ const requestConfirmation = async ({ phoneNumber, user, intent, notify, selected
     provider: 'stellar',
   }).catch(() => null);
 
+  const webPinToken = generateEphemeralPinToken({ userId: user.id, stateId });
+  const webPinUrl = getWebPinEntryUrl(webPinToken);
+
   const pendingSend = {
     version: 1,
     stateId,
@@ -246,6 +254,8 @@ const requestConfirmation = async ({ phoneNumber, user, intent, notify, selected
     isHighRisk,
     highRiskConfirmed: false,
     fingerprint,
+    webPinToken,
+    webPinUrl,
   };
 
   await db.user.update({
@@ -351,22 +361,20 @@ const handlePendingPin = async ({ phoneNumber, user, text, notify, db = defaultP
     }
   }
 
-  const userWithPin = await db.user.findUnique({ where: { id: user.id } });
-  let pinOk = false;
-  if (typeof verifyPinAttempt === 'function' && userWithPin && userWithPin.pinFailedAttempts !== undefined) {
-    const pinAttempt = await verifyPinAttempt({ prisma: db, userId: user.id, pin: text });
-    pinOk = pinAttempt.ok;
-    if (!pinAttempt.ok && pinAttempt.locked) {
-      const retrySeconds = Math.max(1, Math.ceil(pinAttempt.retryAfterMs / 1000));
-      await notify(phoneNumber, `PIN verification failed. Your account is temporarily locked. Please try again in ${retrySeconds} seconds, or reply "no" to cancel.`);
-      return true;
-    }
-  } else {
-    pinOk = verifyPin(text, userWithPin?.pinHash);
-  }
+  const pinVerification = await processPinVerification({
+    prisma: db,
+    user,
+    rawPin: text,
+    notify,
+    phoneNumber,
+  });
 
-  if (!pinOk) {
-    await notify(phoneNumber, t('pin_failed', {}, locale));
+  if (!pinVerification.ok) {
+    if (pinVerification.locked && pinVerification.message) {
+      await notify(phoneNumber, pinVerification.message);
+    } else {
+      await notify(phoneNumber, t('pin_failed', {}, locale));
+    }
     return true;
   }
 
