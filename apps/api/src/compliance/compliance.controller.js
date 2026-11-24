@@ -316,7 +316,7 @@ const setPin = async (req, res, next) => {
     await prisma.user.update({
       where: { id: user.id },
       data: {
-        pinHash: hashPin(req.body.pin),
+        pinHash: await hashPin(req.body.pin),
         pinSetAt: new Date(),
       },
     });
