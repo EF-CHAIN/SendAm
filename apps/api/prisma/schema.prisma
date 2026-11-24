@@ -123,6 +123,8 @@ model Wallet {
 
   user User @relation(fields: [userId], references: [id], onDelete: Restrict)
 
+  trustlineRequests TrustlineRequest[]
+
   // Network is part of wallet identity: the same user may hold one wallet per
   // chain per network, and testnet material can never satisfy a mainnet lookup.
   @@unique([userId, chain, network])
@@ -1089,4 +1091,34 @@ model RecurringPayment {
   @@unique([userId, reference])
   @@index([status, nextRunAt])
   @@index([userId, status])
+}
+/// A tracked ChangeTrust submission for one asset corridor (#962).
+///
+/// `(walletId, assetCode, assetIssuer)` is UNIQUE so a trustline for a given
+/// asset identity is only ever submitted once per wallet — concurrent
+/// transfer attempts converge on the same row instead of racing two
+/// ChangeTrust operations onto the ledger.
+model TrustlineRequest {
+  id String @id @default(cuid())
+
+  walletId String
+
+  assetCode   String
+  assetIssuer String
+  network     String
+
+  /// pending | submitted | established | failed
+  status String @default("pending")
+
+  txHash    String?
+  attempts  Int     @default(0)
+  lastError String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  wallet Wallet @relation(fields: [walletId], references: [id], onDelete: Cascade)
+
+  @@unique([walletId, assetCode, assetIssuer])
+  @@index([status, updatedAt])
 }

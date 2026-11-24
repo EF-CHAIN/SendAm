@@ -210,6 +210,12 @@ module.exports = {
     pathIssuers: {
       NGN: process.env.STELLAR_NGN_ISSUER,
       GHS: process.env.STELLAR_GHS_ISSUER,
+      // NGNT corridor (#962). Deliberately has no built-in default: the only
+      // issuer address we could find comes from a single source and there is
+      // no canonical testnet issuer, so the corridor stays unavailable until
+      // an operator verifies an issuer and sets it. See the note in
+      // config/networkProfiles.js.
+      NGNT: process.env.STELLAR_NGNT_ISSUER,
     },
     explorerBaseUrl: stellarProfile ? stellarProfile.explorerBaseUrl : null,
     supportsFriendbot: stellarProfile ? stellarProfile.supportsFriendbot : false,
