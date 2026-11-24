@@ -52,6 +52,8 @@ model User {
 
   voiceProfile            VoiceProfile?
 
+  mnemonicExportGrants MnemonicExportGrant[]
+
   @@index([anonymizedAt])
   @@index([createdAt, id])
   @@index([deactivatedAt])
@@ -122,6 +124,8 @@ model Wallet {
   updatedAt          DateTime @updatedAt
 
   user User @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  mnemonicExportGrants MnemonicExportGrant[]
 
   // Network is part of wallet identity: the same user may hold one wallet per
   // chain per network, and testnet material can never satisfy a mainnet lookup.
@@ -1089,4 +1093,42 @@ model RecurringPayment {
   @@unique([userId, reference])
   @@index([status, nextRunAt])
   @@index([userId, status])
+}
+/// A one-time authorization to export a wallet's recovery material (#960).
+///
+/// Holds NO secret material: only the HASH of the out-of-band challenge code,
+/// plus the state machine that enforces PIN + out-of-band verification, an
+/// expiry window, bounded attempts and single use. The mnemonic itself is
+/// never persisted here or anywhere else.
+model MnemonicExportGrant {
+  id String @id @default(cuid())
+
+  userId   String
+  walletId String
+
+  /// pending | authorized | consumed | expired | revoked
+  status String @default("pending")
+
+  /// HMAC of the out-of-band challenge code. The plaintext code is sent to the
+  /// user's own channel and never stored, logged or returned by the API.
+  challengeHash String
+
+  challengeExpiresAt DateTime
+  challengeAttempts  Int      @default(0)
+
+  pinVerifiedAt DateTime?
+  otpVerifiedAt DateTime?
+  authorizedAt  DateTime?
+  /// Set the moment the export is served. A consumed grant can never be
+  /// replayed — a second export needs a fresh grant.
+  consumedAt    DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  wallet Wallet @relation(fields: [walletId], references: [id], onDelete: Cascade)
+
+  @@index([userId, status])
+  @@index([status, challengeExpiresAt])
 }
