@@ -24,6 +24,7 @@ const KNOWN_QUEUES = Object.freeze([
   'sendam-jobs',
   'partner-webhooks',
   'receipts',
+  'payment-reversals',
 ]);
 
 const COLLECT_TIMEOUT_MS = 2000;

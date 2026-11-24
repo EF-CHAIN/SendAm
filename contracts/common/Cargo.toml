@@ -1,0 +1,15 @@
+[package]
+name = "sendam-contract-common"
+version = "0.1.0"
+edition = "2021"
+description = "Common governance, upgrade, and security primitives for SendAm Soroban contracts"
+license = "MIT"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+soroban-sdk = { workspace = true }
+
+[dev-dependencies]
+soroban-sdk = { workspace = true, features = ["testutils"] }

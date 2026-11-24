@@ -1,0 +1,16 @@
+[package]
+name = "sendam-contract-oracle"
+version = "0.1.0"
+edition = "2021"
+description = "On-Chain Rate Oracle Contract for SendAm FX Corridor Feeds (NGN/XLM, GHS/USDC)"
+license = "MIT"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+soroban-sdk = { workspace = true }
+sendam-contract-common = { path = "../common", default-features = false }
+
+[dev-dependencies]
+soroban-sdk = { workspace = true, features = ["testutils"] }
