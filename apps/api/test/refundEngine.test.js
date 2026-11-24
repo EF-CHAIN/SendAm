@@ -83,27 +83,12 @@ test('triggerPaymentReversalJob: queues reversal job with priority and metadata'
   assert.equal(enqueuedJobs[0].opts.priority, 1);
 });
 
-test('processPaymentReversalJob: credits balance and dispatches WhatsApp notification', async () => {
-  const mockTx = {
-    id: 'tx_fail_123',
-    userId: 'user_456',
-    status: 'failed',
-    amount: '100.0000000',
-    asset: 'USDC',
-    fiatCurrency: 'NGN',
-    fiatAmount: '150000.00',
-    metadata: { fee: '1.0000000' },
-    user: {
-      phoneNumber: '+2348012345678',
-    },
-  };
-
-  let updatedState = null;
+const buildReversalPrisma = (mockTx, { existingReversal = null } = {}) => {
+  const journalCreates = [];
   const mockPrisma = {
     transaction: {
       findUnique: async () => mockTx,
       update: async ({ data }) => {
-        updatedState = data.status;
         mockTx.status = data.status;
         mockTx.metadata = { ...mockTx.metadata, ...data.metadata };
         return mockTx;
@@ -114,14 +99,37 @@ test('processPaymentReversalJob: credits balance and dispatches WhatsApp notific
       create: async () => ({ id: 'acc_1' }),
     },
     journalEntry: {
-      create: async ({ data }) => ({ id: 'entry_1', ...data }),
+      findFirst: async ({ where }) => (
+        existingReversal && where.eventType === 'payment.failed_reversal' ? existingReversal : null
+      ),
+      create: async ({ data }) => {
+        journalCreates.push(data);
+        return { id: `entry_${journalCreates.length}`, ...data };
+      },
     },
     ledgerPosting: {
       create: async () => ({ id: 'post_1' }),
     },
-    $transaction: async (fn) => fn(mockPrisma),
   };
+  mockPrisma.$transaction = async (fn) => fn(mockPrisma);
+  return { mockPrisma, journalCreates };
+};
 
+const failedTx = () => ({
+  id: 'tx_fail_123',
+  userId: 'user_456',
+  status: 'failed',
+  amount: '100.0000000',
+  asset: 'USDC',
+  fiatCurrency: 'NGN',
+  fiatAmount: '150000.00',
+  metadata: { fee: '1.0000000' },
+  user: { phoneNumber: '+2348012345678' },
+});
+
+test('processPaymentReversalJob: does not credit again when the orchestrator already reversed the reservation', async () => {
+  const mockTx = failedTx();
+  const { mockPrisma, journalCreates } = buildReversalPrisma(mockTx, { existingReversal: { id: 'entry_orch' } });
   const sentMessages = [];
   const fakeSendMessage = async (phone, body, opts) => {
     sentMessages.push({ phone, body, opts });
@@ -130,33 +138,61 @@ test('processPaymentReversalJob: credits balance and dispatches WhatsApp notific
 
   const startTime = Date.now();
   const jobResult = await processPaymentReversalJob(
-    {
-      data: {
-        transactionId: 'tx_fail_123',
-        reason: STELLAR_ERROR_CODES.INVALID_MEMO,
-      },
-    },
-    {
-      prisma: mockPrisma,
-      sendMessage: fakeSendMessage,
-    }
+    { data: { transactionId: 'tx_fail_123', reason: STELLAR_ERROR_CODES.INVALID_MEMO } },
+    { prisma: mockPrisma, sendMessage: fakeSendMessage },
   );
   const elapsedMs = Date.now() - startTime;
 
   // Acceptance Criteria: completes within 3 seconds
   assert.ok(elapsedMs < 3000, `Reversal took ${elapsedMs}ms, should be < 3000ms`);
-
   assert.equal(jobResult.success, true);
-  assert.equal(jobResult.transactionId, 'tx_fail_123');
-  assert.equal(jobResult.refundedAmount, '150000.00');
-  assert.equal(jobResult.currency, 'NGN');
-  assert.equal(updatedState, 'reversed');
+  assert.equal(jobResult.postedByJob, false);
+  assert.equal(journalCreates.length, 0, 'must not post a second payment.failed_reversal');
+  assert.equal(mockTx.status, 'reversed');
 
-  // Verify WhatsApp notification
+  // Notification states what was actually credited: amount + fee, in the payment asset.
+  assert.equal(jobResult.refundedAmount, '101.0000000');
+  assert.equal(jobResult.asset, 'USDC');
   assert.equal(sentMessages.length, 1);
   assert.equal(sentMessages[0].phone, '+2348012345678');
-  assert.ok(sentMessages[0].body.includes('150000.00 NGN'));
-  assert.ok(sentMessages[0].body.includes('instantly credited'));
+  assert.ok(sentMessages[0].body.includes('101.0000000 USDC'));
+  assert.ok(!sentMessages[0].body.includes('NGN'));
+});
+
+test('processPaymentReversalJob: posts the reversal when the orchestrator could not', async () => {
+  const mockTx = failedTx();
+  const { mockPrisma, journalCreates } = buildReversalPrisma(mockTx);
+
+  const jobResult = await processPaymentReversalJob(
+    { data: { transactionId: 'tx_fail_123', reason: STELLAR_ERROR_CODES.MISSING_OR_EXPIRED_TRUSTLINE } },
+    { prisma: mockPrisma, sendMessage: async () => ({ success: true }) },
+  );
+
+  assert.equal(jobResult.postedByJob, true);
+  assert.equal(journalCreates.length, 1);
+  assert.equal(journalCreates[0].eventType, 'payment.failed_reversal');
+  assert.equal(mockTx.status, 'reversed');
+});
+
+test('processPaymentReversalJob: leaves a payment that is not failed untouched', async () => {
+  const mockTx = { ...failedTx(), status: 'processing' };
+  const { mockPrisma, journalCreates } = buildReversalPrisma(mockTx);
+  const sentMessages = [];
+
+  const jobResult = await processPaymentReversalJob(
+    { data: { transactionId: 'tx_fail_123', reason: STELLAR_ERROR_CODES.TX_FAILED } },
+    { prisma: mockPrisma, sendMessage: async (phone) => sentMessages.push(phone) },
+  );
+
+  assert.equal(jobResult.skipped, true);
+  assert.equal(mockTx.status, 'processing');
+  assert.equal(journalCreates.length, 0);
+  assert.equal(sentMessages.length, 0);
+});
+
+test('classifyStellarFailure: does not treat unrelated "conflicting" errors as Stellar rejections', () => {
+  const res = classifyStellarFailure(new Error('Unique constraint conflicting with existing row'));
+  assert.equal(res.isStellarFailure, false);
 });
 
 test('processPaymentReversalJob: is idempotent and prevents double reversal', async () => {

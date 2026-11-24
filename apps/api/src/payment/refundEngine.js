@@ -52,7 +52,6 @@ const classifyStellarFailure = (error) => {
     /invalid.*memo/i.test(message) ||
     /unsupported memo/i.test(message) ||
     /memo.*too long/i.test(message) ||
-    /conflicting/i.test(message) ||
     opCodes.includes('op_bad_memo') ||
     txCode === 'tx_bad_memo'
   ) {
@@ -172,11 +171,17 @@ const triggerPaymentReversalJob = async ({
 };
 
 /**
- * Processes a reversal job: credits user balance via double-entry ledger & notifies user on WhatsApp.
+ * Processes a reversal job for a payment Horizon rejected.
+ *
+ * The orchestrator's failure path already posts `payment.failed_reversal`,
+ * which returns amount + fee to the user's `customer_money`. This job must not
+ * credit a second time: it moves the row `failed -> reversed` (compare-and-set,
+ * so only one run can win) and, in the same DB transaction, posts the reversal
+ * only if no `payment.failed_reversal` entry exists yet (i.e. the orchestrator's
+ * best-effort posting failed). Then it tells the user on WhatsApp.
  *
  * @param {object} job - BullMQ job object
  * @param {object} [deps] - Injected dependencies
- * @returns {Promise<{ success: boolean, transactionId: string, refundedAmount: string, asset: string }>}
  */
 const processPaymentReversalJob = async (job, deps = {}) => {
   const prisma = deps.prisma || defaultPrisma();
@@ -196,74 +201,62 @@ const processPaymentReversalJob = async (job, deps = {}) => {
     throw new Error(`Transaction ${transactionId} not found for reversal`);
   }
 
-  // Idempotency check: if already reversed, don't double refund
   if (transaction.status === 'reversed') {
     logger.info('reversal_already_processed', { transactionId });
     return { success: true, alreadyProcessed: true, transactionId };
   }
 
-  const refundCurrency = transaction.fiatCurrency || transaction.asset;
-  const refundAmount = transaction.fiatAmount || transaction.amount;
+  if (transaction.status !== 'failed') {
+    // Only a payment whose failure has been committed is refundable here.
+    // Anything else (still processing, or settled after all) is left alone.
+    logger.warn('reversal_skipped_unexpected_status', { transactionId, status: transaction.status });
+    return { success: false, skipped: true, transactionId, status: transaction.status };
+  }
 
+  const refundAmount = ledger.totalCharge(transaction);
+  const refundAsset = transaction.asset;
   const nowIso = new Date().toISOString();
 
-  // 1. Atomically record the refund and post ledger reversal
-  const updatedTransaction = await (prisma.$transaction ? prisma.$transaction(async (tx) => {
-    // Transition transaction to 'reversed' status
+  const reverse = async (tx) => {
+    // CAS first: takes the row lock, so a concurrent run fails here and rolls back.
     const reversed = await transitionPaymentState({
       db: tx,
       transactionId: transaction.id,
-      fromState: [transaction.status],
+      fromState: 'failed',
       toState: 'reversed',
       actor: { type: 'system', id: 'refund_engine' },
-      reason: `Automated instant reversal: ${reason}`,
+      action: 'payment.reversed',
+      reason: `Automated reversal after Stellar rejection: ${reason}`,
       metadata: {
         reversalReason: reason,
         reversedAt: nowIso,
         errorDetails,
-        refund: {
-          currency: refundCurrency,
-          amount: refundAmount,
-          refundedAt: nowIso,
-        },
+        refund: { asset: refundAsset, amount: refundAmount, refundedAt: nowIso },
       },
     });
 
-    // Credit user balance via ledger: reverses customer_money deduction
-    await ledger.postPaymentFailed({ tx, transaction: reversed });
+    const existing = tx.journalEntry?.findFirst
+      ? await tx.journalEntry.findFirst({
+        where: { transactionId: transaction.id, eventType: 'payment.failed_reversal' },
+        select: { id: true },
+      })
+      : null;
+    if (!existing) {
+      await ledger.postPaymentFailed({ tx, transaction: reversed });
+    }
+    return { reversed, postedByJob: !existing };
+  };
 
-    return reversed;
-  }) : (async () => {
-    const reversed = await transitionPaymentState({
-      db: prisma,
-      transactionId: transaction.id,
-      fromState: [transaction.status],
-      toState: 'reversed',
-      actor: { type: 'system', id: 'refund_engine' },
-      reason: `Automated instant reversal: ${reason}`,
-      metadata: {
-        reversalReason: reason,
-        reversedAt: nowIso,
-        errorDetails,
-        refund: {
-          currency: refundCurrency,
-          amount: refundAmount,
-          refundedAt: nowIso,
-        },
-      },
-    });
-    await ledger.postPaymentFailed({ tx: prisma, transaction: reversed });
-    return reversed;
-  })());
+  const { postedByJob } = await (prisma.$transaction ? prisma.$transaction(reverse) : reverse(prisma));
 
-  // 2. Notify user on WhatsApp
-  const userPhone = transaction.user?.phoneNumber || transaction.recipientPhoneNumber;
+  const userPhone = transaction.user?.phoneNumber;
   if (userPhone && typeof sendNotification === 'function') {
     try {
-      const formattedAmount = `${refundAmount} ${refundCurrency}`;
+      const formattedAmount = `${refundAmount} ${refundAsset}`;
       const messageBody =
-        `Your payment of ${formattedAmount} could not be completed on Stellar (${reason.replace(/_/g, ' ')}). ` +
-        `Your SendAm balance has been instantly credited with ${formattedAmount}.`;
+        `Your payment of ${transaction.amount} ${refundAsset} could not be completed on Stellar ` +
+        `(${String(reason || 'rejected').replace(/_/g, ' ')}). ` +
+        `${formattedAmount} has been returned to your SendAm balance.`;
 
       await sendNotification(userPhone, messageBody, {
         notification: {
@@ -273,28 +266,22 @@ const processPaymentReversalJob = async (job, deps = {}) => {
           referenceId: transaction.id,
         },
       });
-      logger.info('reversal_whatsapp_notification_sent', { transactionId, phoneNumber: userPhone });
+      logger.info('reversal_whatsapp_notification_sent', { transactionId });
     } catch (notifErr) {
-      logger.error('reversal_whatsapp_notification_failed', {
-        transactionId,
-        error: notifErr.message,
-      });
-      // Do not re-throw notification failure to avoid re-crediting ledger in job retries
+      // The reversal is committed; a retry would find 'reversed' and stop, so
+      // swallowing here cannot double-credit.
+      logger.error('reversal_whatsapp_notification_failed', { transactionId, error: notifErr.message });
     }
   }
 
-  logger.info('reversal_job_completed', {
-    transactionId,
-    refundAmount,
-    refundCurrency,
-    status: updatedTransaction.status,
-  });
+  logger.info('reversal_job_completed', { transactionId, refundAmount, refundAsset, postedByJob });
 
   return {
     success: true,
     transactionId,
     refundedAmount: refundAmount,
-    currency: refundCurrency,
+    asset: refundAsset,
+    postedByJob,
   };
 };
 
@@ -303,14 +290,12 @@ const processPaymentReversalJob = async (job, deps = {}) => {
  * Catches Horizon rejection, triggers BullMQ reversal job, and transitions state.
  *
  * @param {object} params
- * @param {object} params.prisma
  * @param {object} params.transaction
  * @param {Error|object} params.error
  * @param {Function} [params.enqueueFn]
  * @returns {Promise<boolean>} true if handled as Stellar rejection, false otherwise
  */
 const handleStellarPaymentFailure = async ({
-  _prisma = defaultPrisma(),
   transaction,
   error,
   enqueueFn = enqueue,

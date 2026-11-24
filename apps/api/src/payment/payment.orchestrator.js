@@ -313,11 +313,6 @@ const executePayment = async ({
     };
   } catch (error) {
     if (submitted && trackEnvelope) throw error;
-    await handleStellarPaymentFailure({
-      prisma,
-      transaction: activeTransaction,
-      error,
-    }).catch(() => {});
     await markTransactionFailed({
       prisma,
       transactionId: activeTransaction.id,
@@ -328,6 +323,9 @@ const executePayment = async ({
       const failed = await tx.transaction.findUnique({ where: { id: activeTransaction.id } });
       if (failed) await ledger.postPaymentFailed({ tx, transaction: failed });
     }).catch(() => {});
+    // Only after the row is 'failed' and the reservation reversal has been
+    // attempted: the reversal job relies on both (see refundEngine).
+    await handleStellarPaymentFailure({ transaction: activeTransaction, error }).catch(() => {});
     throw error;
   }
 };

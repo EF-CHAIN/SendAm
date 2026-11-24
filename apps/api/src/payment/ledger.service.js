@@ -159,4 +159,5 @@ module.exports = {
   postPaymentSettled,
   postPaymentFailed,
   postRefundSettled,
+  totalCharge,
 };
