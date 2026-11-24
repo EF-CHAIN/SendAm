@@ -1,134 +1,187 @@
-const { test, beforeEach, afterEach, describe } = require('node:test');
+'use strict';
+
+const { test, beforeEach, describe } = require('node:test');
 const assert = require('node:assert/strict');
 
-const mockPrisma = {
-  kycVerification: { create: async () => {}, findFirst: async () => null, update: async () => {} },
-  kycProfile: { findFirst: async () => null, findUnique: async () => null, update: async () => {} },
-  kycWebhookEvent: { create: async () => {} },
-  user: { findUnique: async () => ({ id: 'user-1', phoneNumber: '+2348000000001' }) },
-};
+process.env.KYC_PROVIDER = 'dojah';
+process.env.DOJAH_APP_ID = 'app_test';
+process.env.DOJAH_SECRET_KEY = 'sk_test';
+process.env.KYC_ID_HASH_SECRET = 'test-hash-secret';
 
+const state = {};
+const mockPrisma = {
+  kycProfile: {
+    findUnique: async () => state.profile,
+    create: async ({ data }) => { state.profile = { id: 'kp-1', metadata: {}, ...data }; return state.profile; },
+    update: async ({ data }) => { state.profile = { ...state.profile, ...data }; return state.profile; },
+  },
+  user: { update: async ({ data }) => { state.userUpdates.push(data); return data; } },
+  kycVerification: {
+    create: async ({ data }) => { state.verifications.push(data); return { id: `kv-${state.verifications.length}`, ...data }; },
+    count: async () => state.attemptCount,
+    findFirst: async ({ where }) => (where.status === 'verified' ? state.linkedElsewhere : null),
+  },
+  auditLog: {
+    findFirst: async () => null,
+    create: async ({ data }) => { state.audits.push(data); return data; },
+  },
+};
+mockPrisma.$transaction = async (fn) => fn(mockPrisma);
 require.cache[require.resolve('../src/common/prisma')] = { exports: mockPrisma };
 
-const { verifyBvnNin, processKycCallback } = require('../src/compliance/compliance.service');
+const kyc = require('../src/compliance/providers/kycProvider');
 
-describe('Smile ID / Dojah BVN/NIN verification', () => {
-  beforeEach(() => {
-    mockPrisma.kycVerification.create = async (data) => ({ ...data.data, id: 'kv-1' });
-    mockPrisma.kycVerification.findFirst = async () => null;
-    mockPrisma.kycVerification.update = async (data) => ({ ...data.data, id: 'kv-1' });
-    mockPrisma.kycProfile.findFirst = async () => null;
-    mockPrisma.kycProfile.findUnique = async () => null;
-    mockPrisma.kycProfile.update = async (data) => ({ ...data.data, id: 'kp-1' });
-    mockPrisma.kycWebhookEvent.create = async () => {};
+const USER = { id: 'user-1', phoneNumber: '+2348000000001', kycTier: 0 };
+const BVN = '22212345678';
+const APPLICANT = { idType: 'BVN', idNumber: BVN, firstName: 'Chinedu', lastName: 'Okafor', dob: '1990-05-14' };
+
+const dojahReturns = (entity) => async (url, opts) => {
+  state.httpCalls.push({ url, opts });
+  return { data: { entity } };
+};
+const dojahFails = (status) => async () => {
+  throw Object.assign(new Error(`HTTP ${status}`), { response: { status, data: { error: 'x' } } });
+};
+
+const auditActions = () => state.audits.map((a) => a.action);
+
+beforeEach(() => {
+  state.profile = null;
+  state.userUpdates = [];
+  state.verifications = [];
+  state.audits = [];
+  state.httpCalls = [];
+  state.attemptCount = 0;
+  state.linkedElsewhere = null;
+});
+
+describe('helpers', () => {
+  test('DOB formats normalize to YYYY-MM-DD; invalid dates are rejected', () => {
+    assert.equal(kyc.normalizeDob('1990-05-14'), '1990-05-14');
+    assert.equal(kyc.normalizeDob('14-05-1990'), '1990-05-14');
+    assert.equal(kyc.normalizeDob('14/05/1990'), '1990-05-14');
+    assert.equal(kyc.normalizeDob('14-May-1990'), '1990-05-14');
+    assert.equal(kyc.normalizeDob('1990-02-30'), null);
+    assert.equal(kyc.normalizeDob('yesterday'), null);
   });
 
-  afterEach(() => {});
+  test('name match is case/accent/order-insensitive and requires DOB', () => {
+    const record = { firstName: 'OKAFOR', middleName: 'Ifeanyi', lastName: 'Chinédu', dob: '14-May-1990' };
+    assert.equal(kyc.matchIdentity({ firstName: 'chinedu', lastName: 'okafor', dob: '1990-05-14' }, record).matched, true);
+    assert.equal(kyc.matchIdentity({ firstName: 'chinedu', lastName: 'okafor', dob: '1991-05-14' }, record).matched, false);
+    assert.equal(kyc.matchIdentity({ firstName: 'emeka', lastName: 'okafor', dob: '1990-05-14' }, record).matched, false);
+  });
 
-  test('verifyBvnNin throws ProviderSkippedError when no provider configured', async () => {
-    const { ProviderSkippedError } = require('../src/compliance/providerErrors');
+  test('hash is keyed and type-scoped', () => {
+    const a = kyc.hashIdNumber('BVN', BVN, 'k1');
+    assert.match(a, /^[0-9a-f]{64}$/);
+    assert.notEqual(a, kyc.hashIdNumber('BVN', BVN, 'k2'));
+    assert.notEqual(a, kyc.hashIdNumber('NIN', BVN, 'k1'));
+    assert.throws(() => kyc.hashIdNumber('BVN', BVN, ''), (e) => e.statusCode === 503);
+  });
+});
 
-    try {
-      await verifyBvnNin({
-        user: { id: 'user-1', phoneNumber: '+2348000000001' },
-        idType: 'BVN',
-        idNumber: '12345678901',
-        applicantData: { firstName: 'John', lastName: 'Doe', dob: '1990-01-01' },
-      });
-      assert.fail('Expected ProviderSkippedError');
-    } catch (error) {
-      assert.ok(error instanceof ProviderSkippedError);
-      assert.match(error.message, /No KYC provider configured/);
+describe('verifyBvnNin with Dojah (#982)', () => {
+  test('valid BVN with matching details elevates the user to Tier 1 instantly', async () => {
+    const result = await kyc.verifyBvnNin(
+      { user: USER, ...APPLICANT },
+      { httpGet: dojahReturns({ first_name: 'CHINEDU', last_name: 'OKAFOR', date_of_birth: '1990-05-14', reference: 'dj-ref-1' }) },
+    );
+
+    assert.deepEqual(result, { status: 'verified', tier: 1 });
+    assert.equal(state.profile.tier, 1);
+    assert.equal(state.profile.status, 'approved');
+    assert.deepEqual(state.userUpdates.at(-1), { kycTier: 1 });
+    assert.equal(state.verifications.length, 1);
+    assert.equal(state.verifications[0].status, 'verified');
+    assert.equal(state.verifications[0].providerReference, 'dj-ref-1');
+    assert.ok(auditActions().includes('kyc.verification.approved'));
+
+    // Lookup call shape
+    assert.match(state.httpCalls[0].url, /\/api\/v1\/kyc\/bvn\/full$/);
+    assert.deepEqual(state.httpCalls[0].opts.params, { bvn: BVN });
+    assert.equal(state.httpCalls[0].opts.headers.AppId, 'app_test');
+  });
+
+  test('the raw BVN is never stored or audit-logged', async () => {
+    await kyc.verifyBvnNin(
+      { user: USER, ...APPLICANT },
+      { httpGet: dojahReturns({ first_name: 'Chinedu', last_name: 'Okafor', date_of_birth: '1990-05-14' }) },
+    );
+    const persisted = JSON.stringify({ v: state.verifications, a: state.audits, p: state.profile });
+    assert.equal(persisted.includes(BVN), false);
+    assert.equal(state.verifications[0].idHash, kyc.hashIdNumber('BVN', BVN, 'test-hash-secret'));
+    assert.equal(state.verifications[0].idLast4, '5678');
+  });
+
+  test('mismatched details are rejected with an audit entry and no tier change', async () => {
+    const result = await kyc.verifyBvnNin(
+      { user: USER, ...APPLICANT },
+      { httpGet: dojahReturns({ first_name: 'Chinedu', last_name: 'Okafor', date_of_birth: '1985-01-01' }) },
+    );
+    assert.deepEqual(result, { status: 'rejected', tier: 0, reason: 'details_mismatch' });
+    assert.equal(state.profile.tier, 0);
+    assert.equal(state.userUpdates.length, 0);
+    assert.equal(state.verifications[0].status, 'rejected');
+    assert.deepEqual(state.verifications[0].metadata.match, { firstName: true, lastName: true, dob: false });
+    assert.ok(auditActions().includes('kyc.verification.rejected'));
+  });
+
+  test('an unknown BVN is rejected with an audit entry', async () => {
+    const result = await kyc.verifyBvnNin({ user: USER, ...APPLICANT }, { httpGet: dojahFails(404) });
+    assert.equal(result.reason, 'id_not_found');
+    assert.ok(auditActions().includes('kyc.verification.rejected'));
+  });
+
+  test('a provider outage is a retryable error, not a rejection', async () => {
+    await assert.rejects(
+      kyc.verifyBvnNin({ user: USER, ...APPLICANT }, { httpGet: dojahFails(500) }),
+      (e) => e.statusCode === 502 && e.code === 'KYC_PROVIDER_UNAVAILABLE',
+    );
+    assert.equal(state.verifications.length, 0);
+    assert.equal(auditActions().includes('kyc.verification.rejected'), false);
+  });
+
+  test('a BVN already verified on another account is rejected without a lookup', async () => {
+    state.linkedElsewhere = { id: 'kv-other' };
+    const result = await kyc.verifyBvnNin({ user: USER, ...APPLICANT }, { httpGet: dojahReturns({}) });
+    assert.equal(result.reason, 'id_linked_to_another_account');
+    assert.equal(state.httpCalls.length, 0);
+  });
+
+  test('attempts are capped per day', async () => {
+    state.attemptCount = kyc.MAX_ATTEMPTS_PER_DAY;
+    await assert.rejects(
+      kyc.verifyBvnNin({ user: USER, ...APPLICANT }, { httpGet: dojahReturns({}) }),
+      (e) => e.statusCode === 429,
+    );
+    assert.equal(state.httpCalls.length, 0);
+  });
+
+  test('an already-verified user is not looked up again', async () => {
+    state.profile = { id: 'kp-1', userId: USER.id, tier: 1, status: 'approved', metadata: {} };
+    const result = await kyc.verifyBvnNin({ user: USER, ...APPLICANT }, { httpGet: dojahReturns({}) });
+    assert.deepEqual(result, { status: 'already_verified', tier: 1 });
+    assert.equal(state.httpCalls.length, 0);
+  });
+
+  test('NIN uses the NIN lookup', async () => {
+    await kyc.verifyBvnNin(
+      { user: USER, ...APPLICANT, idType: 'nin' },
+      { httpGet: dojahReturns({ firstname: 'Chinedu', surname: 'Okafor', birthdate: '1990-05-14' }) },
+    );
+    assert.match(state.httpCalls[0].url, /\/api\/v1\/kyc\/nin$/);
+    assert.deepEqual(state.httpCalls[0].opts.params, { nin: BVN });
+    assert.equal(state.verifications[0].status, 'verified');
+  });
+
+  test('invalid input is rejected before any lookup', async () => {
+    for (const bad of [{ idType: 'PASSPORT' }, { idNumber: '123' }, { firstName: '' }, { dob: '1990-13-01' }]) {
+      await assert.rejects(
+        kyc.verifyBvnNin({ user: USER, ...APPLICANT, ...bad }, { httpGet: dojahReturns({}) }),
+        (e) => e.statusCode === 400,
+      );
     }
-  });
-
-  test('processKycCallback rejects unknown provider', async () => {
-    try {
-      await processKycCallback({ provider: 'unknown', payload: {}, signature: '', timestamp: '' });
-      assert.fail('Expected error');
-    } catch (error) {
-      assert.match(error.message, /Unknown provider/);
-    }
-  });
-
-  test('processKycCallback verifies Smile ID callback', async () => {
-    const callbackPayload = {
-      ResultCode: '1020',
-      ResultText: 'Verification successful',
-      PartnerParams: { job_id: 'job-1', user_id: 'user-1' },
-      SmileJobID: 'smile-job-1',
-    };
-
-    mockPrisma.kycVerification.findFirst = async () => ({
-      id: 'kv-1',
-      userId: 'user-1',
-      provider: 'smileid',
-      providerReference: 'job-1',
-      user: { id: 'user-1' },
-    });
-    mockPrisma.kycVerification.update = async () => ({});
-    mockPrisma.kycProfile.update = async () => ({});
-    mockPrisma.user.update = async () => ({});
-
-    const { verifyCallback } = require('../src/compliance/providers/smileId');
-    const originalVerifyCallback = verifyCallback;
-    require('../src/compliance/providers/smileId').verifyCallback = () => true;
-
-    const result = await processKycCallback({
-      provider: 'smileid',
-      payload: callbackPayload,
-      signature: 'valid',
-      timestamp: new Date().toISOString(),
-    });
-
-    require('../src/compliance/providers/smileId').verifyCallback = originalVerifyCallback;
-
-    assert.equal(result.verified, true);
-    assert.equal(result.status, 'verified');
-  });
-
-  test('verifyBvnNin creates verification record', async () => {
-    const { ProviderSkippedError } = require('../src/compliance/providerErrors');
-
-    try {
-      await verifyBvnNin({
-        user: { id: 'user-1', phoneNumber: '+2348000000001' },
-        idType: 'BVN',
-        idNumber: '12345678901',
-        applicantData: { firstName: 'John', lastName: 'Doe', dob: '1990-01-01' },
-      });
-    } catch (error) {
-      if (error instanceof ProviderSkippedError) {
-        return;
-      }
-      throw error;
-    }
-  });
-
-  test('processKycCallback for Dojah verifies NIN', async () => {
-    mockPrisma.kycVerification.findFirst = async () => ({
-      id: 'kv-1',
-      userId: 'user-1',
-      provider: 'dojah',
-      providerReference: 'ref-1',
-      user: { id: 'user-1' },
-    });
-    mockPrisma.kycVerification.update = async () => ({});
-    mockPrisma.kycProfile.update = async () => ({});
-    mockPrisma.user.update = async () => ({});
-
-    const payload = {
-      entity: { verified: true, reference: 'ref-1', message: 'Verified' },
-    };
-
-    const result = await processKycCallback({
-      provider: 'dojah',
-      payload,
-      signature: '',
-      timestamp: new Date().toISOString(),
-    });
-
-    assert.equal(result.verified, true);
-    assert.equal(result.status, 'verified');
+    assert.equal(state.httpCalls.length, 0);
   });
 });
