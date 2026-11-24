@@ -52,6 +52,9 @@ model User {
 
   voiceProfile            VoiceProfile?
 
+  muxedSubAccounts MuxedSubAccount[]
+  depositCredits   DepositCredit[]
+
   @@index([anonymizedAt])
   @@index([createdAt, id])
   @@index([deactivatedAt])
@@ -122,6 +125,9 @@ model Wallet {
   updatedAt          DateTime @updatedAt
 
   user User @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  muxedSubAccounts MuxedSubAccount[]
+  depositCredits   DepositCredit[]
 
   // Network is part of wallet identity: the same user may hold one wallet per
   // chain per network, and testnet material can never satisfy a mainnet lookup.
@@ -1089,4 +1095,76 @@ model RecurringPayment {
   @@unique([userId, reference])
   @@index([status, nextRunAt])
   @@index([userId, status])
+}
+/// A virtual sub-wallet addressed by a Stellar MED25519 muxed address (#958).
+///
+/// Muxed accounts do NOT create on-chain accounts: every sub-account shares
+/// the single underlying `baseAccount`, its XLM reserves and its trustlines.
+/// This table is purely the off-chain mapping from a 64-bit sub-account id to
+/// the user whose balance an inbound payment belongs to.
+model MuxedSubAccount {
+  id String @id @default(cuid())
+
+  userId   String
+  walletId String
+
+  /// The 64-bit muxed sub-account id, held as a decimal STRING. A JS Number
+  /// cannot represent the full uint64 range (2^53-1 < 2^64-1), so every read
+  /// and write of this value goes through BigInt. Never parse it with
+  /// Number()/parseInt().
+  muxedId String
+
+  /// The `G...` account the muxed address pools under — shared by every
+  /// sub-account on this wallet.
+  baseAccount String
+
+  network String
+
+  createdAt DateTime @default(now())
+
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  wallet Wallet @relation(fields: [walletId], references: [id], onDelete: Cascade)
+
+  /// A sub-account id is unique per underlying base account, which is what
+  /// makes `(baseAccount, muxedId)` a safe routing key.
+  @@unique([baseAccount, muxedId])
+  @@index([userId])
+  @@index([walletId])
+}
+
+/// One credited inbound deposit (#958).
+///
+/// `stellarPaymentId` is Horizon's paging token for the payment operation and
+/// is UNIQUE: it is the idempotency key that makes crediting a deposit
+/// exactly-once even if the poller replays a cursor, restarts mid-write, or
+/// runs on two replicas at the same time.
+model DepositCredit {
+  id String @id @default(cuid())
+
+  stellarPaymentId String @unique
+
+  userId   String
+  walletId String
+
+  /// Decimal string; null when the payment arrived on the base address rather
+  /// than a muxed sub-address.
+  muxedId String?
+
+  asset       String
+  assetIssuer String?
+  /// Canonical decimal string validated by src/utils/money.js.
+  amount      String
+  network     String
+
+  /// The double-entry journal entry this credit posted, when the ledger is
+  /// available.
+  journalEntryId String?
+
+  createdAt DateTime @default(now())
+
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  wallet Wallet @relation(fields: [walletId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([walletId, createdAt])
 }
