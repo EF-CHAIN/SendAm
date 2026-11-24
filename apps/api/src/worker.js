@@ -1,3 +1,6 @@
+// Tracing must start before pg/prisma/bullmq are loaded so they can be instrumented.
+require('./observability/tracing').startTracing({ serviceName: process.env.OTEL_SERVICE_NAME || 'sendam-worker' });
+
 const config = require('./config/env');
 const connectDB = require('./config/db');
 const { validateEnv, validateWorkerEnv } = require('./config/validateEnv');

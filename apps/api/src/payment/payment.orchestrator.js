@@ -1,12 +1,14 @@
 const walletService = require('../wallet/wallet.service');
 const stellarAdapter = require('../wallet/stellar.adapter');
 const { createQuote, validateQuoteForExecution, QUOTE_STATUS } = require('../pricing/pricing.service');
+const { isFirmSep38Quote, assertFirmQuoteValidForExecution } = require('../pricing/quote.service');
 const { writeAuditLog } = require('../common/audit.service');
 const { appendEvent, EVENT_TYPES } = require('../common/event.service');
 const { enforceTransactionPolicy } = require('../compliance/compliance.service');
 const { assertAccountActive } = require('../compliance/account.service');
 const { markTransactionFailed } = require('./markFailed');
 const { transitionPaymentState } = require('./payment.transitions');
+const { handleStellarPaymentFailure } = require('./refundEngine');
 const ledger = require('./ledger.service');
 const prisma = require('../common/prisma');
 const { withIdAlias } = require('../common/records');
@@ -47,6 +49,7 @@ const executePayment = async ({
   destination,
   amount,
   asset,
+  targetCurrency,
   sourceCountry = 'NG',
   destinationCountry = 'NG',
   routeType,
@@ -122,12 +125,22 @@ const executePayment = async ({
     let quote;
     if (quoteId) {
       const existing = await tx.quote.findUnique({ where: { id: quoteId } });
-      await validateQuoteForExecution({
-        quote: existing,
-        userId: senderUser.id,
-        asset: effectiveAsset,
-        amount: normalizedAmount,
-      });
+      if (isFirmSep38Quote(existing)) {
+        assertFirmQuoteValidForExecution({
+          quote: existing,
+          userId: senderUser.id,
+          sourceAsset: effectiveAsset,
+          targetAsset: targetCurrency || null,
+          amount: normalizedAmount,
+        });
+      } else {
+        await validateQuoteForExecution({
+          quote: existing,
+          userId: senderUser.id,
+          asset: effectiveAsset,
+          amount: normalizedAmount,
+        });
+      }
       // Safe to settle: claim the quote so a retry with the same id is rejected.
       quote = await tx.quote.update({
         where: { id: quoteId, status: QUOTE_STATUS.ACTIVE },
@@ -144,6 +157,20 @@ const executePayment = async ({
         tx,
       });
     }
+
+    const sep38Metadata = isFirmSep38Quote(quote) ? {
+      sep38Quote: {
+        quoteId: quote.id,
+        anchorQuoteId: quote.metadata?.sep38?.anchorQuoteId || null,
+        sellAsset: quote.metadata?.sep38?.sellAsset || quote.sourceCurrency,
+        buyAsset: quote.metadata?.sep38?.buyAsset || quote.targetCurrency,
+        sellAmount: quote.sourceAmount,
+        buyAmount: quote.targetAmount,
+        price: quote.metadata?.sep38?.price || null,
+        totalPrice: quote.rate || quote.metadata?.sep38?.totalPrice || null,
+        expiresAt: quote.expiresAt ? new Date(quote.expiresAt).toISOString() : null,
+      },
+    } : {};
 
     let transaction;
     try {
@@ -165,8 +192,8 @@ const executePayment = async ({
           quoteId: quote.id,
           idempotencyKey,
           status: 'processing',
-          fiatCurrency: compliance.policySnapshot?.referenceCurrency,
-          fiatAmount: compliance.policySnapshot?.convertedAmount,
+          fiatCurrency: compliance.policySnapshot?.referenceCurrency || (isFirmSep38Quote(quote) ? quote.targetCurrency : undefined),
+          fiatAmount: compliance.policySnapshot?.convertedAmount || (isFirmSep38Quote(quote) ? quote.targetAmount : undefined),
           metadata: {
             fee: quote.fee ?? calculateFee(normalizedAmount, effectiveAsset),
             ...(quote.metadata?.loyalty ? { loyalty: quote.metadata.loyalty } : {}),
@@ -192,6 +219,7 @@ const executePayment = async ({
                 referenceCurrency: compliance.policySnapshot.referenceCurrency,
               },
             } : {}),
+            ...sep38Metadata,
             ...memoMetadata,
           },
         },
@@ -295,6 +323,9 @@ const executePayment = async ({
       const failed = await tx.transaction.findUnique({ where: { id: activeTransaction.id } });
       if (failed) await ledger.postPaymentFailed({ tx, transaction: failed });
     }).catch(() => {});
+    // Only after the row is 'failed' and the reservation reversal has been
+    // attempted: the reversal job relies on both (see refundEngine).
+    await handleStellarPaymentFailure({ transaction: activeTransaction, error }).catch(() => {});
     throw error;
   }
 };

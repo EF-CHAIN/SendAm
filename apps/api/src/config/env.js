@@ -34,6 +34,30 @@ module.exports = {
   encryptionKey: process.env.ENCRYPTION_KEY,
   activeKeyVersion: process.env.ACTIVE_KEY_VERSION || 'v1',
   kmsKeyVersions: process.env.KMS_KEY_VERSIONS ? JSON.parse(process.env.KMS_KEY_VERSIONS) : null,
+  kms: {
+    provider: process.env.KMS_PROVIDER || 'local',
+    aws: {
+      region: process.env.AWS_KMS_REGION || process.env.AWS_REGION || 'us-east-1',
+      keyId: process.env.AWS_KMS_KEY_ID || null,
+      endpoint: process.env.AWS_KMS_ENDPOINT || null,
+    },
+    vault: {
+      address: process.env.VAULT_ADDR || null,
+      token: process.env.VAULT_TOKEN || null,
+      namespace: process.env.VAULT_NAMESPACE || null,
+      mount: process.env.VAULT_TRANSIT_MOUNT || 'transit',
+      keyName: process.env.VAULT_TRANSIT_KEY || 'sendam-wallet-key',
+      timeoutMs: Number(process.env.VAULT_TIMEOUT_MS || 5000),
+      tokenRenewThresholdSec: Number(process.env.VAULT_TOKEN_RENEW_THRESHOLD_SEC || 300),
+    },
+  },
+  hsm: {
+    enabled: String(process.env.HSM_ENABLED || '').toLowerCase() === 'true',
+    endpoint: process.env.HSM_ENDPOINT || null,
+    apiKey: process.env.HSM_API_KEY || null,
+    timeoutMs: Number(process.env.HSM_TIMEOUT_MS || 5000),
+    maxRetries: Number(process.env.HSM_MAX_RETRIES || 2),
+  },
   // Comma-separated list of origins allowed to call the REST API. Empty means
   // "no allowlist configured" — see app.js for the dev/prod behaviour.
   corsOrigins: (process.env.CORS_ORIGINS || '')
@@ -62,6 +86,11 @@ module.exports = {
     responseTimeoutMs: Number(process.env.WHATSAPP_RESPONSE_TIMEOUT_MS || 10000),
     maxSendRetries: Number(process.env.WHATSAPP_SEND_MAX_RETRIES || 2),
     retryBaseDelayMs: Number(process.env.WHATSAPP_SEND_RETRY_BASE_DELAY_MS || 250),
+    // Approved Meta template with a single {{1}} body variable, used to deliver
+    // notifications outside the 24h customer care window (#969). Unset = no
+    // automatic fallback (free-form send, as before).
+    fallbackTemplateName: process.env.WHATSAPP_FALLBACK_TEMPLATE_NAME || null,
+    fallbackTemplateLanguage: process.env.WHATSAPP_FALLBACK_TEMPLATE_LANGUAGE || 'en',
   },
   limits: {
     maxSendAmount: Number(process.env.MAX_SEND_AMOUNT || 1000),
@@ -200,6 +229,13 @@ module.exports = {
       challengeTtlSeconds: Number(process.env.STELLAR_AUTH_CHALLENGE_TTL_SECONDS || 300),
       sessionTtlMinutes: Number(process.env.REST_SESSION_TTL_MINUTES || 15),
     },
+    sep6Url: process.env.STELLAR_SEP6_URL || null,
+    sep24Url: process.env.STELLAR_SEP24_URL || null,
+    sep31Url: process.env.STELLAR_SEP31_URL || null,
+    sep38Url: process.env.STELLAR_SEP38_URL || null,
+    anchorWebhookSecret: process.env.STELLAR_ANCHOR_WEBHOOK_SECRET || null,
+    sep24PollIntervalMs: Number(process.env.SEP24_POLL_INTERVAL_MS || 15000),
+    sep38DefaultQuoteTtlSeconds: Number(process.env.SEP38_DEFAULT_QUOTE_TTL_SECONDS || 60),
   },
   pricing: {
     coinGeckoBaseUrl: process.env.COINGECKO_BASE_URL || 'https://api.coingecko.com/api/v3',

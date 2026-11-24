@@ -4,6 +4,10 @@ const { getContext, runWithContext, correlationIdFrom } = require('../observabil
 const { increment, observeDuration, setGauge } = require('../observability/metrics');
 const { captureException } = require('../observability/errors');
 const {
+  TRACE_CONTEXT_FIELD, extractTraceContext, injectTraceContext, withSpan,
+} = require('../observability/tracing');
+const { SpanKind } = require('@opentelemetry/api');
+const {
   getRedisConnection,
   getRedisStatus,
   redisIsAvailable,
@@ -70,7 +74,17 @@ const registerProcessor = (name, processor, { concurrency, lockDuration } = {}) 
         observeDuration('bullmq_job_wait_seconds', { queue: name }, waitSeconds);
       }
       try {
-        const result = await processor(job, token);
+        // Continue the trace that enqueued the job, so the worker span is a
+        // child of the originating webhook request.
+        const result = await withSpan(
+          `queue.process ${name}`,
+          () => processor(job, token),
+          {
+            kind: SpanKind.CONSUMER,
+            parent: extractTraceContext(job.data?.[TRACE_CONTEXT_FIELD]),
+            attributes: { 'messaging.system': 'bullmq', 'messaging.destination.name': name, 'messaging.message.id': String(job.id ?? '') },
+          },
+        );
         increment('sendam_queue_jobs_total', { queue: name, status: 'completed' });
         setGauge('sendam_worker_last_successful_processing_timestamp_seconds', Date.now() / 1000, { queue: name });
         return result;
@@ -144,7 +158,12 @@ const registerProcessor = (name, processor, { concurrency, lockDuration } = {}) 
 const enqueue = async (name, jobName, data, options = {}) => {
   const queue = getQueue(name);
   const correlationId = getContext().correlationId || correlationIdFrom(options.jobId);
-  const correlatedData = { ...data, correlationId };
+  const traceContext = injectTraceContext({});
+  const correlatedData = {
+    ...data,
+    correlationId,
+    ...(Object.keys(traceContext).length ? { [TRACE_CONTEXT_FIELD]: traceContext } : {}),
+  };
   if (queue) {
     const job = await queue.add(jobName, correlatedData, {
       attempts: 3,
@@ -241,6 +260,7 @@ const collectQueueMetrics = async () => {
 
 module.exports = {
   enqueue,
+  getQueue,
   registerProcessor,
   closeQueues,
   getWorkers,
