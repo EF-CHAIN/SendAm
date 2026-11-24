@@ -51,6 +51,7 @@ model User {
   userErasures            UserErasure[]
 
   voiceProfile            VoiceProfile?
+  kycVerifications        KycVerification[]
   riskAssessments         RiskAssessment[]
 
   @@index([anonymizedAt])
@@ -1082,6 +1083,30 @@ model AlertDeliveryTest {
 
   @@index([completedAt])
   @@index([overallResult, completedAt])
+}
+
+/// Tier-1 BVN/NIN verification attempts (#982). The raw ID number is never
+/// stored: `idHash` is HMAC-SHA256 keyed with KYC_ID_HASH_SECRET.
+model KycVerification {
+  id                String    @id @default(cuid())
+  userId            String
+  provider          String
+  idType            String
+  idHash            String
+  idLast4           String
+  status            String    @default("pending")
+  providerReference String?
+  failureReason     String?
+  verifiedAt        DateTime?
+  metadata          Json      @default("{}")
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([idHash, status])
+  @@index([providerReference, provider])
 }
 
 /// Scheduled/recurring payment mandate (#1005). Created in `awaiting_pin` and

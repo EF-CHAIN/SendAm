@@ -277,7 +277,13 @@ module.exports = {
     dojah: {
       appId: process.env.DOJAH_APP_ID,
       secretKey: process.env.DOJAH_SECRET_KEY,
+      baseUrl: process.env.DOJAH_BASE_URL || (
+        process.env.NODE_ENV === 'production' ? 'https://api.dojah.io' : 'https://sandbox.dojah.io'
+      ),
+      timeoutMs: Number(process.env.DOJAH_TIMEOUT_MS || 10000),
     },
+    // Key for HMAC-hashing BVN/NIN numbers before storage (#982).
+    kycIdHashSecret: process.env.KYC_ID_HASH_SECRET,
     pinPepper: process.env.PIN_PEPPER,
     pinFailureLimit: Number(process.env.PIN_FAILURE_LIMIT || 5),
     pinLockoutMs: Number(process.env.PIN_LOCKOUT_MS || 10 * 60 * 1000),
