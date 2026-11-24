@@ -2,6 +2,7 @@ const { registerProcessor } = require('../queues/queue.service');
 const { processMessage } = require('../whatsapp/assistant.service');
 const { processVoiceMessage } = require('../voice/voice.service');
 const { retryOutboundNotification } = require('../services/whatsapp.service');
+const { setLastInboundAt } = require('../services/whatsappWindowTracker');
 const { withOrdering, createInMemoryOrderingStore, createDistributedOrderingStore } = require('../queues/ordering.service');
 const config = require('../config/env');
 const logger = require('../utils/logger');
@@ -36,6 +37,10 @@ const registerWhatsAppJobs = ({ orderingStore } = {}) => {
         data: { status: 'processing', lastError: null },
       });
     }
+
+    // Record the inbound first so replies sent while processing see an open
+    // 24h window (#969). Never throws: Redis is best-effort here.
+    await setLastInboundAt(from);
 
     if (messageType === 'audio' || messageType === 'voice') {
       await processVoiceMessage({ phoneNumber: from, whatsappName, mediaId, whatsappMessageId });

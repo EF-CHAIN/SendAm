@@ -86,6 +86,11 @@ module.exports = {
     responseTimeoutMs: Number(process.env.WHATSAPP_RESPONSE_TIMEOUT_MS || 10000),
     maxSendRetries: Number(process.env.WHATSAPP_SEND_MAX_RETRIES || 2),
     retryBaseDelayMs: Number(process.env.WHATSAPP_SEND_RETRY_BASE_DELAY_MS || 250),
+    // Approved Meta template with a single {{1}} body variable, used to deliver
+    // notifications outside the 24h customer care window (#969). Unset = no
+    // automatic fallback (free-form send, as before).
+    fallbackTemplateName: process.env.WHATSAPP_FALLBACK_TEMPLATE_NAME || null,
+    fallbackTemplateLanguage: process.env.WHATSAPP_FALLBACK_TEMPLATE_LANGUAGE || 'en',
   },
   limits: {
     maxSendAmount: Number(process.env.MAX_SEND_AMOUNT || 1000),
@@ -254,6 +259,9 @@ module.exports = {
   },
   compliance: {
     provider: process.env.KYC_PROVIDER || 'smileid',
+    // Opt-in IP reputation lookup for risk scoring (#992): URL template with
+    // `{ip}` returning ip-api.com-shaped JSON. Sends user IPs to that service.
+    riskIpLookupUrl: process.env.RISK_IP_LOOKUP_URL || null,
     smileId: {
       partnerId: process.env.SMILE_ID_PARTLNER_ID,
       apiKey: process.env.SMILE_ID_API_KEY,
@@ -269,12 +277,18 @@ module.exports = {
     dojah: {
       appId: process.env.DOJAH_APP_ID,
       secretKey: process.env.DOJAH_SECRET_KEY,
+      baseUrl: process.env.DOJAH_BASE_URL || (
+        process.env.NODE_ENV === 'production' ? 'https://api.dojah.io' : 'https://sandbox.dojah.io'
+      ),
+      timeoutMs: Number(process.env.DOJAH_TIMEOUT_MS || 10000),
     },
     sanctions: {
       apiKey: process.env.OPENSANCTIONS_API_KEY,
       baseUrl: process.env.OPENSANCTIONS_BASE_URL || 'https://api.opensanctions.org',
       timeoutMs: Number(process.env.OPENSANCTIONS_TIMEOUT_MS || 5000),
     },
+    // Key for HMAC-hashing BVN/NIN numbers before storage (#982).
+    kycIdHashSecret: process.env.KYC_ID_HASH_SECRET,
     pinPepper: process.env.PIN_PEPPER,
     pinFailureLimit: Number(process.env.PIN_FAILURE_LIMIT || 5),
     pinLockoutMs: Number(process.env.PIN_LOCKOUT_MS || 10 * 60 * 1000),

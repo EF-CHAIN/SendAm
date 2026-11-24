@@ -18,6 +18,7 @@ const {
   TransitionError,
 } = require('./kyc.transitions');
 const { getOnboardingStatus: computeOnboardingStatus } = require('./onboarding.service');
+const { verifyBvnNin: runBvnNinVerification } = require('./providers/kycProvider');
 
 const getProfile = async (req, res, next) => {
   try {
@@ -52,6 +53,25 @@ const startKyc = async (req, res, next) => {
   } catch (error) {
     if (error.statusCode) return sendError(res, error.message, error.statusCode);
     next(error);
+  }
+};
+
+// POST /kyc/bvn-nin — Tier-1 BVN/NIN verification (#982).
+const verifyBvnNin = async (req, res, next) => {
+  try {
+    const { idType, idNumber, firstName, lastName, dob } = req.body || {};
+    const result = await runBvnNinVerification({ user: req.restUser, idType, idNumber, firstName, lastName, dob });
+    const status = result.status === 'pending' ? 202 : 200;
+    const message = {
+      verified: 'Identity verified',
+      already_verified: 'Identity already verified',
+      pending: 'Verification submitted',
+      rejected: 'Identity could not be verified',
+    }[result.status];
+    return sendSuccess(res, result, message, status);
+  } catch (error) {
+    if (error.statusCode) return sendError(res, error.message, error.statusCode);
+    return next(error);
   }
 };
 
@@ -323,6 +343,7 @@ const getOnboardingStatus = async (req, res, next) => {
 };
 
 module.exports = {
+  verifyBvnNin,
   getProfile,
   getOwnProfile,
   startKyc,
