@@ -239,6 +239,44 @@ test('resolves by destination address when no phone number is given', async () =
   assert.equal(wallet.id, RECIPIENT.id);
 });
 
+test('the destination address wins over the phone number, so no other account is touched', async () => {
+  // The phone number belongs to one of our users, but the asset is addressed
+  // somewhere else. Opening a trustline on the phone's wallet would be acting
+  // on an account that is not the payee.
+  const prismaClient = custodiedFixture();
+  const wallet = await trustlines.resolveCustodiedRecipientWallet({
+    prismaClient,
+    recipientPhoneNumber: '+2348000000111',
+    destination: EXTERNAL_ADDRESS,
+    network: NETWORK,
+  });
+  assert.equal(wallet, null, 'an address we hold no wallet for is external, whatever phone came with it');
+});
+
+test('a caller cannot substitute another wallet for the resolved one', async () => {
+  // `rest` is tuning only. If it could override `wallet`, the custody check
+  // would be decorative.
+  const horizon = makeHorizon({ accountRecord: account({ xlm: '100' }) });
+  const prismaClient = custodiedFixture();
+  const seen = [];
+
+  await trustlines.ensureTrustlineForIncomingTransfer({
+    assetCode: 'USDC',
+    prismaClient,
+    horizon,
+    recipientPhoneNumber: '+2348000000111',
+    network: NETWORK,
+    wallet: { id: 'attacker-wallet', publicKey: EXTERNAL_ADDRESS },
+    resolveSigner: (w) => {
+      seen.push(w.id);
+      return { buildAndSign: async () => ({}), submit: async () => ({ hash: 'h' }) };
+    },
+  });
+
+  assert.deepEqual(seen, [RECIPIENT.id], 'the signer was built for the RESOLVED wallet');
+  assert.equal(prismaClient.state.rows[0].walletId, RECIPIENT.id, 'the tracking row names the resolved wallet');
+});
+
 test('a wallet on another network is never used for this network', async () => {
   const prismaClient = makePrisma({
     users: [{ id: RECIPIENT.userId, phoneNumber: '+2348000000111' }],

@@ -721,9 +721,15 @@ const createChangeTrustSubmitter = ({
  * resolved to `null` rather than treated as an error: the transfer is still
  * allowed to proceed and fail on its own terms, exactly as it does today.
  *
- * Resolution order mirrors the refund path: phone number first (the chain- and
- * network-specific wallet, then any wallet on this network), then the raw
- * destination address.
+ * The destination ADDRESS is the payee, so it is resolved first and alone when
+ * present: an address that belongs to no wallet of ours is external, whatever
+ * phone number travelled alongside it. Resolving the phone number first (as
+ * `executeRefund` does, where the phone IS the payee) would risk opening a
+ * trustline on one account while the asset goes to another.
+ *
+ * The phone number is the fallback for a payment carrying no address, and
+ * resolves to the chain- and network-specific wallet, then any wallet on this
+ * network.
  *
  * @param {object} params
  * @param {object} params.prismaClient
@@ -740,6 +746,12 @@ const resolveCustodiedRecipientWallet = async ({
   network,
   chain = 'stellar',
 }) => {
+  if (destination) {
+    // An address we hold no wallet for is external, full stop. Falling back to
+    // the phone number here could resolve a DIFFERENT account than the payee.
+    const byAddress = await prismaClient.wallet.findFirst({ where: { publicKey: destination, network } });
+    return byAddress?.publicKey ? byAddress : null;
+  }
   if (recipientPhoneNumber) {
     const recipientUser = await prismaClient.user.findFirst({ where: { phoneNumber: recipientPhoneNumber } });
     if (recipientUser) {
@@ -750,10 +762,6 @@ const resolveCustodiedRecipientWallet = async ({
       const anyOnNetwork = await prismaClient.wallet.findFirst({ where: { userId: recipientUser.id, network } });
       if (anyOnNetwork?.publicKey) return anyOnNetwork;
     }
-  }
-  if (destination) {
-    const byAddress = await prismaClient.wallet.findFirst({ where: { publicKey: destination, network } });
-    if (byAddress?.publicKey) return byAddress;
   }
   return null;
 };
@@ -814,14 +822,18 @@ const ensureTrustlineForIncomingTransfer = async ({
   }
 
   const signer = typeof resolveSigner === 'function' ? await resolveSigner(wallet) : null;
+  // `rest` carries tuning only (baseReserveStroops, feeBumpSponsor, or an
+  // injected buildAndSign/submit in tests). The RESOLVED identity is spread
+  // last on purpose: a caller must not be able to substitute another wallet
+  // for the one the custody check just resolved.
   const outcome = await ensureTrustline({
+    ...rest,
+    ...(signer || {}),
     wallet,
     assetCode: code,
     horizon,
     prismaClient,
     network,
-    ...(signer || {}),
-    ...rest,
   });
   return { required: true, custodied: true, ...outcome };
 };
