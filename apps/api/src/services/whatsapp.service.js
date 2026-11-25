@@ -7,6 +7,9 @@ const { enqueue } = require('../queues/queue.service');
 const { increment } = require('../observability/metrics');
 const { outboundHeaders } = require('../observability/context');
 const { ProviderSkippedError } = require('../compliance/providerErrors');
+const windowTracker = require('./whatsappWindowTracker');
+
+const { isWithinConversationWindow, CONVERSATION_WINDOW_MS } = windowTracker;
 
 const RETRYABLE_META_STATUS_CODES = new Set([429, 500, 502, 503, 504]);
 
@@ -230,13 +233,12 @@ const classifyWhatsappFailure = (errorCode) => {
   return { retryable: false, reason: 'unknown' };
 };
 
-const CONVERSATION_WINDOW_MS = 24 * 60 * 60 * 1000;
-
-const isWithinConversationWindow = (lastCustomerInteractionAt) => {
-  if (!lastCustomerInteractionAt) return false;
-  const lastTime = new Date(lastCustomerInteractionAt).getTime();
-  if (Number.isNaN(lastTime)) return false;
-  return Date.now() - lastTime <= CONVERSATION_WINDOW_MS;
+// Meta rejects template parameters containing newlines, tabs or more than four
+// consecutive spaces; collapse whitespace and cap the length.
+const TEMPLATE_PARAM_MAX_LENGTH = 1000;
+const buildFallbackTemplateComponents = (body) => {
+  const text = String(body || '').replace(/\s+/g, ' ').trim().slice(0, TEMPLATE_PARAM_MAX_LENGTH);
+  return text ? [{ type: 'body', parameters: [{ type: 'text', text }] }] : [];
 };
 
 const sendTemplateMessage = async (to, templateName, languageCode = 'en', components = [], options = {}) => {
@@ -331,6 +333,9 @@ const sendTextMessage = async (to, body, options = {}) => {
     templateName = null,
     templateLanguage = 'en',
     templateComponents = [],
+    fallbackTemplateName = config.whatsapp.fallbackTemplateName,
+    fallbackTemplateLanguage = config.whatsapp.fallbackTemplateLanguage || 'en',
+    resolveLastInboundAt = windowTracker.resolveLastInboundAt,
     signal: callerSignal = null,
     correlationId: providedCorrelationId = null,
     sleepImpl = sleep,
@@ -343,14 +348,35 @@ const sendTextMessage = async (to, body, options = {}) => {
       ? `${notification.referenceType}:${notification.referenceId}`
       : randomUUID());
 
-  // Meta 24-hour Customer Service Window Enforcement (#190)
-  if (enforceWindow && !isWithinConversationWindow(lastCustomerInteractionAt)) {
-    if (templateName) {
-      const data = await sendTemplateMessage(to, templateName, templateLanguage, templateComponents, options);
+  // Meta 24-hour customer care window (#190, #969). The window is checked when
+  // the caller enforces it, or when a template is available to fall back to:
+  // an explicit templateName, or — for outbound notifications — the configured
+  // generic fallback template. The last inbound time comes from Redis (written
+  // on every inbound message) or the caller's lastCustomerInteractionAt,
+  // whichever is later.
+  const fallbackTemplate = templateName
+    ? { name: templateName, language: templateLanguage, components: templateComponents }
+    : (notification && fallbackTemplateName
+      ? { name: fallbackTemplateName, language: fallbackTemplateLanguage, components: buildFallbackTemplateComponents(body) }
+      : null);
+  const lastInboundAt = enforceWindow || fallbackTemplate
+    ? await resolveLastInboundAt(to, lastCustomerInteractionAt)
+    : null;
+  if ((enforceWindow || fallbackTemplate) && !isWithinConversationWindow(lastInboundAt)) {
+    if (fallbackTemplate) {
+      const data = await sendTemplateMessage(to, fallbackTemplate.name, fallbackTemplate.language, fallbackTemplate.components, options);
       const providerMessageId = data?.messages?.[0]?.id || null;
-      return { outcome: data ? 'accepted' : 'unknown', providerMessageId, correlationId, attempts: 1, data };
+      const outcome = data ? 'accepted' : 'unknown';
+      logger.info('whatsapp_template_fallback', {
+        template: fallbackTemplate.name,
+        outcome,
+        providerMessageId,
+        lastInboundKnown: Boolean(lastInboundAt),
+        notificationType: notification?.type || null,
+      });
+      return { outcome, providerMessageId, correlationId, attempts: 1, data, template: fallbackTemplate.name };
     }
-    logger.warn('whatsapp_window_expired', { to, lastCustomerInteractionAt });
+    logger.warn('whatsapp_window_expired', { to, lastCustomerInteractionAt: lastInboundAt });
     const db = notification ? (prismaClient || prisma || require('../common/prisma')) : null;
     if (db && notification) {
       await recordNotificationCreated(db, notification, {
@@ -720,6 +746,7 @@ module.exports = {
   isRetryableMetaFailure,
   isWithinConversationWindow,
   CONVERSATION_WINDOW_MS,
+  buildFallbackTemplateComponents,
   recordDeliveryStatus,
   classifyWhatsappFailure,
   deleteUserData,

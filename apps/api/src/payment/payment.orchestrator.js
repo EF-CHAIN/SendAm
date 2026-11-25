@@ -5,9 +5,11 @@ const { isFirmSep38Quote, assertFirmQuoteValidForExecution } = require('../prici
 const { writeAuditLog } = require('../common/audit.service');
 const { appendEvent, EVENT_TYPES } = require('../common/event.service');
 const { enforceTransactionPolicy } = require('../compliance/compliance.service');
+const { evaluateTransactionRisk, assertRiskAllowsPayment } = require('../compliance/riskEngine');
 const { assertAccountActive } = require('../compliance/account.service');
 const { markTransactionFailed } = require('./markFailed');
 const { transitionPaymentState } = require('./payment.transitions');
+const { handleStellarPaymentFailure } = require('./refundEngine');
 const ledger = require('./ledger.service');
 const prisma = require('../common/prisma');
 const { withIdAlias } = require('../common/records');
@@ -16,6 +18,10 @@ const config = require('../config/env');
 const assetIdentity = require('../wallet/assetIdentity');
 const { pathAmount } = require('./pathPaymentRouter');
 const { redeemVoucher, hasLoyaltyReward } = require('../pricing/loyaltyRebate');
+const { screenPaymentParties } = require('../compliance/sanctionsScreening');
+const { enforceVelocityLimit, releaseVelocityReservation } = require('../compliance/velocityLimits');
+const crypto = require('crypto');
+const logger = require('../utils/logger');
 
 const RAIL = 'stellar';
 const NATIVE_ASSET = 'XLM';
@@ -59,6 +65,9 @@ const executePayment = async ({
   idempotencyKey,
   destinationAsset,
   destinationAmount,
+  // Channel-provided risk signals (#992): { ip, deviceInfo, stepUpVerified }.
+  // WhatsApp traffic has none; web/app channels pass what they have.
+  riskSignals = {},
 }) => {
   const senderUser = sender;
   if (!senderUser) throw new Error('Sender not found.');
@@ -81,6 +90,13 @@ const executePayment = async ({
   const effectiveRouteType = routeType || (sourceCountry && destinationCountry && sourceCountry !== destinationCountry ? 'cross_border' : 'domestic');
   const normalizedAmount = assertValidAmount(amount, effectiveAsset);
 
+  await screenPaymentParties({
+    tx: prisma,
+    sender: senderUser,
+    destination,
+    recipientPhoneNumber,
+  });
+
   let pathPayment;
   if (destinationAsset !== undefined || destinationAmount !== undefined) {
     if (!destinationAsset || !destinationAmount || destinationAsset === effectiveAsset) {
@@ -96,8 +112,23 @@ const executePayment = async ({
     ? { memo: stellarAdapter.redactMemo ? stellarAdapter.redactMemo(memo) : String(memo), memoType: String(memoType || 'text').toLowerCase() }
     : {};
 
+  // Dynamic risk scoring runs before the DB transaction: it may call out to
+  // IP-reputation sources and must not hold the transaction open meanwhile.
+  const riskAssessment = await evaluateTransactionRisk({
+    userId: senderUser.id,
+    phoneNumber: senderUser.phoneNumber,
+    ip: riskSignals.ip,
+    deviceInfo: riskSignals.deviceInfo,
+    destinationCountry,
+    amount: normalizedAmount,
+    asset: effectiveAsset,
+    routeType: effectiveRouteType,
+  });
+  assertRiskAllowsPayment(riskAssessment, { stepUpVerified: riskSignals.stepUpVerified === true });
+
   // Core runs inside a single Prisma transaction so the quote and the payment
   // reservation commit together (or not at all).
+  let velocityReservation;
   const runCore = async (tx) => {
     const compliance = await enforceTransactionPolicy({
       user: senderUser,
@@ -120,6 +151,13 @@ const executePayment = async ({
         return { quote, transaction: prior, created: false };
       }
     }
+
+    velocityReservation = await enforceVelocityLimit({
+      user: { ...senderUser, kycTier: compliance.profile.tier },
+      referenceAmount: compliance.policySnapshot.convertedAmount,
+      referenceCurrency: compliance.policySnapshot.referenceCurrency,
+      reservationId: crypto.randomUUID(),
+    });
 
     let quote;
     if (quoteId) {
@@ -238,7 +276,22 @@ const executePayment = async ({
     return { quote, transaction, created: true };
   };
 
-  const { quote, transaction, created } = await (prisma.$transaction ? prisma.$transaction(runCore) : runCore(prisma));
+  let coreResult;
+  try {
+    coreResult = await (prisma.$transaction ? prisma.$transaction(runCore) : runCore(prisma));
+  } catch (error) {
+    await releaseVelocityReservation(velocityReservation).catch((releaseError) => {
+      logger.error('velocity_reservation_release_failed', { message: releaseError.message });
+    });
+    throw error;
+  }
+  const { quote, transaction, created } = coreResult;
+
+  if (!created) {
+    await releaseVelocityReservation(velocityReservation).catch((releaseError) => {
+      logger.error('velocity_reservation_release_failed', { message: releaseError.message });
+    });
+  }
 
   if (!created || transaction.status !== 'processing') {
     return {
@@ -250,10 +303,12 @@ const executePayment = async ({
 
   let activeTransaction = transaction;
   let submitted = false;
+  let submissionStarted = false;
   const trackEnvelope = pathPayment || transaction.metadata?.loyalty?.voucherId || hasLoyaltyReward(transaction);
 
   try {
     const wallet = await walletService.createOrGetWallet({ user: senderUser });
+    submissionStarted = true;
     const result = await walletService.submitPayment({
       wallet,
       destination,
@@ -312,6 +367,11 @@ const executePayment = async ({
     };
   } catch (error) {
     if (submitted && trackEnvelope) throw error;
+    if (!submissionStarted) {
+      await releaseVelocityReservation(velocityReservation).catch((releaseError) => {
+        logger.error('velocity_reservation_release_failed', { message: releaseError.message });
+      });
+    }
     await markTransactionFailed({
       prisma,
       transactionId: activeTransaction.id,
@@ -322,6 +382,9 @@ const executePayment = async ({
       const failed = await tx.transaction.findUnique({ where: { id: activeTransaction.id } });
       if (failed) await ledger.postPaymentFailed({ tx, transaction: failed });
     }).catch(() => {});
+    // Only after the row is 'failed' and the reservation reversal has been
+    // attempted: the reversal job relies on both (see refundEngine).
+    await handleStellarPaymentFailure({ transaction: activeTransaction, error }).catch(() => {});
     throw error;
   }
 };

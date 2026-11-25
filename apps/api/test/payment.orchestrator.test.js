@@ -60,6 +60,17 @@ const txMock = {
   },
 };
 
+injectMock('compliance/sanctionsScreening', () => ({
+  screenPaymentParties: async () => {},
+}));
+injectMock('compliance/riskEngine', () => ({
+  evaluateTransactionRisk: async () => ({ score: 0, reasons: [] }),
+  assertRiskAllowsPayment: () => {},
+}));
+injectMock('compliance/velocityLimits', () => ({
+  enforceVelocityLimit: async () => ({ enforced: false }),
+  releaseVelocityReservation: async () => {},
+}));
 injectMock('wallet/stellar.adapter',        () => ({ validateAddress: mocks.validateAddress }));
 injectMock('compliance/compliance.service', () => ({ enforceTransactionPolicy: mocks.enforceTransactionPolicy }));
 injectMock('config/env',                    () => ({ stellar: { network: 'testnet' } }));
@@ -121,7 +132,11 @@ let currentTx = { ...txRow };
 const setUpHappyPath = () => {
   currentTx = { ...txRow };
   mocks.validateAddress.mock.mockImplementation(() => true);
-  mocks.enforceTransactionPolicy.mock.mockImplementation(() => ({ riskScore: 10, policySnapshot }));
+  mocks.enforceTransactionPolicy.mock.mockImplementation(() => ({
+    riskScore: 10,
+    profile: { tier: 0 },
+    policySnapshot,
+  }));
   mocks.createQuote.mock.mockImplementation(() => quote);
   mocks.prismaTxCreate.mock.mockImplementation(() => currentTx);
   mocks.prismaTxFindUnique.mock.mockImplementation(({ where }) => {
