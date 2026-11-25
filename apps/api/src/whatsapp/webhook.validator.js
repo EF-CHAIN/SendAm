@@ -60,6 +60,23 @@ const validateInboundMessage = (message) => {
     if (!message.voice || typeof message.voice.id !== 'string') {
       return { valid: false, reason: 'Voice message must contain voice.id string' };
     }
+  } else if (type === 'interactive') {
+    if (!message.interactive || typeof message.interactive !== 'object') {
+      return { valid: false, reason: 'Interactive message must contain interactive object' };
+    }
+    const interType = message.interactive.type;
+    if (typeof interType !== 'string' || !['button_reply', 'list_reply'].includes(interType)) {
+      return { valid: false, reason: 'Interactive type must be button_reply or list_reply' };
+    }
+    if (interType === 'button_reply') {
+      if (!message.interactive.button_reply || typeof message.interactive.button_reply !== 'object' || typeof message.interactive.button_reply.id !== 'string') {
+        return { valid: false, reason: 'button_reply must contain id string' };
+      }
+    } else if (interType === 'list_reply') {
+      if (!message.interactive.list_reply || typeof message.interactive.list_reply !== 'object' || typeof message.interactive.list_reply.id !== 'string') {
+        return { valid: false, reason: 'list_reply must contain id string' };
+      }
+    }
   }
 
   return { valid: true };

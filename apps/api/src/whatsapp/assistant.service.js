@@ -25,6 +25,11 @@ const {
 const { matchContacts } = require('../services/contactMatcher');
 const { sendMetaMessage } = require('../services/whatsappMedia');
 const { sendVoiceReceipt } = require('../voice/voiceReceipt');
+const {
+  buildPaymentConfirmationButtons,
+  buildCorridorSelectionMenu,
+  buildListMenu,
+} = require('./interactivePayloads');
 const config = require('../config/env');
 const logger = require('../utils/logger');
 
@@ -280,7 +285,7 @@ const handlePendingPin = async ({ phoneNumber, user, text, notify, db = defaultP
   const lowered = String(text).trim().toLowerCase();
   if (lowered.startsWith('contact:') && pendingState.step !== 'AWAITING_CONTACT') return true;
 
-  if (lowered === 'no' || lowered === 'cancel') {
+  if (lowered === 'no' || lowered === 'cancel' || lowered === 'cancel_payment') {
     await db.user.update({ where: { id: user.id }, data: { pendingSend: Prisma.DbNull } });
     await notify(phoneNumber, t('payment_cancelled', {}, locale));
     return true;
@@ -315,7 +320,7 @@ const handlePendingPin = async ({ phoneNumber, user, text, notify, db = defaultP
   const isHighRiskStep = pendingState.step === 'AWAITING_HIGH_RISK_CONFIRMATION' || (pendingState.isHighRisk && !pendingState.highRiskConfirmed);
 
   if (isHighRiskStep) {
-    if (lowered === 'yes' || lowered === 'oui' || lowered === 'si') {
+    if (['yes', 'oui', 'si', 'confirm_payment', 'confirm'].includes(lowered)) {
       const now = new Date();
       const quoteExpiresAt = pendingState.quoteExpiresAt ? new Date(pendingState.quoteExpiresAt).getTime() : Infinity;
       const newExpiresAt = new Date(Math.min(now.getTime() + PENDING_SEND_TTL_MS, quoteExpiresAt));
@@ -494,6 +499,28 @@ const processMessage = async (phoneNumber, whatsappName, text, options = {}) => 
       return;
     }
     await notify(phoneNumber, t('welcome_help', {}, locale));
+    return;
+  }
+
+  if (['corridor', 'corridors'].includes(normalized)) {
+    await resetUnrecognizedCount({ prisma: db, user });
+    if (notify === sendTextMessage && config.messageTransport === 'meta') {
+      try {
+        const corridorMenu = buildCorridorSelectionMenu();
+        await sendMetaMessage(phoneNumber, 'interactive', corridorMenu, AbortSignal.timeout(3000));
+        return;
+      } catch {
+        logger.warn('whatsapp_corridor_menu_failed');
+      }
+    }
+    await notify(phoneNumber, 'Available Corridors:\n1. NGN -> GHS (Ghana)\n2. NGN -> KES (Kenya)\n3. NGN -> USDC (Stellar)\n4. USD -> NGN (Nigeria)\n5. GHS -> NGN (Nigeria)\n\nTap or reply with a corridor to select.');
+    return;
+  }
+
+  if (normalized.startsWith('corridor:')) {
+    await resetUnrecognizedCount({ prisma: db, user });
+    const corridor = normalized.replace('corridor:', '').toUpperCase();
+    await notify(phoneNumber, `Selected corridor: ${corridor}. To send funds, reply with an amount, e.g. "Send 100 ${corridor.split(/[:\-_]/)[0] || 'XLM'} to <recipient>".`);
     return;
   }
 
