@@ -47,6 +47,7 @@ const makeDelegate = (rows) => ({
 });
 
 const auditCalls = [];
+let auditHead = null;
 const users = [
   { id: 'u1', phoneNumber: '+111', createdAt: new Date(2024, 0, 3), whatsappName: 'A' },
   { id: 'u2', phoneNumber: '+222', createdAt: new Date(2024, 0, 2), whatsappName: 'B' },
@@ -70,6 +71,11 @@ const fakePrisma = {
   wallet: makeDelegate([]),
   transaction: makeDelegate(transactions),
   kycProfile: makeDelegate(kycProfiles),
+  auditChainHead: {
+    findUnique: async () => auditHead,
+    create: async ({ data }) => { auditHead = data; return auditHead; },
+    update: async ({ data }) => { auditHead = { ...auditHead, ...data }; return auditHead; },
+  },
   auditLog: {
     ...makeDelegate(auditLogs),
     findFirst: async () => auditLogs[0],
@@ -97,7 +103,10 @@ const makeRes = () => {
 };
 const makeReq = (query = {}) => ({ query, admin: { id: 'admin-test', permissions: ['*'] } });
 
-beforeEach(() => { auditCalls.length = 0; });
+beforeEach(() => {
+  auditCalls.length = 0;
+  auditHead = null;
+});
 
 test('users list is cursor-paginated and bounded', async () => {
   const res = makeRes();
