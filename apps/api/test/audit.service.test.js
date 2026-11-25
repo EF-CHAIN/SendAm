@@ -10,6 +10,9 @@ let logged;
 inject('common/prisma', { 
   $transaction: async (cb) => { 
     return await cb({ 
+      auditChainHead: {
+        findUnique: async () => null,
+      },
       auditLog: { 
         findFirst: async () => null,
         create: async () => { throw new Error('audit database unavailable'); }
