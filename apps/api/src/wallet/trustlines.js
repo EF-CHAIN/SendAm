@@ -98,6 +98,7 @@ const TRUSTLINE_ERROR_CODES = Object.freeze({
   NO_SIGNER: 'no_signer',
   SUBMISSION_FAILED: 'submission_failed',
   SUBMISSION_UNCERTAIN: 'submission_uncertain',
+  NOT_CUSTODIED: 'recipient_not_custodied',
 });
 
 const codedError = (message, code, extra = {}) => Object.assign(new Error(message), { code, ...extra });
@@ -635,6 +636,196 @@ const reconcilePendingTrustlines = async ({
   return { checked: pending.length, established, stillPending };
 };
 
+// ── Pre-transfer integration (#962) ──────────────────────────────────────
+//
+// Everything above is dependency-injected so it can be tested without a
+// network or a database. The three helpers below are the glue that lets the
+// transfer flow call it for real: build-and-sign a ChangeTrust (optionally
+// fee-bumped), find the recipient's custodied wallet, and run the check.
+
+/** Per-operation fee ceiling for a fee-bumped ChangeTrust, in stroops. */
+const DEFAULT_FEE_BUMP_MAX_STROOPS = 100_000n;
+
+/**
+ * Build the `buildAndSign` / `submit` pair that `ensureTrustline` needs.
+ *
+ * The inner ChangeTrust is signed by the TRUSTOR and only the trustor: a
+ * fee-bump sponsor is an outer envelope that pays the fee, and it can never
+ * stand in for the inner signature (see the module header). So `signInner` is
+ * required even when a sponsor is supplied.
+ *
+ * @param {object} params
+ * @param {object} params.stellar - `{ server, StellarSdk }`.
+ * @param {Function} params.signInner - `(transaction) => void|Promise<void>`;
+ *   applies the trustor's signature. Supports HSM signers and local keys alike.
+ * @param {string} params.networkPassphrase
+ * @param {object} [params.feeBumpSponsor] - `{ keypair }` or
+ *   `{ publicKey, sign }`. When present the signed inner transaction is wrapped
+ *   in a SEP-0015 FeeBumpTransaction so the sponsor pays the fee.
+ * @param {Function} [params.wrapFeeBump] - Injectable `buildFeeBumpEnvelope`.
+ * @param {bigint} [params.maxFeeStroops]
+ * @param {number} [params.timeoutSeconds]
+ * @returns {{ buildAndSign: Function, submit: Function }}
+ */
+const createChangeTrustSubmitter = ({
+  stellar,
+  signInner,
+  networkPassphrase,
+  feeBumpSponsor = null,
+  wrapFeeBump = null,
+  maxFeeStroops = DEFAULT_FEE_BUMP_MAX_STROOPS,
+  timeoutSeconds = 30,
+}) => {
+  if (typeof signInner !== 'function') {
+    throw codedError(
+      'signInner is required: a ChangeTrust operation must carry the trustor\'s signature.',
+      TRUSTLINE_ERROR_CODES.NO_SIGNER,
+    );
+  }
+  const sdk = stellar?.StellarSdk || StellarSdk;
+
+  const buildAndSign = async ({ accountRecord, asset, fee }) => {
+    const inner = new sdk.TransactionBuilder(accountRecord, { fee: String(fee), networkPassphrase })
+      .addOperation(sdk.Operation.changeTrust({ asset }))
+      .setTimeout(timeoutSeconds)
+      .build();
+
+    // The trustor signs first, and signs the INNER transaction. A fee bump
+    // wraps an already-authorized transaction; it never authorizes one.
+    await signInner(inner);
+    if (!feeBumpSponsor) return inner;
+
+    const wrap = wrapFeeBump || require('./feeBump').buildFeeBumpEnvelope;
+    return wrap({
+      innerTransaction: inner,
+      feeSourceKeypair: feeBumpSponsor.keypair || null,
+      feeSourcePublicKey: feeBumpSponsor.publicKey || feeBumpSponsor.keypair?.publicKey?.() || null,
+      maxFeeStroops: Number(maxFeeStroops),
+      networkPassphrase,
+    });
+  };
+
+  const submit = async (transaction) => {
+    const response = await stellar.server.submitTransaction(transaction);
+    return { hash: response?.hash || null };
+  };
+
+  return { buildAndSign, submit };
+};
+
+/**
+ * Find the recipient's wallet, but only if this platform custodies it.
+ *
+ * A ChangeTrust can only be signed by the trustor, so a trustline can be
+ * opened for a recipient only when we hold their key. An external address is
+ * resolved to `null` rather than treated as an error: the transfer is still
+ * allowed to proceed and fail on its own terms, exactly as it does today.
+ *
+ * Resolution order mirrors the refund path: phone number first (the chain- and
+ * network-specific wallet, then any wallet on this network), then the raw
+ * destination address.
+ *
+ * @param {object} params
+ * @param {object} params.prismaClient
+ * @param {string} [params.recipientPhoneNumber]
+ * @param {string} [params.destination]
+ * @param {string} params.network
+ * @param {string} [params.chain]
+ * @returns {Promise<object|null>}
+ */
+const resolveCustodiedRecipientWallet = async ({
+  prismaClient,
+  recipientPhoneNumber,
+  destination,
+  network,
+  chain = 'stellar',
+}) => {
+  if (recipientPhoneNumber) {
+    const recipientUser = await prismaClient.user.findFirst({ where: { phoneNumber: recipientPhoneNumber } });
+    if (recipientUser) {
+      const keyed = await prismaClient.wallet.findUnique({
+        where: { userId_chain_network: { userId: recipientUser.id, chain, network } },
+      });
+      if (keyed?.publicKey) return keyed;
+      const anyOnNetwork = await prismaClient.wallet.findFirst({ where: { userId: recipientUser.id, network } });
+      if (anyOnNetwork?.publicKey) return anyOnNetwork;
+    }
+  }
+  if (destination) {
+    const byAddress = await prismaClient.wallet.findFirst({ where: { publicKey: destination, network } });
+    if (byAddress?.publicKey) return byAddress;
+  }
+  return null;
+};
+
+/**
+ * Pre-transfer hook for the RECIPIENT of an issued asset (#962).
+ *
+ * This is the case the issue describes: a user receiving an asset for the
+ * first time has no trustline, so the payment fails. Called immediately
+ * before submission, it establishes the missing trustline when the recipient
+ * is a wallet this platform custodies.
+ *
+ * Outcomes, all non-throwing except a genuine establishment failure:
+ *   - native XLM            -> `{ required: false }`, no Horizon call
+ *   - external recipient    -> `{ required: true, custodied: false }`, caller proceeds
+ *   - trustline already set -> `{ alreadyExisted: true, submitted: false }`
+ *   - trustline created     -> `{ established: true, submitted: true }`
+ *   - cannot be established -> throws the coded error from `ensureTrustline`
+ *
+ * @param {object} params - As `ensureTrustline`, plus:
+ * @param {string} params.assetCode - The asset the RECIPIENT receives.
+ * @param {string} [params.recipientPhoneNumber]
+ * @param {string} [params.destination]
+ * @param {Function} [params.resolveSigner] - `(wallet) => { buildAndSign, submit }`.
+ *   Omitted in tests that only assert resolution and short-circuiting.
+ * @returns {Promise<object>}
+ */
+const ensureTrustlineForIncomingTransfer = async ({
+  assetCode,
+  prismaClient,
+  horizon,
+  recipientPhoneNumber,
+  destination,
+  network = config.stellar.network,
+  chain = 'stellar',
+  resolveSigner,
+  ...rest
+}) => {
+  const code = String(assetCode || '').toUpperCase();
+  if (!code || code === 'XLM' || code === 'NATIVE') {
+    // Native XLM has no issuer and consumes no subentry.
+    return { required: false, established: true, alreadyExisted: true, submitted: false };
+  }
+
+  const wallet = await resolveCustodiedRecipientWallet({
+    prismaClient, recipientPhoneNumber, destination, network, chain,
+  });
+
+  if (!wallet) {
+    // Not ours to sign for. Say so plainly instead of pretending success.
+    return {
+      required: true,
+      custodied: false,
+      established: false,
+      submitted: false,
+      code: TRUSTLINE_ERROR_CODES.NOT_CUSTODIED,
+    };
+  }
+
+  const signer = typeof resolveSigner === 'function' ? await resolveSigner(wallet) : null;
+  const outcome = await ensureTrustline({
+    wallet,
+    assetCode: code,
+    horizon,
+    prismaClient,
+    network,
+    ...(signer || {}),
+    ...rest,
+  });
+  return { required: true, custodied: true, ...outcome };
+};
+
 module.exports = {
   SUPPORTED_CORRIDORS,
   TRUSTLINE_STATUS,
@@ -650,4 +841,8 @@ module.exports = {
   ensureTrustline,
   ensureTrustlineForTransfer,
   reconcilePendingTrustlines,
+  DEFAULT_FEE_BUMP_MAX_STROOPS,
+  createChangeTrustSubmitter,
+  resolveCustodiedRecipientWallet,
+  ensureTrustlineForIncomingTransfer,
 };
