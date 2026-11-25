@@ -207,6 +207,10 @@ Runs the same `processMessage` pipeline the WhatsApp webhook uses and returns it
 
 Create an `.env` file in `apps/api` using `.env.example` as a guide. The app **fails fast at startup** if the required secrets are missing or weak.
 
+Production payment authorization requires a shared `REDIS_URL` for the rolling KYC-tier limits and `OPENSANCTIONS_API_KEY` for sender and receiver screening. If either control is unavailable, payment authorization fails closed. A sanctions or PEP match creates a compliance case for review. Tier limits are $50/day and 2 transactions/hour for Tier 0, $500/day and 5/hour for Tier 1, and $5,000/day for Tier 2.
+
+WhatsApp messages containing `help`, or three consecutive unrecognized messages, create a SupportCase and pause automated replies until support closes the case. Audit-log integrity can be checked from the existing admin audit verification endpoint.
+
 ```env
 PORT=3002
 NODE_ENV=development

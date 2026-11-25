@@ -41,6 +41,15 @@ severity = "critical"
     '''S[A-Z2-7]{10}FAKE[A-Z2-7]*''',
     '''SAAAAA''',
   ]
+  # The official SEP-0005 key-derivation test vectors (#960). These keypairs
+  # are published in the Stellar protocol specification itself
+  # (stellar-protocol/ecosystem/sep-0005.md) precisely so implementations can
+  # prove their BIP-39 / SLIP-0010 derivation is correct; they are public by
+  # design and control no funds. Scoped to the single test file that asserts
+  # them, so a real secret key committed anywhere else is still caught.
+  paths = [
+    '''apps/api/test/mnemonic\.service\.test\.js$''',
+  ]
 
 [[rules]]
 id = "stellar-seed-phrase"
@@ -48,6 +57,16 @@ description = "Stellar BIP-39 style seed phrase (12 or 24 lowercase words)"
 regex = '''(?i)(?:seed|mnemonic|phrase)\s*[:=]\s*["']?([a-z]+(?:\s+[a-z]+){11,23})'''
 tags = ["stellar", "mnemonic"]
 severity = "critical"
+
+  [rules.allowlist]
+  description = "Official SEP-0005 mnemonic test vectors (#960) — public spec data"
+  # Same reasoning as the stellar-secret-key allowlist above: these phrases are
+  # the specification's own test vectors, published so implementations can
+  # verify their derivation. Scoped to the single file that asserts them, so a
+  # real recovery phrase committed anywhere else is still caught.
+  paths = [
+    '''apps/api/test/mnemonic\.service\.test\.js$''',
+  ]
 
 [[rules]]
 id = "database-url-password"

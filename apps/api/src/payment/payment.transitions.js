@@ -18,7 +18,7 @@ const PAYMENT_TRANSITIONS = {
   processing: ['pending', 'success', 'failed', 'cancelled', 'reversed'],
   pending:    ['success', 'failed', 'expired', 'escalated', 'resolved', 'cancelled', 'processing', 'reversed'],
   escalated:  ['processing', 'resolved', 'failed', 'success', 'reversed'],
-  failed:     ['processing'],
+  failed:     ['processing', 'reversed'],
   expired:    ['processing'],
   cancelled:  [], // Terminal state
   success:    ['reversed'], // Reversal
