@@ -87,6 +87,15 @@ const makePrismaMock = () => ({
       return { count: 1 };
     },
   },
+  // The recipient is not a wallet we custody, so the pre-transfer trustline
+  // hook (#962) treats it as external and proceeds.
+  wallet: {
+    findFirst: async () => null,
+    findUnique: async () => null,
+  },
+  user: {
+    findFirst: async () => null,
+  },
 });
 
 const prismaMock = makePrismaMock();

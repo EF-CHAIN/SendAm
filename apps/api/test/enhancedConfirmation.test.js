@@ -93,6 +93,8 @@ test('high-risk recipient identification, confirmation, and PIN input flow', asy
 
   // Step 4: Reply PIN to execute
   await processMessage('+2348000000001', 'John', '1234', { notify });
-  assert.equal(sentMessages.length, 4);
-  assert.ok(sentMessages[3].includes('Payment success'));
+  // The masked-PIN security notice (#977) precedes the receipt.
+  assert.equal(sentMessages.length, 5);
+  assert.ok(sentMessages[3].includes('PIN entered: ****'));
+  assert.ok(sentMessages[4].includes('Payment success'));
 });

@@ -306,11 +306,12 @@ const requestConfirmation = async ({ phoneNumber, user, intent, notify, selected
 };
 
 const handlePendingPin = async ({ phoneNumber, user, text, notify, db = defaultPrisma }) => {
-  if (!user.pendingSend?.destination &&
-      user.pendingSend?.step !== 'AWAITING_CONTACT' &&
-      user.pendingSend?.step !== 'AWAITING_DISAMBIGUATION' &&
-      user.pendingSend?.step !== 'AWAITING_RECIPIENT') return false;
-  if (!user.pendingSend?.destination && user.pendingSend?.step !== 'AWAITING_CONTACT') {
+  // Steps that legitimately have no destination yet (#980 disambiguation and
+  // recipient prompts, contact pick). Anything else without a destination
+  // falls back to the FSM session (#975).
+  const explicitStep = ['AWAITING_CONTACT', 'AWAITING_DISAMBIGUATION', 'AWAITING_RECIPIENT']
+    .includes(user.pendingSend?.step);
+  if (!user.pendingSend?.destination && !explicitStep) {
     const fsmSession = await conversationFsm.getSession(phoneNumber).catch(() => null);
     if (fsmSession && fsmSession.context && fsmSession.context.destination) {
       user.pendingSend = fsmSession.context;
