@@ -12,9 +12,12 @@ const { nativeBalance, PRECISION } = require("./balanceCalculator");
 const { routePathPayment, pathAmount } = require("../payment/pathPaymentRouter");
 // The high-value quorum gate (#959). Required here — and nowhere earlier in
 // the call chain — because this module is the last place a transaction exists
-// as an in-memory object before it reaches Horizon. Every outbound path
-// (orchestrator payments, refunds, recurring payments, SEP-6/SEP-31 rails)
-// funnels through `submitPayment`.
+// as an in-memory object before it reaches Horizon. Every user-facing outbound
+// transfer (orchestrator payments, refunds, recurring payments, SEP-6/SEP-31
+// rails) funnels through `submitPayment`. Modules that call
+// `server.submitTransaction` themselves are not covered; see the submission
+// -boundary notes at the top of `multisig.js` for which they are and which of
+// them is a genuine gap.
 const { authorizeForSubmission, configuredCoSigners } = require("./multisig");
 
 const chain = "stellar";

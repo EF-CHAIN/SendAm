@@ -21,13 +21,31 @@
 // lexically after a statement that throws.
 //
 // In production that boundary is `wallet/stellar.adapter.js#submitPayment`,
-// which is the one function every outbound value-moving path goes through —
+// which is the one function every USER-FACING outbound transfer goes through —
 // the payment orchestrator, refunds, recurring payments and the SEP-6/SEP-31
 // rails all end up there. It calls `authorizeForSubmission` AFTER the envelope
 // is signed and BEFORE `server.submitTransaction`, so a refused transaction
-// has already thrown by the time any transport exists. `establishTrustline`
-// is deliberately not gated: `changeTrust` moves no value, so it stays
-// single-key (see ZERO_VALUE_OPERATIONS).
+// has already thrown by the time any transport exists.
+//
+// That is deliberately narrower than "every path that can reach Horizon", and
+// the difference matters. Other modules call `server.submitTransaction`
+// directly and this gate does NOT see them:
+//
+//   * `wallet/stellar.adapter.js#establishTrustline` and `wallet/trustlines.js`
+//     (#962/#1066) submit `changeTrust` only, which moves no value and is
+//     exempt on purpose (see ZERO_VALUE_OPERATIONS);
+//   * `wallet/feeBump.js` and `wallet/channelAccountPool.js` are operational
+//     plumbing;
+//   * `wallet/hotWalletPool.js` (#1081) is NOT exempt. Its
+//     `_executeMultisigTransfer` builds a native payment of arbitrary size
+//     from cold storage, signs it with raw in-process keypairs up to its own
+//     `coldStorageThreshold`, and submits directly. It applies its own notion
+//     of a quorum, unrelated to this policy, and this gate cannot refuse it.
+//
+// Bringing that treasury path under one policy — or deciding that it is
+// intentionally governed separately — is a maintainer decision, not something
+// this module may assume. Do not restate the claim that all value-moving
+// submissions are gated until it is true.
 //
 // Below the threshold nothing new runs at all — no extra Horizon read, no
 // co-signer resolution, no verification. The ledger already enforces the
