@@ -4,7 +4,6 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const crypto = require('crypto');
 
-const verifyMetaWebhook = require('../src/middlewares/verifyMetaWebhook');
 const { createVerifyMetaWebhook, validateSignature } = require('../src/middlewares/verifyMetaWebhook');
 
 const TEST_SECRET = 'test_meta_app_secret_abc123';

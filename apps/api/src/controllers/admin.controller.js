@@ -747,6 +747,12 @@ const unlockUserPin = async (req, res, next) => {
       reason: req.body?.reason || 'Manual operator unlock after security verification',
     });
     return sendSuccess(res, result, 'User PIN lockout cleared by operator');
+  } catch (error) {
+    if (error.statusCode) return sendError(res, error.message, error.statusCode);
+    return next(error);
+  }
+};
+
 const emergencyFreezeWallet = async (req, res, next) => {
   try {
     const result = await walletService.emergencyFreezeWallet({

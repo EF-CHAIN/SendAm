@@ -94,7 +94,6 @@ const buildPrisma = () => {
       create: async ({ data }) => { auditHead = data; return auditHead; },
       update: async ({ data }) => { auditHead = { ...auditHead, ...data }; return auditHead; },
     },
-    auditChainHead: createCollection(),
   };
   // A real Prisma transaction operates on the same data; reuse this instance so
   // seeded rows are visible inside the transaction callback.

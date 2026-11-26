@@ -19,7 +19,6 @@
 const express = require('express');
 const { server: defaultServer, StellarSdk } = require('../config/stellar');
 const prisma = require('../common/prisma');
-const { decrypt } = require('../services/crypto.service');
 const { writeAuditLog } = require('../common/audit.service');
 const { appendEvent } = require('../common/event.service');
 const { deactivateAccount, DEACTIVATION_REASONS } = require('../compliance/account.service');
@@ -74,7 +73,7 @@ const resolveRecoverySignerPublicKey = (providedKey) => {
  * Executes on-chain signer rotation via Stellar setOptions operation.
  */
 const setEmergencySigners = async ({
-  publicKey,
+  publicKey: _publicKey,
   secretKey,
   recoverySignerPublicKey,
   server = defaultServer,
@@ -224,6 +223,9 @@ const emergencyFreezeWallet = async ({
   const recoverySignerPublicKey = resolveRecoverySignerPublicKey(userProvidedKey);
 
   // 2. Decrypt wallet secret key
+  // Lazy: crypto.service validates ENCRYPTION_KEY at load time, and this module
+  // is pulled into the route graph that key-less test suites load.
+  const { decrypt } = require('../services/crypto.service');
   const secretKey = decrypt(wallet.encryptedSecretKey);
 
   // 3. Stellar on-chain signer rotation (masterWeight = 0, recoverySigner = 1, thresholds = 1)

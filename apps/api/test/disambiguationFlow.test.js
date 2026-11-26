@@ -8,8 +8,6 @@ const {
   detectAmbiguousIntent,
   buildDisambiguationOptions,
   formatDisambiguationPrompt,
-  handleDisambiguationReply,
-  sendDisambiguationPrompt,
 } = require('../src/whatsapp/disambiguation');
 const { processMessage } = require('../src/whatsapp/assistant.service');
 
