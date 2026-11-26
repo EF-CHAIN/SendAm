@@ -211,6 +211,40 @@ model FeeVoucher {
   @@index([userId, asset, createdAt])
 }
 
+/// Per-corridor fee schedule (#997). A rule prices in `sourceCurrency` and is
+/// matched most-specific-first (SRC:DST, SRC:*, *:DST, *:*). `baseCost` is the
+/// fixed per-payment cost (Stellar network fee + off-ramp banking charge) and is
+/// also the margin floor: `minFee` must be strictly greater than `baseCost`, so
+/// every priced payment recovers its costs and leaves a positive margin.
+model FeeRule {
+  id             String   @id @default(cuid())
+  /// ISO currency / asset code of the corridor source, or "*" for any.
+  sourceCurrency String   @default("*")
+  /// ISO currency / asset code of the corridor target, or "*" for any.
+  targetCurrency String   @default("*")
+  /// Percentage component in basis points (100 = 1%).
+  rateBps        Int      @default(100)
+  /// Fixed per-payment cost added to the percentage component.
+  baseCost       String   @default("0")
+  /// Lower clamp; must exceed `baseCost` so margins stay positive.
+  minFee         String
+  /// Upper clamp; null means uncapped.
+  maxFee         String?
+  /// Higher wins when two active rules match at the same specificity.
+  priority       Int      @default(0)
+  active         Boolean  @default(true)
+  /// Incremented on every mutation; stamped on each quote for audit.
+  version        Int      @default(1)
+  description    String?
+  createdBy      String?
+  updatedBy      String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@unique([sourceCurrency, targetCurrency])
+  @@index([active, priority])
+}
+
 model LedgerAccount {
   id        String   @id @default(cuid())
   key       String   @unique

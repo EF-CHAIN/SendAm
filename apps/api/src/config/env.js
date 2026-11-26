@@ -270,6 +270,11 @@ module.exports = {
     maxRate: process.env.PRICING_PROVIDER_MAX_RATE || '1000000000',
     spreadBasisPoints: Number(process.env.PRICING_SPREAD_BASIS_POINTS || 0),
     feePolicyVersion: process.env.PRICING_FEE_POLICY_VERSION || 'standard-v1',
+    // Per-corridor fee schedule (#997). Rules are stored in the FeeRule table
+    // and edited through the admin API; feeRateBps only sets the percentage
+    // component of the built-in fallback schedule used when no rule matches.
+    feeRateBps: Number(process.env.PRICING_FEE_RATE_BPS || 100),
+    feeRuleCacheTtlMs: Number(process.env.PRICING_FEE_RULE_CACHE_TTL_MS || 30000),
     supportedFiatCurrencies: (process.env.SUPPORTED_FIAT_CURRENCIES || 'NGN,GHS,USD,EUR,GBP')
       .split(',')
       .map((currency) => currency.trim().toUpperCase())

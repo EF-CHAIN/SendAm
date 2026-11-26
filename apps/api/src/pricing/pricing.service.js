@@ -191,7 +191,14 @@ const createQuote = async ({
   const normalizedSourceAmount = assertValidAmount(sourceAmount, sourceCurrency);
   const providerQuote = await fetchExchangeRateQuote({ sourceCurrency, targetCurrency });
   const rate = providerQuote?.effectiveRate || null;
-  const { fee, loyalty } = await priceLoyaltyFee({ db: client, userId, asset: sourceCurrency, amount: normalizedSourceAmount });
+  const { fee, loyalty, feeQuote } = await priceLoyaltyFee({
+    db: client,
+    userId,
+    asset: sourceCurrency,
+    amount: normalizedSourceAmount,
+    targetCurrency,
+    detail: true,
+  });
   const netSourceAmount = subtract(normalizedSourceAmount, fee, sourceCurrency);
   const targetAmount = rate ? convert({ amount: netSourceAmount, sourceAsset: sourceCurrency, targetAsset: targetCurrency, rate }) : undefined;
   const expires = expiresAt || new Date(Date.now() + 5 * 60 * 1000);
@@ -223,6 +230,24 @@ const createQuote = async ({
     expiresAt: expires,
     metadata: {
       ...(loyalty ? { loyalty } : {}),
+      // Which corridor rule priced this quote, and how the clamp behaved. Kept
+      // with the quote so a fee can always be explained after a rule change.
+      ...(feeQuote ? {
+        feeBreakdown: {
+          ruleId: feeQuote.rule.id,
+          corridor: `${feeQuote.rule.sourceCurrency}:${feeQuote.rule.targetCurrency}`,
+          match: feeQuote.rule.match,
+          rateBps: feeQuote.rule.rateBps,
+          baseCost: feeQuote.baseCost,
+          minFee: feeQuote.minFee,
+          maxFee: feeQuote.maxFee,
+          ruleVersion: feeQuote.rule.version,
+          clamped: feeQuote.clamped,
+          margin: feeQuote.margin,
+          marginPositive: feeQuote.marginPositive,
+          effectiveRateBps: feeQuote.effectiveRateBps,
+        },
+      } : {}),
       provenance: {
         provider: provider || providerQuote?.provider || null,
         sourceTimestamp: providerQuote?.sourceTimestamp?.toISOString?.() || null,
