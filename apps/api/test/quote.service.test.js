@@ -87,6 +87,15 @@ const makePrismaMock = () => ({
       return { count: 1 };
     },
   },
+  // The recipient is not a wallet we custody, so the pre-transfer trustline
+  // hook (#962) treats it as external and proceeds.
+  wallet: {
+    findFirst: async () => null,
+    findUnique: async () => null,
+  },
+  user: {
+    findFirst: async () => null,
+  },
 });
 
 const prismaMock = makePrismaMock();
@@ -98,12 +107,25 @@ inject('common/audit.service', {
     return entry;
   },
 });
+inject('compliance/sanctionsScreening', { screenPaymentParties: async () => {} });
+inject('compliance/riskEngine', {
+  evaluateTransactionRisk: async () => ({ score: 0, reasons: [] }),
+  assertRiskAllowsPayment: () => {},
+});
+inject('compliance/velocityLimits', {
+  enforceVelocityLimit: async () => ({ enforced: false }),
+  releaseVelocityReservation: async () => {},
+});
 inject('common/event.service', {
   EVENT_TYPES: { PAYMENT_SUBMITTED: 'payment.submitted' },
   appendEvent: async () => null,
 });
 inject('compliance/compliance.service', {
-  enforceTransactionPolicy: async () => ({ riskScore: 5, policySnapshot: null }),
+  enforceTransactionPolicy: async () => ({
+    riskScore: 5,
+    profile: { tier: 0 },
+    policySnapshot: { convertedAmount: '155000.00', referenceCurrency: 'NGN' },
+  }),
 });
 inject('compliance/account.service', {
   assertAccountActive: () => true,

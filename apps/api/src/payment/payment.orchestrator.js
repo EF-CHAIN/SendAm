@@ -16,6 +16,7 @@ const { withIdAlias } = require('../common/records');
 const { assertValidAmount, percentage } = require('../utils/money');
 const config = require('../config/env');
 const assetIdentity = require('../wallet/assetIdentity');
+const trustlines = require('../wallet/trustlines');
 const { pathAmount } = require('./pathPaymentRouter');
 const { redeemVoucher, hasLoyaltyReward } = require('../pricing/loyaltyRebate');
 const { screenPaymentParties } = require('../compliance/sanctionsScreening');
@@ -47,6 +48,41 @@ const buildReceipt = ({ transaction }) => {
 };
 
 const runDbTransaction = (fn) => (prisma.$transaction ? prisma.$transaction(fn) : fn(prisma));
+
+/**
+ * Establish the recipient's trustline before an issued-asset transfer (#962).
+ *
+ * Native XLM and external (non-custodied) recipients are no-ops. A recipient
+ * we custody gets the missing trustline created, fee-bumped when a sponsor is
+ * configured. If it cannot be created the payment is refused here rather than
+ * submitted to fail on-chain.
+ */
+const ensureRecipientTrustline = async ({ asset, destination, recipientPhoneNumber, transactionId }) => {
+  const { server, StellarSdk } = require('../config/stellar');
+  const outcome = await trustlines.ensureTrustlineForIncomingTransfer({
+    assetCode: asset,
+    prismaClient: prisma,
+    horizon: server,
+    destination,
+    recipientPhoneNumber,
+    network: config.stellar.network,
+    chain: RAIL,
+    resolveSigner: (recipientWallet) => trustlines.createChangeTrustSubmitter({
+      stellar: { server, StellarSdk },
+      networkPassphrase: config.stellar.networkPassphrase,
+      signInner: (transaction) => walletService.signWithWallet({ wallet: recipientWallet, transaction }),
+    }),
+  });
+
+  if (outcome.required && outcome.custodied && outcome.submitted) {
+    logger.info('trustline_established_for_transfer', {
+      transactionId: String(transactionId),
+      asset: String(asset),
+      assetId: outcome.assetId || null,
+    });
+  }
+  return outcome;
+};
 
 const executePayment = async ({
   sender,
@@ -308,6 +344,21 @@ const executePayment = async ({
 
   try {
     const wallet = await walletService.createOrGetWallet({ user: senderUser });
+
+    // #962: an account cannot receive an issued asset until it trusts that
+    // asset's issuer, so the trustline has to exist BEFORE submission. Only
+    // the trustor can sign a ChangeTrust, so this can act only for recipients
+    // we custody; an external address resolves to `custodied: false` and the
+    // transfer proceeds unchanged. Deliberately before `submissionStarted`:
+    // a failure here must release the velocity reservation and mark the
+    // transaction failed, which is exactly what the catch below does.
+    await ensureRecipientTrustline({
+      asset: pathPayment ? pathPayment.destinationAsset : effectiveAsset,
+      destination,
+      recipientPhoneNumber,
+      transactionId: activeTransaction.id,
+    });
+
     submissionStarted = true;
     const result = await walletService.submitPayment({
       wallet,

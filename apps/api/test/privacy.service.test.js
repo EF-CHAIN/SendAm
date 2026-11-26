@@ -71,6 +71,8 @@ const createCollection = (initial = []) => {
   };
 };
 
+let auditHead = null;
+
 const buildPrisma = () => {
   const p = {
     user: createCollection(),
@@ -87,6 +89,11 @@ const buildPrisma = () => {
     legalHold: createCollection(),
     privacyProviderTask: createCollection(),
     auditLog: createCollection(),
+    auditChainHead: {
+      findUnique: async () => auditHead,
+      create: async ({ data }) => { auditHead = data; return auditHead; },
+      update: async ({ data }) => { auditHead = { ...auditHead, ...data }; return auditHead; },
+    },
   };
   // A real Prisma transaction operates on the same data; reuse this instance so
   // seeded rows are visible inside the transaction callback.
@@ -135,6 +142,7 @@ inject('../src/compliance/providers/monitoring', { deleteUserData: makeProviderM
 const service = require('../src/compliance/privacy.service');
 
 beforeEach(() => {
+  auditHead = null;
   providerState.fail = false;
   providerState.skip = false;
   auditEvents.length = 0;

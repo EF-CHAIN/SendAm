@@ -9,6 +9,7 @@ const config = require('../config/env');
 const { assertAccountActive } = require('../compliance/account.service');
 const { appendEvent, EVENT_TYPES } = require('../common/event.service');
 const { createHsmSigner } = require('./hsmSigner');
+const { StellarSdk } = require('../config/stellar');
 
 const CHAIN = 'stellar';
 
@@ -379,6 +380,31 @@ const balancesForUser = async ({ userId, phoneNumber }) => {
   }));
 };
 
+/**
+ * Apply a wallet's own signature to an already-built transaction (#962).
+ *
+ * Key access stays here, with the rest of it: callers hand over a transaction
+ * and never see a secret. Honours the HSM path exactly as `submitPayment`
+ * does, and refuses a wallet that is not usable on the active network.
+ *
+ * @param {object} params
+ * @param {object} params.wallet - Wallet row.
+ * @param {object} params.transaction - Stellar Transaction to sign in place.
+ * @returns {Promise<object>} the signed transaction.
+ */
+const signWithWallet = async ({ wallet, transaction }) => {
+  assertUsableOnActiveNetwork(wallet);
+  const { signer, secretKey } = resolveWalletSigningParams(wallet);
+  if (signer && typeof signer.signTransaction === 'function') {
+    return signer.signTransaction(transaction);
+  }
+  if (!secretKey) {
+    throw new Error('Either secretKey or a remote signer is required to sign Stellar transactions.');
+  }
+  transaction.sign(StellarSdk.Keypair.fromSecret(secretKey));
+  return transaction;
+};
+
 const submitPayment = async ({ wallet, ...payment }) => {
   // Last line of defence before a key is decrypted or signed via HSM.
   assertUsableOnActiveNetwork(wallet);
@@ -409,10 +435,12 @@ module.exports = {
   balance,
   balancesForUser,
   submitPayment,
+  signWithWallet,
   setHsmSigner,
   getHsmSigner,
   transactionHistory,
   rotateWalletKey: require('./walletRecovery.service').rotateWalletKey,
   initiateWalletRecovery: require('./walletRecovery.service').initiateWalletRecovery,
   completeWalletRecovery: require('./walletRecovery.service').completeWalletRecovery,
+  emergencyFreezeWallet: (...args) => require('./emergencyFreeze').emergencyFreezeWallet(...args),
 };

@@ -264,7 +264,7 @@ test('malformed and unsupported sibling items are skipped without discarding val
               messages: [
                 { id: 'wamid.bad-missing-from', type: 'text', text: { body: 'x' } }, // malformed message
                 makeMessage('wamid.m1', FROM),                                        // valid
-                makeMessage('wamid.m2', FROM, 'image', { image: { id: 'i' } }),       // unsupported type
+                makeMessage('wamid.m2', FROM, 'sticker', { sticker: { id: 's' } }),   // unsupported type
                 makeMessage('wamid.m3', FROM),                                        // valid
               ],
             },

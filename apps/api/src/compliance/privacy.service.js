@@ -6,6 +6,7 @@ const smileId = require('./smileId.provider');
 const whatsapp = require('../services/whatsapp.service');
 const voice = require('../voice/voice.service');
 const monitoring = require('./providers/monitoring');
+const legalHold = require('./legalHold');
 
 // External providers an erasure must propagate to. Each has a best-effort
 // adapter; failures are recorded as retryable tasks, never thrown to the user.
@@ -20,56 +21,18 @@ const stripSecrets = (record) => {
 };
 
 const hasActiveLegalHold = async (userId) => {
-  const hold = await prisma.legalHold.findFirst({
-    where: { userId, releasedAt: null, OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }] },
-  });
-  return Boolean(hold);
+  return legalHold.isUnderLegalHold(userId, { db: prisma });
 };
 
 // ---------------------------------------------------------------------------
 // Legal holds
 // ---------------------------------------------------------------------------
 const setLegalHold = async ({ userId, reason, heldBy, expiresAt = null, req } = {}) => {
-  if (!userId) {
-    const error = new Error('userId is required');
-    error.statusCode = 400;
-    throw error;
-  }
-  if (!reason || String(reason).trim().length < retention.LEGAL_HOLD_POLICY.minReasonLength) {
-    const error = new Error('A legal hold requires a descriptive reason');
-    error.statusCode = 400;
-    throw error;
-  }
-  const hold = await prisma.legalHold.create({
-    data: { userId, reason: String(reason).trim(), heldBy, expiresAt: expiresAt ? new Date(expiresAt) : null },
-  });
-  await writeAuditLog({
-    actorType: 'administrator',
-    actorId: heldBy,
-    action: 'admin.legal_hold.set',
-    entityType: 'LegalHold',
-    entityId: hold.id,
-    metadata: { expiresAt: hold.expiresAt ? hold.expiresAt.toISOString() : null },
-    req,
-  });
-  return hold;
+  return legalHold.setLegalHold({ userId, reason, heldBy, expiresAt, db: prisma, req });
 };
 
 const releaseLegalHold = async ({ userId, releasedBy, req } = {}) => {
-  const result = await prisma.legalHold.updateMany({
-    where: { userId, releasedAt: null },
-    data: { releasedAt: new Date() },
-  });
-  await writeAuditLog({
-    actorType: 'administrator',
-    actorId: releasedBy,
-    action: 'admin.legal_hold.released',
-    entityType: 'LegalHold',
-    entityId: userId,
-    metadata: { released: result.count },
-    req,
-  });
-  return result;
+  return legalHold.releaseLegalHold({ userId, releasedBy, db: prisma, req });
 };
 
 const listLegalHolds = async (userId) => {
@@ -286,9 +249,12 @@ const fulfillErasure = async (userId, { requestId, approvedBy: _approvedBy } = {
     return { anonymized: false, alreadyAnonymized: true };
   }
   if (await hasActiveLegalHold(userId)) {
-    const error = new Error('Erasure is blocked by an active legal hold');
-    error.statusCode = 409;
-    throw error;
+    await legalHold.assertNoLegalHold(userId, {
+      operation: 'erasure',
+      actorType: 'administrator',
+      actorId: _approvedBy,
+      db: prisma,
+    });
   }
   await anonymizeLocal(userId);
   if (requestId) await runProviderPropagation(requestId, target);

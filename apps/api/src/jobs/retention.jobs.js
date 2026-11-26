@@ -12,6 +12,7 @@ const {
   cutoffFor,
   guardClauseFor,
 } = require('../compliance/retentionPolicy');
+const { getProtectedUserIds } = require('../compliance/legalHold');
 
 const DEFAULT_INTERVAL_MS = 24 * 60 * 60 * 1000;
 
@@ -28,12 +29,7 @@ const delegateFor = (db, model) => db[model.charAt(0).toLowerCase() + model.slic
  * scheduled job must not be able to cause.
  */
 const heldUserIds = async (db) => {
-  const now = new Date();
-  const holds = await db.legalHold.findMany({
-    where: { OR: [{ expiresAt: null }, { expiresAt: { gt: now } }] },
-    select: { userId: true },
-  });
-  return [...new Set(holds.map((hold) => hold.userId).filter(Boolean))];
+  return getProtectedUserIds({ db });
 };
 
 /** Whether a model's rows are attributable to a user, and so hold-protected. */

@@ -672,6 +672,41 @@ const getLedgerDiscrepancies = async (req, res, next) => {
   }
 };
 
+const getMemoReconciliationCheckpoints = async (req, res, next) => {
+  try {
+    const { status = 'mismatch', limit = 50 } = req.query;
+    const checkpoints = await prisma.reconciliationCheckpoint.findMany({
+      where: {
+        checkpointType: 'memo_exception',
+        ...(status ? { status } : {}),
+      },
+      take: parseLimit(limit),
+      orderBy: { createdAt: 'desc' },
+    });
+    return sendSuccess(res, { checkpoints });
+  } catch (error) {
+    next(error);
+  }
+};
+
+const resolveMemoReconciliationCheckpoint = async (req, res, next) => {
+  try {
+    const { resolveExceptionDeposit } = require('../payment/memoReconciliation');
+    const { id } = req.params;
+    const { targetUserId, reason } = req.body;
+    const result = await resolveExceptionDeposit({
+      checkpointId: id,
+      targetUserId,
+      adminId: req.admin?.id || 'admin',
+      resolutionReason: reason,
+      prisma,
+    });
+    return sendSuccess(res, result, 'Memo exception resolved and credited successfully');
+  } catch (error) {
+    next(error);
+  }
+};
+
 const getWalletSummary = async (req, res, next) => {
   try {
     const summary = await getWalletActivitySummary({
@@ -694,6 +729,39 @@ const recoverWallet = async (req, res, next) => {
       adminId: req.admin?.id || 'system',
     });
     return sendSuccess(res, { wallet: result }, 'Wallet recovery initiated');
+  } catch (error) {
+    if (error.statusCode) return sendError(res, error.message, error.statusCode);
+    return next(error);
+  }
+};
+
+const { operatorUnlockPin } = require('../compliance/pinLockout');
+
+const unlockUserPin = async (req, res, next) => {
+  try {
+    const userId = req.params.userId || req.params.id;
+    const result = await operatorUnlockPin({
+      prisma,
+      userId,
+      adminId: req.admin?.id || 'system',
+      reason: req.body?.reason || 'Manual operator unlock after security verification',
+    });
+    return sendSuccess(res, result, 'User PIN lockout cleared by operator');
+  } catch (error) {
+    if (error.statusCode) return sendError(res, error.message, error.statusCode);
+    return next(error);
+  }
+};
+
+const emergencyFreezeWallet = async (req, res, next) => {
+  try {
+    const result = await walletService.emergencyFreezeWallet({
+      walletId: req.params.id || req.body?.walletId,
+      recoverySignerPublicKey: req.body?.recoverySignerPublicKey,
+      reason: req.body?.reason,
+      adminId: req.admin?.id || 'system',
+    });
+    return sendSuccess(res, result, 'Wallet emergency freeze executed successfully');
   } catch (error) {
     if (error.statusCode) return sendError(res, error.message, error.statusCode);
     return next(error);
@@ -1165,6 +1233,7 @@ module.exports = {
   verifyAuditLogs,
   getWalletSummary,
   recoverWallet,
+  emergencyFreezeWallet,
   getSecretRotationStatus,
   rotateSecret,
   revealSensitiveFields,
@@ -1180,6 +1249,7 @@ module.exports = {
   reactivateUserAccount,
   getUserAccountStatusHistory,
   getUserStatement,
+  unlockUserPin,
   getKycExpiryStatus,
   getComplianceExpirySummary,
   getDeadLetterJobs,
@@ -1188,6 +1258,8 @@ module.exports = {
   discardDeadLetterJob: discardDeadLetterJobHandler,
   getStellarToml,
   validateStellarToml,
+  getMemoReconciliationCheckpoints,
+  resolveMemoReconciliationCheckpoint,
 };
 
 

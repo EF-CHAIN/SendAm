@@ -1,4 +1,5 @@
 const { formatUnits, parseUnits, percentage, subtract, compare } = require('../utils/money');
+const { calculateQuoteFee } = require('./feeRule.service');
 
 const WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
 const THRESHOLDS = {
@@ -18,9 +19,25 @@ const availableVoucher = {
   OR: [{ redeemedById: null }, { redeemedBy: { status: { in: ['failed', 'expired', 'cancelled'] } } }],
 };
 
-const priceLoyaltyFee = async ({ db, userId, asset, amount, now = new Date() }) => {
-  const baseFee = percentage(amount, asset, 100);
-  if (!userId || !THRESHOLDS[asset] || !db.feeVoucher) return { fee: baseFee };
+// `detail: true` additionally returns the fee-rule breakdown so the caller can
+// persist which corridor rule priced the quote. The default return shape stays
+// `{ fee }` / `{ fee, loyalty }` for existing callers.
+const priceLoyaltyFee = async ({ db, userId, asset, amount, targetCurrency, now = new Date(), detail = false }) => {
+  // The base fee comes from the corridor fee schedule (#997): a percentage plus
+  // a fixed cost, clamped between the corridor floor and cap so small payments
+  // still cover the Stellar/off-ramp charges. Loyalty discounts and vouchers
+  // are applied on top of that base.
+  const feeQuote = await calculateQuoteFee({
+    db,
+    asset,
+    amount,
+    sourceCurrency: asset,
+    targetCurrency: targetCurrency || asset,
+  });
+  const baseFee = feeQuote.fee;
+  if (!userId || !THRESHOLDS[asset] || !db.feeVoucher) {
+    return detail ? { fee: baseFee, feeQuote } : { fee: baseFee };
+  }
 
   const cutoff = new Date(now.getTime() - WINDOW_MS);
   const payments = await db.transaction.findMany({
@@ -47,7 +64,7 @@ const priceLoyaltyFee = async ({ db, userId, asset, amount, now = new Date() }) 
     : [];
   const voucher = vouchers.find((entry) => compare(entry.amount, discountedFee, asset) <= 0);
   const fee = voucher ? subtract(discountedFee, voucher.amount, asset) : discountedFee;
-  return {
+  const result = {
     fee,
     loyalty: {
       tier: tier.name,
@@ -57,6 +74,7 @@ const priceLoyaltyFee = async ({ db, userId, asset, amount, now = new Date() }) 
       ...(voucher ? { voucherId: voucher.earnedById, voucherAmount: voucher.amount } : {}),
     },
   };
+  return detail ? { ...result, feeQuote } : result;
 };
 
 const redeemVoucher = async ({ db, transaction, loyalty }) => {
