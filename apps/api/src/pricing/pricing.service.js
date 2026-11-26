@@ -1,14 +1,11 @@
 const { priceLoyaltyFee } = require('./loyaltyRebate');
-const axios = require('axios');
 const config = require('../config/env');
 const { withIdAlias } = require('../common/records');
 const { increment: incrementMetric } = require('../observability/metrics');
-const { outboundHeaders } = require('../observability/context');
 const { assertValidAmount, convert, getAssetRule, subtract, decimalToRatio, compare } = require('../utils/money');
+const { fetchAggregatedRate, resetFxAggregatorState, FxAggregatorError, FX_ERROR_CODES } = require('./fxAggregator');
 
 const normalizeCurrency = (currency) => String(currency || '').trim().toUpperCase();
-const providerState = new Map();
-const rateCache = new Map();
 const defaultPrisma = () => require('../common/prisma');
 const writeAuditLog = async (args) => {
   try {
@@ -38,10 +35,6 @@ class PricingProviderError extends Error {
     this.code = code;
   }
 }
-
-const cacheKey = (sourceCurrency, targetCurrency) => `${sourceCurrency}:${targetCurrency}`;
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-const jitterDelay = (attempt) => Math.min(1000, 75 * (2 ** attempt)) + Math.floor(Math.random() * 75);
 
 const applySpread = (rate) => {
   const basisPoints = Number(config.pricing?.spreadBasisPoints ?? 0);
@@ -85,73 +78,50 @@ const validateProviderPayload = ({ payload, sourceCurrency, targetCurrency, now 
   };
 };
 
-const getCircuit = (provider) => providerState.get(provider) || { failures: 0, openedUntil: 0 };
-const recordProviderSuccess = (provider) => providerState.set(provider, { failures: 0, openedUntil: 0 });
-const recordProviderFailure = (provider, reason) => {
-  const current = getCircuit(provider);
-  const failures = current.failures + 1;
-  const threshold = Number(config.pricing?.circuitThreshold ?? 3);
-  const openedUntil = failures >= threshold ? Date.now() + Number(config.pricing?.circuitCooldownMs ?? 30000) : current.openedUntil;
-  providerState.set(provider, { failures, openedUntil });
-  incrementMetric('sendam_pricing_provider_failures_total', { provider, reason });
-};
+const AGGREGATOR_ERROR_CODES = Object.freeze({
+  [FX_ERROR_CODES.OPEN_CIRCUIT]: 'PRICING_OPEN_CIRCUIT',
+  [FX_ERROR_CODES.NO_FRESH_RATE]: 'PRICING_STALE_DATA',
+  [FX_ERROR_CODES.ALL_PROVIDERS_FAILED]: 'PRICING_UNAVAILABLE',
+  [FX_ERROR_CODES.UNSUPPORTED_PAIR]: 'PRICING_UNSUPPORTED_PAIR',
+});
 
-const cachedRate = (key, maxAgeMs) => {
-  const cached = rateCache.get(key);
-  if (!cached || Date.now() - cached.cachedAt.getTime() > maxAgeMs) return null;
-  incrementMetric('sendam_pricing_cache_used_total', { provider: cached.provider, freshness: Date.now() - cached.sourceTimestamp.getTime() <= Number(config.pricing?.cacheMaxAgeMs ?? 60000) ? 'fresh' : 'stale' });
-  return cached;
-};
-
+// FX is served by the multi-provider aggregator (see pricing/fxAggregator.js).
+// When no provider credential is configured at all we keep the historical
+// behaviour and report pricing as unavailable instead of making public network
+// calls (important for tests and local development).
 const fetchExchangeRateQuote = async ({ sourceCurrency = 'NGN', targetCurrency = 'USDC' }) => {
   sourceCurrency = assertConfiguredCurrency(sourceCurrency);
   targetCurrency = assertConfiguredCurrency(targetCurrency);
   if (sourceCurrency === targetCurrency) {
     const now = new Date();
-    return { provider: 'identity', sourceCurrency, targetCurrency, sourceTimestamp: now, rate: '1', spread: '0', effectiveRate: '1', raw: { conversion_rate: 1 } };
+    return { provider: 'identity', sourceCurrency, targetCurrency, sourceTimestamp: now, rate: '1', spread: '0', effectiveRate: '1', providers: [], raw: { conversion_rate: 1 } };
   }
 
-  if (!config.pricing?.exchangeRateApiKey) {
+  const hasConfiguredProvider = Boolean(config.pricing?.exchangeRateApiKey || config.pricing?.coinGeckoApiKey);
+  if (config.pricing?.fxAggregatorEnabled === false || !hasConfiguredProvider) {
     return null;
   }
 
-  const provider = 'exchangerate-api';
-  const key = cacheKey(sourceCurrency, targetCurrency);
-  const fresh = cachedRate(key, Number(config.pricing?.cacheMaxAgeMs ?? 60000));
-  if (fresh) return fresh;
-
-  const circuit = getCircuit(provider);
-  if (circuit.openedUntil > Date.now()) {
-    const stale = cachedRate(key, Number(config.pricing?.staleCacheMaxAgeMs ?? 300000));
-    if (stale) return { ...stale, stale: true };
-    incrementMetric('sendam_pricing_provider_failures_total', { provider, reason: 'open_circuit' });
-    throw new PricingProviderError('PRICING_OPEN_CIRCUIT', 'Pricing provider circuit is open.');
-  }
-
-  const attempts = Number(config.pricing?.maxRetries ?? 2) + 1;
-  let lastError;
-  for (let attempt = 0; attempt < attempts; attempt += 1) {
-    try {
-      const response = await axios.get(`https://v6.exchangerate-api.com/v6/${config.pricing?.exchangeRateApiKey}/pair/${sourceCurrency}/${targetCurrency}`, {
-        timeout: Number(config.pricing?.timeoutMs ?? 3000),
-        responseType: 'text',
-        headers: outboundHeaders(),
+  let quote;
+  try {
+    quote = await fetchAggregatedRate({ sourceCurrency, targetCurrency });
+  } catch (error) {
+    if (error instanceof FxAggregatorError) {
+      const code = AGGREGATOR_ERROR_CODES[error.code] || 'PRICING_UNAVAILABLE';
+      incrementMetric('sendam_pricing_provider_failures_total', {
+        provider: 'aggregator',
+        reason: error.code === 'FX_OPEN_CIRCUIT' ? 'open_circuit' : 'unavailable',
       });
-      const quote = validateProviderPayload({ payload: response.data, sourceCurrency, targetCurrency });
-      rateCache.set(key, { ...quote, cachedAt: new Date() });
-      recordProviderSuccess(provider);
-      return quote;
-    } catch (error) {
-      lastError = error;
-      const reason = error?.code === 'ECONNABORTED' || /timeout/i.test(error?.message || '') ? 'timeout' : (error?.code === 'PRICING_INVALID_DATA' || error?.code === 'PRICING_IMPLAUSIBLE_RATE' || error?.code === 'PRICING_STALE_DATA' ? 'invalid_data' : 'unavailable');
-      if (attempt < attempts - 1) await sleep(jitterDelay(attempt));
-      if (attempt === attempts - 1) recordProviderFailure(provider, reason);
+      throw new PricingProviderError(code, error.message);
     }
+    throw error;
   }
 
-  const stale = cachedRate(key, Number(config.pricing?.staleCacheMaxAgeMs ?? 300000));
-  if (stale) return { ...stale, stale: true };
-  throw lastError || new PricingProviderError('PRICING_UNAVAILABLE', 'Pricing provider unavailable.');
+  return {
+    ...quote,
+    spread: String(config.pricing?.spreadBasisPoints ?? 0),
+    effectiveRate: applySpread(quote.rate),
+  };
 };
 
 const getExchangeRate = async (args) => {
@@ -160,8 +130,7 @@ const getExchangeRate = async (args) => {
 };
 
 const resetPricingPolicyState = () => {
-  providerState.clear();
-  rateCache.clear();
+  resetFxAggregatorState();
 };
 
 // Quote lifecycle states. All persisted quotes start as `active`. A quote moves
@@ -222,7 +191,14 @@ const createQuote = async ({
   const normalizedSourceAmount = assertValidAmount(sourceAmount, sourceCurrency);
   const providerQuote = await fetchExchangeRateQuote({ sourceCurrency, targetCurrency });
   const rate = providerQuote?.effectiveRate || null;
-  const { fee, loyalty } = await priceLoyaltyFee({ db: client, userId, asset: sourceCurrency, amount: normalizedSourceAmount });
+  const { fee, loyalty, feeQuote } = await priceLoyaltyFee({
+    db: client,
+    userId,
+    asset: sourceCurrency,
+    amount: normalizedSourceAmount,
+    targetCurrency,
+    detail: true,
+  });
   const netSourceAmount = subtract(normalizedSourceAmount, fee, sourceCurrency);
   const targetAmount = rate ? convert({ amount: netSourceAmount, sourceAsset: sourceCurrency, targetAsset: targetCurrency, rate }) : undefined;
   const expires = expiresAt || new Date(Date.now() + 5 * 60 * 1000);
@@ -254,6 +230,24 @@ const createQuote = async ({
     expiresAt: expires,
     metadata: {
       ...(loyalty ? { loyalty } : {}),
+      // Which corridor rule priced this quote, and how the clamp behaved. Kept
+      // with the quote so a fee can always be explained after a rule change.
+      ...(feeQuote ? {
+        feeBreakdown: {
+          ruleId: feeQuote.rule.id,
+          corridor: `${feeQuote.rule.sourceCurrency}:${feeQuote.rule.targetCurrency}`,
+          match: feeQuote.rule.match,
+          rateBps: feeQuote.rule.rateBps,
+          baseCost: feeQuote.baseCost,
+          minFee: feeQuote.minFee,
+          maxFee: feeQuote.maxFee,
+          ruleVersion: feeQuote.rule.version,
+          clamped: feeQuote.clamped,
+          margin: feeQuote.margin,
+          marginPositive: feeQuote.marginPositive,
+          effectiveRateBps: feeQuote.effectiveRateBps,
+        },
+      } : {}),
       provenance: {
         provider: provider || providerQuote?.provider || null,
         sourceTimestamp: providerQuote?.sourceTimestamp?.toISOString?.() || null,

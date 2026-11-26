@@ -83,6 +83,12 @@ router.get(
 router.get('/statement', walletController.getStatement);
 router.get('/statement/export', walletController.getStatement);
 
+// Emergency freeze endpoint (#964)
+const { emergencyFreezeHandler } = require('../wallet/emergencyFreeze');
+router.post('/emergency-freeze', emergencyFreezeHandler);
+router.post('/freeze', emergencyFreezeHandler);
+router.post('/:id/freeze', emergencyFreezeHandler);
+
 router.post(
   '/send',
   sendLimiter,

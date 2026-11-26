@@ -49,6 +49,18 @@ const TRUSTED_ISSUERS = Object.freeze({
         .map((profile) => [profile.id, profile.usdcIssuer]),
     ),
   ),
+  // EURC (#962), sourced the same way as USDC so the issuer still lives in
+  // exactly one place and is validated at startup. NGNT is intentionally
+  // absent here: it has no issuer we could verify to this standard, so it
+  // arrives (or does not) through `config.stellar.pathIssuers` below, which
+  // is driven by STELLAR_NGNT_ISSUER per deployment.
+  EURC: Object.freeze(
+    Object.fromEntries(
+      Object.values(NETWORK_PROFILES)
+        .filter((profile) => profile.eurcIssuer)
+        .map((profile) => [profile.id, profile.eurcIssuer]),
+    ),
+  ),
 });
 
 /** The configured issuer for `code` on `network`, or null if there isn't one. */

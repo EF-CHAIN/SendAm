@@ -271,6 +271,48 @@ const buildWebhookPayload = (messageId, from, text, whatsappName = 'Test User') 
   }],
 });
 
+const buildInteractiveButtonPayload = (messageId, from, buttonId, buttonTitle = 'Button', whatsappName = 'Test User') => ({
+  object: 'whatsapp_business_account',
+  entry: [{
+    changes: [{
+      value: {
+        messaging_product: 'whatsapp',
+        contacts: [{ profile: { name: whatsappName } }],
+        messages: [{
+          id: messageId,
+          from,
+          type: 'interactive',
+          interactive: {
+            type: 'button_reply',
+            button_reply: { id: buttonId, title: buttonTitle },
+          },
+        }],
+      },
+    }],
+  }],
+});
+
+const buildInteractiveListPayload = (messageId, from, listId, listTitle = 'Item', whatsappName = 'Test User') => ({
+  object: 'whatsapp_business_account',
+  entry: [{
+    changes: [{
+      value: {
+        messaging_product: 'whatsapp',
+        contacts: [{ profile: { name: whatsappName } }],
+        messages: [{
+          id: messageId,
+          from,
+          type: 'interactive',
+          interactive: {
+            type: 'list_reply',
+            list_reply: { id: listId, title: listTitle },
+          },
+        }],
+      },
+    }],
+  }],
+});
+
 const postWebhook = async (body) => {
   const res = await fetch(`${baseUrl}/webhook`, {
     method: 'POST',
@@ -415,6 +457,57 @@ test('two rapid PIN replies produce exactly one payment (atomic claim)', async (
     assert.equal(successReplies.length, 1, 'exactly one payment succeeded');
     assert.equal(rejectedReplies.length, 1, 'second PIN was rejected');
     assert.equal(paymentResults.length, 1, 'payment executed exactly once');
+  } finally {
+    await teardown();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Test 4: interactive button tap cancels pending payment
+// ---------------------------------------------------------------------------
+test('interactive button tap cancels pending payment', async () => {
+  resetState();
+
+  await setup();
+  try {
+    const phone = '+2348000000004';
+    const dest = 'G' + 'A'.repeat(55);
+
+    seedUser(phone);
+
+    await postWebhook(buildWebhookPayload('msg_btn_001', phone, `send 75 XLM to ${dest}`));
+    await waitFor(() => sentMessages.length >= 1);
+    assert.ok(sentMessages[0].body.includes('confirm this payment'));
+
+    // User taps [Cancel] interactive button (payload: cancel_payment)
+    const res = await postWebhook(buildInteractiveButtonPayload('msg_btn_002', phone, 'cancel_payment', 'Cancel'));
+    assert.equal(res.status, 200);
+
+    await waitFor(() => sentMessages.length >= 2);
+    assert.ok(sentMessages[1].body.includes('cancelled'), 'payment cancellation message sent');
+    assert.equal(paymentResults.length, 0, 'no payment executed');
+  } finally {
+    await teardown();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Test 5: interactive list menu tap triggers corridor selection
+// ---------------------------------------------------------------------------
+test('interactive list menu tap triggers corridor selection', async () => {
+  resetState();
+
+  await setup();
+  try {
+    const phone = '+2348000000005';
+    seedUser(phone);
+
+    // User taps corridor row from list menu
+    const res = await postWebhook(buildInteractiveListPayload('msg_list_001', phone, 'corridor:NGN:GHS', 'Nigeria -> Ghana'));
+    assert.equal(res.status, 200);
+
+    await waitFor(() => sentMessages.length >= 1);
+    assert.ok(sentMessages[0].body.includes('Selected corridor: NGN:GHS'), 'corridor selection acknowledged');
   } finally {
     await teardown();
   }

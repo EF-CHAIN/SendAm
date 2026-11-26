@@ -29,6 +29,13 @@ const mockPrisma = {
     findUnique: async () => state.auditHead,
     create: async ({ data }) => { state.auditHead = data; return state.auditHead; },
     update: async ({ data }) => { state.auditHead = { ...state.auditHead, ...data }; return state.auditHead; },
+    findUnique: async () => null,
+    update: async () => null,
+    create: async () => null,
+  },
+  workflowEvent: {
+    findFirst: async () => null,
+    create: async () => null,
   },
 };
 mockPrisma.$transaction = async (fn) => fn(mockPrisma);
