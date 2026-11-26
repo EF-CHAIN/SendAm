@@ -30,8 +30,13 @@ const {
   sendDisambiguationPrompt,
   handleDisambiguationReply,
 } = require('./disambiguation');
+  buildPaymentConfirmationButtons,
+  buildCorridorSelectionMenu,
+  buildListMenu,
+} = require('./interactivePayloads');
 const config = require('../config/env');
 const logger = require('../utils/logger');
+const conversationFsm = require('./conversationFsm');
 
 // Hand PDF rendering to the background worker (#1014). Never blocks or fails
 // the reply: the text receipt has already been sent.
@@ -258,6 +263,11 @@ const requestConfirmation = async ({ phoneNumber, user, intent, notify, selected
     data: { pendingSend },
   });
 
+  await conversationFsm.saveSession(phoneNumber, {
+    state: isHighRisk ? conversationFsm.STATES.AWAITING_CONFIRMATION : conversationFsm.STATES.AWAITING_PIN,
+    context: pendingSend,
+  }).catch(() => null);
+
   if (isHighRisk) {
     const warnMsg = t('high_risk_warning', { fingerprint }, locale);
     await notify(phoneNumber, warnMsg);
@@ -282,14 +292,23 @@ const handlePendingPin = async ({ phoneNumber, user, text, notify, db = defaultP
       user.pendingSend?.step !== 'AWAITING_CONTACT' &&
       user.pendingSend?.step !== 'AWAITING_DISAMBIGUATION' &&
       user.pendingSend?.step !== 'AWAITING_RECIPIENT') return false;
+  if (!user.pendingSend?.destination && user.pendingSend?.step !== 'AWAITING_CONTACT') {
+    const fsmSession = await conversationFsm.getSession(phoneNumber).catch(() => null);
+    if (fsmSession && fsmSession.context && fsmSession.context.destination) {
+      user.pendingSend = fsmSession.context;
+    } else {
+      return false;
+    }
+  }
 
   const locale = user.locale || 'en';
   const pendingState = user.pendingSend;
   const lowered = String(text).trim().toLowerCase();
   if (lowered.startsWith('contact:') && pendingState.step !== 'AWAITING_CONTACT') return true;
 
-  if (lowered === 'no' || lowered === 'cancel') {
+  if (lowered === 'no' || lowered === 'cancel' || lowered === 'cancel_payment') {
     await db.user.update({ where: { id: user.id }, data: { pendingSend: Prisma.DbNull } });
+    await conversationFsm.clearSession(phoneNumber).catch(() => null);
     await notify(phoneNumber, t('payment_cancelled', {}, locale));
     return true;
   }
@@ -300,6 +319,10 @@ const handlePendingPin = async ({ phoneNumber, user, text, notify, db = defaultP
 
   if (Date.now() > expireTime) {
     await db.user.update({ where: { id: user.id }, data: { pendingSend: Prisma.DbNull } });
+    await conversationFsm.clearSession(phoneNumber, {
+      archiveExpired: true,
+      expiredSession: { context: pendingState },
+    }).catch(() => null);
     await notify(phoneNumber, t('payment_expired', {}, locale));
     return true;
   }
@@ -346,7 +369,7 @@ const handlePendingPin = async ({ phoneNumber, user, text, notify, db = defaultP
   const isHighRiskStep = pendingState.step === 'AWAITING_HIGH_RISK_CONFIRMATION' || (pendingState.isHighRisk && !pendingState.highRiskConfirmed);
 
   if (isHighRiskStep) {
-    if (lowered === 'yes' || lowered === 'oui' || lowered === 'si') {
+    if (['yes', 'oui', 'si', 'confirm_payment', 'confirm'].includes(lowered)) {
       const now = new Date();
       const quoteExpiresAt = pendingState.quoteExpiresAt ? new Date(pendingState.quoteExpiresAt).getTime() : Infinity;
       const newExpiresAt = new Date(Math.min(now.getTime() + PENDING_SEND_TTL_MS, quoteExpiresAt));
@@ -442,6 +465,7 @@ const handlePendingPin = async ({ phoneNumber, user, text, notify, db = defaultP
   });
   await voiceReceipt;
   queuePdfReceipt(result.transaction.id);
+  await conversationFsm.clearSession(phoneNumber).catch(() => null);
   return true;
 };
 
@@ -512,6 +536,41 @@ const processMessage = async (phoneNumber, whatsappName, text, options = {}) => 
   }
   if (normalized.startsWith('contact:')) return;
 
+  // Regional KYC automated prompts and verification for Ghana & Kenya (#983)
+  const { handleRegionalKycPrompt } = require('../compliance/providers/ghanaKenyaKyc');
+  if (await handleRegionalKycPrompt({ phoneNumber, user, text, notify, db })) {
+    await resetUnrecognizedCount({ prisma: db, user });
+    return;
+  // Conversational FSM multi-step flow or expired resume prompt (#975)
+  const fsmSession = await conversationFsm.getSession(phoneNumber).catch(() => null);
+  if (fsmSession && fsmSession.state !== conversationFsm.STATES.IDLE) {
+    await resetUnrecognizedCount({ prisma: db, user });
+    const fsmResult = await conversationFsm.handleFsmMessage(phoneNumber, text, {
+      notify,
+      user,
+      locale,
+      onRequestQuote: async ({ amount, asset }) => {
+        return await createQuote({
+          userId: user.id,
+          sourceCurrency: asset,
+          targetCurrency: asset,
+          sourceAmount: amount,
+          route: 'stellar',
+          provider: 'stellar',
+        }).catch(() => null);
+      },
+    });
+    if (fsmResult.handled) return;
+  } else if (fsmSession && fsmSession.expired && fsmSession.previousSession) {
+    await resetUnrecognizedCount({ prisma: db, user });
+    const fsmResult = await conversationFsm.handleFsmMessage(phoneNumber, text, {
+      notify,
+      user,
+      locale,
+    });
+    if (fsmResult.handled) return;
+  }
+
   if (normalized === 'help') {
     const supportCase = await handoffByRequest({ prisma: db, user });
     await notify(phoneNumber, `I've connected you with human support. Your case number is ${supportCase.caseNumber}. Automated assistance will resume after the case is closed.`);
@@ -525,6 +584,28 @@ const processMessage = async (phoneNumber, whatsappName, text, options = {}) => 
       return;
     }
     await notify(phoneNumber, t('welcome_help', {}, locale));
+    return;
+  }
+
+  if (['corridor', 'corridors'].includes(normalized)) {
+    await resetUnrecognizedCount({ prisma: db, user });
+    if (notify === sendTextMessage && config.messageTransport === 'meta') {
+      try {
+        const corridorMenu = buildCorridorSelectionMenu();
+        await sendMetaMessage(phoneNumber, 'interactive', corridorMenu, AbortSignal.timeout(3000));
+        return;
+      } catch {
+        logger.warn('whatsapp_corridor_menu_failed');
+      }
+    }
+    await notify(phoneNumber, 'Available Corridors:\n1. NGN -> GHS (Ghana)\n2. NGN -> KES (Kenya)\n3. NGN -> USDC (Stellar)\n4. USD -> NGN (Nigeria)\n5. GHS -> NGN (Nigeria)\n\nTap or reply with a corridor to select.');
+    return;
+  }
+
+  if (normalized.startsWith('corridor:')) {
+    await resetUnrecognizedCount({ prisma: db, user });
+    const corridor = normalized.replace('corridor:', '').toUpperCase();
+    await notify(phoneNumber, `Selected corridor: ${corridor}. To send funds, reply with an amount, e.g. "Send 100 ${corridor.split(/[:\-_]/)[0] || 'XLM'} to <recipient>".`);
     return;
   }
 
@@ -588,6 +669,20 @@ const processMessage = async (phoneNumber, whatsappName, text, options = {}) => 
     return;
   }
 
+  // Conversational send intent without amount (#975): e.g. "send Ada" or "pay +234..."
+  const partialMatch = String(text || '').trim().match(/^(?:send|pay|transfer)\s+(?:to\s+)?([^\s\d]+[\w.-]*)$/i);
+  if (partialMatch) {
+    const candidateRecipient = partialMatch[1].trim();
+    if (candidateRecipient && !['help', 'menu', 'hi', 'hello', 'balance', 'receive', 'history'].includes(candidateRecipient.toLowerCase())) {
+      await resetUnrecognizedCount({ prisma: db, user });
+      await conversationFsm.transition(phoneNumber, conversationFsm.STATES.AWAITING_AMOUNT, {
+        recipient: candidateRecipient,
+      });
+      await notify(phoneNumber, `How much would you like to send to ${candidateRecipient}? (e.g. 50 or 50 XLM)`);
+      return;
+    }
+  }
+
   const handoff = await handoffUnrecognizedMessage({ prisma: db, user });
   if (handoff.escalated) {
     await notify(phoneNumber, `I've connected you with human support. Your case number is ${handoff.supportCase.caseNumber}. Automated assistance is paused until the case is closed.`);
@@ -599,4 +694,5 @@ const processMessage = async (phoneNumber, whatsappName, text, options = {}) => 
 module.exports = {
   processMessage,
   parsePaymentIntent,
+  conversationFsm,
 };
