@@ -61,6 +61,28 @@ router.post(
   controller.verifyBvnNin,
 );
 
+// Customer regional Tier-1 KYC verification for Ghana and Kenya (#983)
+router.post(
+  '/kyc/regional',
+  requireRestApiEnabled,
+  requireRestSession,
+  validateRequest({
+    body: {
+      allowedKeys: ['country', 'idType', 'idNumber', 'firstName', 'lastName', 'dob'],
+      required: ['country', 'idNumber', 'firstName', 'lastName', 'dob'],
+      fields: {
+        country: { type: 'string', trim: true, custom: (value) => /^(GH|KE|GHA|KEN|GHANA|KENYA)$/i.test(value), message: 'country must be GH or KE' },
+        idType: { type: 'string', optional: true, trim: true },
+        idNumber: { type: 'string', trim: true, custom: (value) => value.length >= 7 && value.length <= 30, message: 'valid idNumber is required' },
+        firstName: { type: 'string', trim: true, custom: (value) => value.length > 0 && value.length <= 100, message: 'firstName is required' },
+        lastName: { type: 'string', trim: true, custom: (value) => value.length > 0 && value.length <= 100, message: 'lastName is required' },
+        dob: { type: 'string', trim: true, custom: (value) => value.length <= 20, message: 'dob is required' },
+      },
+    },
+  }),
+  controller.verifyRegionalId,
+);
+
 // Provider callback for Smile ID
 router.post('/kyc/callback/smileid', controller.smileIdCallback);
 

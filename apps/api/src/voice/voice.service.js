@@ -7,6 +7,7 @@ const { canonicalizePhoneNumber } = require('../utils/validators');
 const { ProviderSkippedError } = require('../compliance/providerErrors');
 const { outboundHeaders } = require('../observability/context');
 const { verifyVoiceCommand, enrollVoiceProfile } = require('./speakerVerification');
+const { transcribeVoiceWithFallback, transcribeWithWhisper } = require('./whisperFallback.service');
 
 const transcribeWithDeepgram = async (audioBuffer) => {
   if (!config.voice.deepgramApiKey) {
@@ -110,7 +111,10 @@ const processVoiceMessage = async ({ phoneNumber, whatsappName, mediaId, whatsap
 
     await sendTextMessage(canonicalPhone, 'Voice verified. Processing payment...', { notification: notificationMeta });
 
-    const transcript = await transcribeWithDeepgram(audio);
+    const { transcript } = await transcribeVoiceWithFallback(audio, {
+      primaryTranscribe: transcribeWithDeepgram,
+      fallbackTranscribe: transcribeWithWhisper,
+    });
 
     await prisma.voiceCommand.update({
       where: { id: record.id },
@@ -142,4 +146,6 @@ const deleteUserData = async (userId) => {
 module.exports = {
   processVoiceMessage,
   deleteUserData,
+  transcribeWithDeepgram,
+  transcribeVoiceWithFallback,
 };
