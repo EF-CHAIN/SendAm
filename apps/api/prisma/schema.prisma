@@ -54,6 +54,7 @@ model User {
   voiceProfile            VoiceProfile?
   kycVerifications        KycVerification[]
   riskAssessments         RiskAssessment[]
+  sarReports              SarReport[]
 
   muxedSubAccounts MuxedSubAccount[]
   depositCredits   DepositCredit[]
@@ -1165,6 +1166,26 @@ model RecurringPayment {
   @@index([status, nextRunAt])
   @@index([userId, status])
 }
+
+model SarReport {
+  id             String    @id @default(cuid())
+  userId         String
+  reportNumber   String    @unique
+  status         String    @default("draft") // draft | under_review | filed | dismissed
+  reason         String    // e.g. STRUCTURING_DETECTED, SMURFING_SUB_THRESHOLD
+  narrative      String    // Structured regulatory narrative describing detected activity
+  transactionIds String[]  // Array of suspicious transaction IDs
+  totalAmountUsd Decimal
+  detectionRule  String
+  metadata       Json      @default("{}")
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([status])
+  @@index([detectionRule])
 /// A one-time authorization to export a wallet's recovery material (#960).
 ///
 /// Holds NO secret material: only the HASH of the out-of-band challenge code,
