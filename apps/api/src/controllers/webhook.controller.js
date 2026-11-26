@@ -56,6 +56,11 @@ const processMessage = async ({ message, value }) => {
     return { outcome: OUTCOMES.INVALID };
   }
 
+  const selection = message.interactive?.list_reply?.id;
+  const isContactSelection = message.type === 'interactive' &&
+    message.interactive?.type === 'list_reply' && /^contact:[a-f0-9]{24}:[1-9][0-9]?$/.test(selection || '');
+  const isImageOrDoc = ['image', 'document'].includes(message.type);
+  if (!['text', 'audio', 'voice'].includes(message.type) && !isContactSelection && !isImageOrDoc) {
   const interactiveReply = parseInteractiveInbound(message);
   const isInteractiveSupported = Boolean(interactiveReply);
   if (!['text', 'audio', 'voice'].includes(message.type) && !isInteractiveSupported) {
@@ -152,9 +157,14 @@ const processMessage = async ({ message, value }) => {
     : message.text?.body;
 
   try {
+    const extractedText = isContactSelection
+      ? selection
+      : (message.text?.body || message.image?.caption || message.document?.caption || null);
     await enqueue('whatsapp-inbound', 'message.received', {
       from,
       whatsappName,
+      text: extractedText,
+      mediaId: message.audio?.id || message.voice?.id || message.image?.id || message.document?.id,
       text: inboundText,
       mediaId: message.audio?.id || message.voice?.id,
       messageType: message.type,

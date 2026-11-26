@@ -505,6 +505,11 @@ const processMessage = async (phoneNumber, whatsappName, text, options = {}) => 
   }
   if (normalized.startsWith('contact:')) return;
 
+  // Regional KYC automated prompts and verification for Ghana & Kenya (#983)
+  const { handleRegionalKycPrompt } = require('../compliance/providers/ghanaKenyaKyc');
+  if (await handleRegionalKycPrompt({ phoneNumber, user, text, notify, db })) {
+    await resetUnrecognizedCount({ prisma: db, user });
+    return;
   // Conversational FSM multi-step flow or expired resume prompt (#975)
   const fsmSession = await conversationFsm.getSession(phoneNumber).catch(() => null);
   if (fsmSession && fsmSession.state !== conversationFsm.STATES.IDLE) {
