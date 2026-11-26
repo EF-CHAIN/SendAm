@@ -27,6 +27,8 @@ const mockPrisma = {
   },
   auditChainHead: {
     findUnique: async () => state.auditHead,
+    create: async ({ data }) => { state.auditHead = data; return data; },
+    update: async ({ data }) => { state.auditHead = { ...state.auditHead, ...data }; return state.auditHead; },
     create: async ({ data }) => { state.auditHead = data; return state.auditHead; },
     update: async ({ data }) => { state.auditHead = { ...state.auditHead, ...data }; return state.auditHead; },
     findUnique: async () => null,

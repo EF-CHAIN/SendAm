@@ -24,6 +24,7 @@ const KNOWN_QUEUES = Object.freeze([
   'sendam-jobs',
   'partner-webhooks',
   'receipts',
+  'batch-settlements',
   'payment-reversals',
 ]);
 
