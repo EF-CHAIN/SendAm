@@ -26,6 +26,10 @@ const { matchContacts } = require('../services/contactMatcher');
 const { sendMetaMessage } = require('../services/whatsappMedia');
 const { sendVoiceReceipt } = require('../voice/voiceReceipt');
 const {
+  detectAmbiguousIntent,
+  sendDisambiguationPrompt,
+  handleDisambiguationReply,
+} = require('./disambiguation');
   buildPaymentConfirmationButtons,
   buildCorridorSelectionMenu,
   buildListMenu,
@@ -284,6 +288,10 @@ const requestConfirmation = async ({ phoneNumber, user, intent, notify, selected
 };
 
 const handlePendingPin = async ({ phoneNumber, user, text, notify, db = defaultPrisma }) => {
+  if (!user.pendingSend?.destination &&
+      user.pendingSend?.step !== 'AWAITING_CONTACT' &&
+      user.pendingSend?.step !== 'AWAITING_DISAMBIGUATION' &&
+      user.pendingSend?.step !== 'AWAITING_RECIPIENT') return false;
   if (!user.pendingSend?.destination && user.pendingSend?.step !== 'AWAITING_CONTACT') {
     const fsmSession = await conversationFsm.getSession(phoneNumber).catch(() => null);
     if (fsmSession && fsmSession.context && fsmSession.context.destination) {
@@ -316,6 +324,29 @@ const handlePendingPin = async ({ phoneNumber, user, text, notify, db = defaultP
       expiredSession: { context: pendingState },
     }).catch(() => null);
     await notify(phoneNumber, t('payment_expired', {}, locale));
+    return true;
+  }
+
+  if (pendingState.step === 'AWAITING_DISAMBIGUATION') {
+    return handleDisambiguationReply({
+      phoneNumber,
+      user,
+      text,
+      notify,
+      db,
+      requestConfirmation,
+    });
+  }
+
+  if (pendingState.step === 'AWAITING_RECIPIENT') {
+    const recipient = String(text).trim();
+    const intent = {
+      amount: pendingState.amount,
+      asset: pendingState.asset,
+      recipient,
+    };
+    await db.user.update({ where: { id: user.id }, data: { pendingSend: Prisma.DbNull } });
+    await requestConfirmation({ phoneNumber, user, intent, notify, db });
     return true;
   }
 
@@ -615,6 +646,19 @@ const processMessage = async (phoneNumber, whatsappName, text, options = {}) => 
     const lines = transactions.map((tx) => `${tx.type}: ${formatAmountByLocale(tx.amount, tx.asset, locale)} - ${tx.status}`);
     const historyText = lines.length ? lines.join('\n') : t('history_empty', {}, locale);
     await notify(phoneNumber, historyText);
+    return;
+  }
+
+  const ambiguous = detectAmbiguousIntent(text);
+  if (ambiguous) {
+    await resetUnrecognizedCount({ prisma: db, user });
+    await sendDisambiguationPrompt({
+      phoneNumber,
+      user,
+      ambiguousIntent: ambiguous,
+      notify,
+      db,
+    });
     return;
   }
 
