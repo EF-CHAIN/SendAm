@@ -475,10 +475,13 @@ test('the gated adapter is the only reachable Horizon payment path', () => {
   assert.match(adapter, /authorizeForSubmission\(/, 'the adapter must call the quorum gate');
   assert.match(adapter, /server\.submitTransaction\(/, 'the adapter is the submitter');
 
-  // 2. Transitively reachable from the process entrypoints. `feeBump.js` and
-  //    `channelAccountPool.js` both submit straight to Horizon, so they must
-  //    stay unreachable until their own submissions are gated — otherwise a
-  //    future wire-up would silently bypass #959.
+  // 2. Every OTHER module that submits straight to Horizon has to stay
+  //    accounted for. The gate lives in the adapter, so a module that calls
+  //    `server.submitTransaction` itself is outside it by construction; the
+  //    only thing keeping that from becoming a bypass of #959 is that each
+  //    such module is either dormant or provably zero-value. This assertion
+  //    is the tripwire: wiring one of them in, or giving `feeBump` a second
+  //    caller, fails here instead of silently widening the ungated surface.
   const reachable = new Set();
   const queue = ['server.js', 'worker.js'].map((name) => path.join(SRC_ROOT, name));
   while (queue.length > 0) {
@@ -488,13 +491,45 @@ test('the gated adapter is the only reachable Horizon payment path', () => {
     queue.push(...collectRequires(current));
   }
 
-  for (const dormant of ['wallet/feeBump.js', 'wallet/channelAccountPool.js']) {
+  const callersOf = (relative) => {
+    const full = path.join(SRC_ROOT, relative);
+    return allFiles
+      .filter((file) => file !== full && collectRequires(file).includes(full))
+      .map((file) => path.relative(SRC_ROOT, file));
+  };
+
+  // `feeBump.js` is reachable as of #1066: `trustlines.js` uses
+  // `buildFeeBumpEnvelope` to wrap a ChangeTrust, which moves no value and is
+  // exempt on purpose (ZERO_VALUE_OPERATIONS). That ONE caller is accepted.
+  // `feeBump.js` itself is generic and submits to Horizon directly, so a
+  // second caller could hand it a valued inner transaction — hence an
+  // allowlist rather than a blanket pass.
+  // Subset, not equality: `trustlines.js` arrives with #1066, so on a base
+  // that predates it the sanctioned caller is simply absent. What must never
+  // happen is an UNSANCTIONED caller appearing.
+  const feeBumpCallers = callersOf('wallet/feeBump.js');
+  const sanctionedFeeBumpCallers = ['wallet/trustlines.js'];
+  assert.deepEqual(
+    feeBumpCallers.filter((caller) => !sanctionedFeeBumpCallers.includes(caller)).sort(),
+    [],
+    'feeBump.js submits straight to Horizon; its only sanctioned caller wraps a '
+    + 'zero-value ChangeTrust. A new caller must gate its own submissions (#959).',
+  );
+
+  // These submit to Horizon directly and are NOT zero-value.
+  // `channelAccountPool.js` is operational plumbing; `hotWalletPool.js`
+  // (#1081) builds native payments of arbitrary size from cold storage and
+  // signs them with raw in-process keypairs under its own ad-hoc quorum.
+  // Both are dormant today — nothing requires them — which is the only
+  // reason they are not live bypasses of this policy.
+  for (const dormant of ['wallet/channelAccountPool.js', 'wallet/hotWalletPool.js']) {
     const full = path.join(SRC_ROOT, dormant);
-    const requiredAnywhere = allFiles.some((file) => file !== full && collectRequires(file).includes(full));
-    assert.equal(
-      requiredAnywhere,
-      false,
-      `${dormant} submits straight to Horizon, so wiring it in without gating it would bypass #959`,
+    if (!fs.existsSync(full)) continue;
+    assert.deepEqual(
+      callersOf(dormant),
+      [],
+      `${dormant} submits valued transactions straight to Horizon, so wiring it in `
+      + 'without gating it would bypass #959',
     );
     assert.equal(
       reachable.has(full),

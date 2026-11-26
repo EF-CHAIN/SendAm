@@ -34,15 +34,23 @@
 //   * `wallet/stellar.adapter.js#establishTrustline` and `wallet/trustlines.js`
 //     (#962/#1066) submit `changeTrust` only, which moves no value and is
 //     exempt on purpose (see ZERO_VALUE_OPERATIONS);
-//   * `wallet/feeBump.js` and `wallet/channelAccountPool.js` are operational
-//     plumbing;
-//   * `wallet/hotWalletPool.js` (#1081) is NOT exempt. Its
-//     `_executeMultisigTransfer` builds a native payment of arbitrary size
-//     from cold storage, signs it with raw in-process keypairs up to its own
-//     `coldStorageThreshold`, and submits directly. It applies its own notion
-//     of a quorum, unrelated to this policy, and this gate cannot refuse it.
+//   * `wallet/feeBump.js` wraps an already-authorized inner transaction. Its
+//     one caller is `trustlines.js`, wrapping a ChangeTrust;
+//   * `wallet/channelAccountPool.js` is operational plumbing and is dormant —
+//     nothing requires it;
+//   * `wallet/hotWalletPool.js` (#1081) is NOT exempt, and is the one real
+//     gap. Its `_executeMultisigTransfer` builds a native payment of
+//     arbitrary size from cold storage, signs it with raw in-process keypairs
+//     up to its own `coldStorageThreshold`, and submits directly, applying a
+//     quorum notion unrelated to this policy. It is dormant today — nothing
+//     requires it — so it is a LATENT bypass, not a live one. Wiring it in
+//     without gating it would make the policy incomplete.
 //
-// Bringing that treasury path under one policy — or deciding that it is
+// `multisig.sendpath.test.js` asserts exactly that shape — one sanctioned
+// `feeBump` caller, the other two dormant — so widening the ungated surface
+// fails a test rather than passing silently.
+//
+// Bringing the treasury path under one policy — or deciding that it is
 // intentionally governed separately — is a maintainer decision, not something
 // this module may assume. Do not restate the claim that all value-moving
 // submissions are gated until it is true.
