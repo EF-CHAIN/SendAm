@@ -128,6 +128,13 @@ const anonymizeUser = async (db, options = {}) => {
     return { status: 'not_found', user: null };
   }
 
+  if (user.legalHold || legalHold) {
+    const error = new Error('User is under legal hold; erasure and anonymization are blocked.');
+    error.statusCode = 409;
+    error.code = 'LEGAL_HOLD_ACTIVE';
+    throw error;
+  }
+
   const anonymizedPhone = `deleted-user-${userId}`;
 
   await safeDb.wallet.updateMany({
