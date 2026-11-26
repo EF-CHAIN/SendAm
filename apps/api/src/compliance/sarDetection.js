@@ -298,7 +298,7 @@ const generateSarDraft = async ({
  */
 const evaluateAndReportSar = async ({
   userId,
-  transaction,
+  transaction: _transaction,
   now = new Date(),
   prismaClient = prisma,
 } = {}) => {

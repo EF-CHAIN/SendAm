@@ -382,9 +382,12 @@ test('full happy path: webhook POST -> parse -> confirmation -> PIN -> receipt',
     const res2 = await postWebhook(buildWebhookPayload('msg_002', phone, '1234'));
     assert.equal(res2.status, 200);
 
-    await waitFor(() => sentMessages.length >= 2);
-    assert.ok(sentMessages[1].body.includes('Payment success'), 'receipt sent');
-    assert.ok(sentMessages[1].body.includes('tx_1'), 'transaction id in receipt');
+    // The masked-PIN security notice (#977) is sent before the receipt.
+    await waitFor(() => sentMessages.some((m) => m.body.includes('Payment success')));
+    assert.ok(sentMessages[1].body.includes('PIN entered: ****'), 'masked PIN notice sent');
+    const receipt = sentMessages.find((m) => m.body.includes('Payment success'));
+    assert.ok(receipt, 'receipt sent');
+    assert.ok(receipt.body.includes('tx_1'), 'transaction id in receipt');
     assert.equal(paymentResults.length, 1, 'payment executed exactly once');
     assert.equal(
       complianceEnforcementCalls,

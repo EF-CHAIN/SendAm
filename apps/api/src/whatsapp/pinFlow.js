@@ -119,7 +119,7 @@ async function processPinVerification({
       };
     }
   } else {
-    pinOk = verifyPin(rawPin, userWithPin?.pinHash);
+    pinOk = await verifyPin(rawPin, userWithPin?.pinHash);
   }
 
   return { ok: pinOk, locked: false };

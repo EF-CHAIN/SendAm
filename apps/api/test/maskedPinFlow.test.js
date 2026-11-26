@@ -1,13 +1,11 @@
 const { test, describe } = require('node:test');
 const assert = require('node:assert/strict');
-const crypto = require('crypto');
 const {
   maskPin,
   buildPinSecurityGuidance,
   generateEphemeralPinToken,
   verifyEphemeralPinToken,
   getWebPinEntryUrl,
-  sendMaskedPinFeedback,
   processPinVerification,
 } = require('../src/whatsapp/pinFlow');
 const { hashPin } = require('../src/compliance/pin.service');
@@ -56,7 +54,7 @@ describe('Masked WhatsApp PIN Flow (#977)', () => {
 
     // Tampered token
     const token = generateEphemeralPinToken({ userId: 'user_123', stateId: 'ps_1' });
-    const [payload, sig] = token.split('.');
+    const [payload] = token.split('.');
     const tampered = `${payload}.invalidSignature123`;
     assert.equal(verifyEphemeralPinToken(tampered), null);
     assert.equal(verifyEphemeralPinToken('not-a-token'), null);

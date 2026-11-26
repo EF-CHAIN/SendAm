@@ -134,7 +134,9 @@ async function transcribeVoiceWithFallback(audioBuffer, options = {}) {
       if (typeof onFallback === 'function') {
         try {
           onFallback(primaryError);
-        } catch (_) {}
+        } catch (_) {
+          // onFallback is a best-effort observer; its failure must not block the fallback.
+        }
       }
 
       const fallbackResult = await fallbackTranscribe(audioBuffer, options);

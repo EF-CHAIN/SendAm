@@ -6,11 +6,8 @@ const crypto = require('crypto');
 
 const {
   PasskeyAdapter,
-  PasskeyError,
-  ChallengeExpiredError,
   InvalidSignatureError,
   UserVerificationRequiredError,
-  normalizeSecp256r1PublicKey,
   toBase64Url,
 } = require('../src/wallet/passkeyAdapter');
 

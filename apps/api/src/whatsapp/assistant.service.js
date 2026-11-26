@@ -3,7 +3,6 @@ const crypto = require('crypto');
 const walletService = require('../wallet/wallet.service');
 const { validateAddress } = require('../wallet/stellar.adapter');
 const { executePayment } = require('../payment/payment.orchestrator');
-const { verifyPin, verifyPinAttempt } = require('../compliance/pin.service');
 const { sendTextMessage } = require('../services/whatsapp.service');
 const { claimPendingSend } = require('./pendingClaim');
 const { createRecipientResolver } = require('./recipientResolver');
@@ -31,14 +30,12 @@ const {
   generateEphemeralPinToken,
   getWebPinEntryUrl,
 } = require('./pinFlow');
+const {
   detectAmbiguousIntent,
   sendDisambiguationPrompt,
   handleDisambiguationReply,
 } = require('./disambiguation');
-  buildPaymentConfirmationButtons,
-  buildCorridorSelectionMenu,
-  buildListMenu,
-} = require('./interactivePayloads');
+const { buildCorridorSelectionMenu } = require('./interactivePayloads');
 const config = require('../config/env');
 const logger = require('../utils/logger');
 const conversationFsm = require('./conversationFsm');
@@ -309,11 +306,12 @@ const requestConfirmation = async ({ phoneNumber, user, intent, notify, selected
 };
 
 const handlePendingPin = async ({ phoneNumber, user, text, notify, db = defaultPrisma }) => {
-  if (!user.pendingSend?.destination &&
-      user.pendingSend?.step !== 'AWAITING_CONTACT' &&
-      user.pendingSend?.step !== 'AWAITING_DISAMBIGUATION' &&
-      user.pendingSend?.step !== 'AWAITING_RECIPIENT') return false;
-  if (!user.pendingSend?.destination && user.pendingSend?.step !== 'AWAITING_CONTACT') {
+  // Steps that legitimately have no destination yet (#980 disambiguation and
+  // recipient prompts, contact pick). Anything else without a destination
+  // falls back to the FSM session (#975).
+  const explicitStep = ['AWAITING_CONTACT', 'AWAITING_DISAMBIGUATION', 'AWAITING_RECIPIENT']
+    .includes(user.pendingSend?.step);
+  if (!user.pendingSend?.destination && !explicitStep) {
     const fsmSession = await conversationFsm.getSession(phoneNumber).catch(() => null);
     if (fsmSession && fsmSession.context && fsmSession.context.destination) {
       user.pendingSend = fsmSession.context;
@@ -560,6 +558,8 @@ const processMessage = async (phoneNumber, whatsappName, text, options = {}) => 
   if (await handleRegionalKycPrompt({ phoneNumber, user, text, notify, db })) {
     await resetUnrecognizedCount({ prisma: db, user });
     return;
+  }
+
   // Conversational FSM multi-step flow or expired resume prompt (#975)
   const fsmSession = await conversationFsm.getSession(phoneNumber).catch(() => null);
   if (fsmSession && fsmSession.state !== conversationFsm.STATES.IDLE) {

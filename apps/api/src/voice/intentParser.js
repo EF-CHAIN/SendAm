@@ -234,7 +234,7 @@ function parseRegionalIntent(input) {
     }
   }
 
-  const hausaAikaMatch = normalized.match(/^(?:aika|tura)\s+(.+?)\s+(?:ga|wa|ma)\s+([a-zA-Z0-9_\-]+)$/i);
+  const hausaAikaMatch = normalized.match(/^(?:aika|tura)\s+(.+?)\s+(?:ga|wa|ma)\s+([a-zA-Z0-9_-]+)$/i);
   if (hausaAikaMatch) {
     const amountTokens = hausaAikaMatch[1].trim().split(/\s+/);
     const recipient = hausaAikaMatch[2].trim();
@@ -253,7 +253,7 @@ function parseRegionalIntent(input) {
 
   // Pattern B: Yoruba patterns
   // "Fi egberun meji ranse si Tayo", "Fi 2k naira ranse si Bola", "Gbe 5000 naira fun Ade", "San egberun marun fun Femi"
-  const yorubaFiMatch = normalized.match(/^fi\s+(.+?)\s+ranse\s+si\s+([a-zA-Z0-9_\-]+)$/i);
+  const yorubaFiMatch = normalized.match(/^fi\s+(.+?)\s+ranse\s+si\s+([a-zA-Z0-9_-]+)$/i);
   if (yorubaFiMatch) {
     const amountStr = yorubaFiMatch[1].replace(/\bnaira\b/gi, '').trim();
     const recipient = yorubaFiMatch[2].trim();
@@ -270,7 +270,7 @@ function parseRegionalIntent(input) {
     }
   }
 
-  const yorubaGbeMatch = normalized.match(/^(?:gbe|san|fi)\s+(.+?)\s+fun\s+([a-zA-Z0-9_\-]+)$/i);
+  const yorubaGbeMatch = normalized.match(/^(?:gbe|san|fi)\s+(.+?)\s+fun\s+([a-zA-Z0-9_-]+)$/i);
   if (yorubaGbeMatch) {
     const amountStr = yorubaGbeMatch[1].replace(/\bnaira\b/gi, '').trim();
     const recipient = yorubaGbeMatch[2].trim();
@@ -289,7 +289,7 @@ function parseRegionalIntent(input) {
 
   // Pattern C: Swahili patterns
   // "Tuma elfu mbili kwa Juma", "Lipa elfu moja shillingi kwa Mwangi", "Hamisha mia tano kwa Asha"
-  const swahiliMatch = normalized.match(/^(?:tuma|lipa|hamisha|peana)\s+(.+?)\s+kwa\s+([a-zA-Z0-9_\-]+)$/i);
+  const swahiliMatch = normalized.match(/^(?:tuma|lipa|hamisha|peana)\s+(.+?)\s+kwa\s+([a-zA-Z0-9_-]+)$/i);
   if (swahiliMatch) {
     let amountStr = swahiliMatch[1].trim();
     let currency = 'KES';
@@ -352,7 +352,7 @@ function parseRegionalIntent(input) {
   }
 
   // Pattern E: Inverted format (e.g. "Pay Kofi 50 cedis", "Dash Emeka 2k", "Send Amina 5000 naira")
-  const invertedRegex = /^(?:send|transfer|pay|dash|give)\s+([a-zA-Z0-9_\-]+)\s+(.+)$/i;
+  const invertedRegex = /^(?:send|transfer|pay|dash|give)\s+([a-zA-Z0-9_-]+)\s+(.+)$/i;
   const invMatch = normalized.match(invertedRegex);
   if (invMatch) {
     const candidateRecipient = invMatch[1].trim();

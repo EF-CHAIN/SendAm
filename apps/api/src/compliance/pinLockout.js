@@ -12,7 +12,6 @@
  */
 
 const logger = require('../utils/logger');
-const config = require('../config/env');
 
 const TIER_1_ATTEMPTS = 3;
 const TIER_1_LOCKOUT_MS = 5 * 60 * 1000; // 5 minutes

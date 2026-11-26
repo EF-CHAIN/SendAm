@@ -248,7 +248,9 @@ const resolveFeeRule = ({ rules = [], sourceCurrency, targetCurrency, asset } = 
   ));
 
   const winner = candidates[0];
-  const { __specificity, __order, ...rule } = winner;
+  const rule = { ...winner };
+  delete rule.__specificity;
+  delete rule.__order;
   return rule;
 };
 

@@ -276,7 +276,7 @@ test('automated TTL retention jobs exclude records of users under legalHold', as
     data: { id: 'notif-free', userId: 'u-free-purge', recipient: '+2348002', body: 'Regular notice', createdAt: oldDate, status: 'delivered' },
   });
 
-  const sweep = await runRetentionSweep({
+  await runRetentionSweep({
     db: mockPrisma,
     models: ['Notification'],
     now: new Date(),

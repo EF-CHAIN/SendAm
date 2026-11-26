@@ -81,6 +81,12 @@ injectMock('pricing/pricing.service',       () => ({
   QUOTE_STATUS: mocks.QUOTE_STATUS,
 }));
 injectMock('wallet/wallet.service',          () => ({ createOrGetWallet: mocks.createOrGetWallet, submitPayment: mocks.submitPayment }));
+// Recipient trustline setup (#962) has its own suite (trustlines.orchestrator.test.js);
+// here the recipient is treated as external so it is a no-op.
+injectMock('wallet/trustlines',             () => ({
+  ensureTrustlineForIncomingTransfer: async () => ({ required: true, custodied: false, submitted: false }),
+  createChangeTrustSubmitter: () => ({}),
+}));
 injectMock('common/audit.service',           () => ({ writeAuditLog: mocks.writeAuditLog }));
 injectMock('payment/markFailed',             () => ({ markTransactionFailed: mocks.markTransactionFailed }));
 injectMock('common/records',                 () => ({ withIdAlias: mocks.withIdAlias }));
