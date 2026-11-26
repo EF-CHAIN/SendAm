@@ -314,6 +314,75 @@ const sendTemplateMessage = async (to, templateName, languageCode = 'en', compon
   }
 };
 
+const sendInteractiveMessage = async (to, interactivePayload, options = {}) => {
+  const {
+    messageTransport = config.messageTransport,
+    prisma: prismaClient = null,
+    axiosImpl = axios,
+    notification = null,
+  } = options;
+
+  const db = notification ? (prismaClient || prisma || require('../common/prisma')) : null;
+
+  try {
+    if (messageTransport === 'sim') {
+      const simDb = prismaClient || prisma || require('../common/prisma');
+      const simText = `[Interactive: ${interactivePayload?.type || 'unknown'}]`;
+      const result = await simDb.simMessage.create({
+        data: {
+          phoneNumber: to,
+          direction: 'out',
+          text: simText,
+        },
+      });
+      if (db && notification) {
+        await recordNotificationCreated(db, notification, { to, body: simText, providerMessageId: null, status: 'sent' });
+      }
+      return { outcome: 'accepted', data: result };
+    }
+
+    const url = `https://graph.facebook.com/v19.0/${config.whatsapp.phoneNumberId}/messages`;
+    const payload = {
+      messaging_product: 'whatsapp',
+      recipient_type: 'individual',
+      to: to.replace(/^\+/, ''),
+      type: 'interactive',
+      interactive: interactivePayload,
+    };
+
+    const response = await axiosImpl.post(url, payload, {
+      headers: {
+        Authorization: `Bearer ${config.whatsapp.token}`,
+        'Content-Type': 'application/json',
+      },
+    });
+
+    const providerMessageId = response.data?.messages?.[0]?.id || null;
+    if (db && notification) {
+      await recordNotificationCreated(db, notification, {
+        to,
+        body: `[Interactive: ${interactivePayload?.type || 'unknown'}]`,
+        providerMessageId,
+        status: providerMessageId ? 'sent' : 'queued',
+      });
+    }
+
+    return { outcome: 'accepted', providerMessageId, data: response.data };
+  } catch (error) {
+    logger.error('WhatsApp Interactive API Error:', error.response?.data || error.message);
+    if (db && notification) {
+      await recordNotificationCreated(db, notification, {
+        to,
+        body: `[Interactive: ${interactivePayload?.type || 'unknown'}]`,
+        providerMessageId: null,
+        status: 'failed',
+        error: String(error.response?.data?.error?.message || error.message || 'interactive send failed').slice(0, 500),
+      });
+    }
+    return { outcome: 'permanent_failure', error };
+  }
+};
+
 /**
  * @typedef {'accepted'|'transient_failure'|'permanent_failure'|'unknown'} SendOutcome
  * @typedef {{outcome: SendOutcome, correlationId: string, attempts: number,
@@ -742,6 +811,7 @@ const deleteUserData = async (phoneNumber) => {
 module.exports = {
   sendTextMessage,
   sendTemplateMessage,
+  sendInteractiveMessage,
   retryOutboundNotification,
   isRetryableMetaFailure,
   isWithinConversationWindow,

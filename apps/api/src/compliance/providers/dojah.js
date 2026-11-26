@@ -17,6 +17,8 @@ const { outboundHeaders } = require('../../observability/context');
 const LOOKUP_PATHS = Object.freeze({
   BVN: { path: '/api/v1/kyc/bvn/full', param: 'bvn' },
   NIN: { path: '/api/v1/kyc/nin', param: 'nin' },
+  GHANA_CARD: { path: '/api/v1/gh/kyc', param: 'id', defaultParams: { id_type: 'ghana_card' } },
+  KENYA_ID: { path: '/api/v1/ke/kyc', param: 'id', defaultParams: { id_type: 'national_id' } },
 });
 
 class IdentityNotFoundError extends Error {
@@ -43,10 +45,10 @@ const pick = (obj, ...keys) => {
 
 const normalizeIdentity = (entity) => ({
   firstName: pick(entity, 'first_name', 'firstname', 'firstName'),
-  middleName: pick(entity, 'middle_name', 'middlename', 'middleName'),
+  middleName: pick(entity, 'middle_name', 'middlename', 'middleName', 'other_names', 'othernames'),
   lastName: pick(entity, 'last_name', 'lastname', 'surname', 'lastName'),
   dob: pick(entity, 'date_of_birth', 'dob', 'birthdate', 'birth_date'),
-  reference: pick(entity, 'reference', 'reference_id', 'request_id'),
+  reference: pick(entity, 'reference', 'reference_id', 'request_id', 'id'),
 });
 
 /**
@@ -68,8 +70,12 @@ const lookupIdentity = async ({ idType, idNumber }, { httpGet } = {}) => {
   const get = httpGet || ((u, opts) => axios.get(u, opts));
   let response;
   try {
+    const params = { [lookup.param]: idNumber };
+    if (lookup.defaultParams) {
+      Object.assign(params, lookup.defaultParams);
+    }
     response = await get(url, {
-      params: { [lookup.param]: idNumber },
+      params,
       timeout: dojah.timeoutMs,
       headers: { AppId: dojah.appId, Authorization: dojah.secretKey, ...outboundHeaders() },
     });

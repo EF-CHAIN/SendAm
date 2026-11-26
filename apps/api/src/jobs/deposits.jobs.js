@@ -32,6 +32,7 @@ const { getExchangeRate } = require('../pricing/pricing.service');
 const logger = require('../utils/logger');
 const config = require('../config/env');
 const assetIdentity = require('../wallet/assetIdentity');
+const muxedAccounts = require('../wallet/muxedAccounts');
 const { setGauge } = require('../observability/metrics');
 
 // ---------------------------------------------------------------------------
@@ -294,6 +295,63 @@ const pollWallet = async (wallet, deps) => {
 
       let shouldNotify = true;
 
+      // ── Credit the user this money actually belongs to (#958) ──────────
+      //
+      // A muxed deposit arrives on the shared base account, so `to` matches
+      // this wallet and the filter above lets it through — but the money
+      // belongs to the sub-account's owner, who is usually NOT this wallet's
+      // owner. Resolve ownership and credit it exactly once (the UNIQUE
+      // DepositCredit.stellarPaymentId is what makes a replayed cursor or a
+      // second replica harmless).
+      //
+      // Crediting is best-effort with respect to the loop: a failure here is
+      // logged and the notification/cursor work still proceeds, because rule 4
+      // of this file is that one failing wallet never stalls the sweep.
+      let creditedUserId = userId || null;
+      if (prismaClient.depositCredit) {
+        try {
+          const credit = await muxedAccounts.creditDeposit({
+            record,
+            wallet: {
+              id, userId, publicKey, phoneNumber, network: wallet.network,
+            },
+            prismaClient,
+            network: config.stellar.network,
+          });
+
+          if (credit.credited) {
+            creditedUserId = credit.userId;
+          } else if (credit.duplicate) {
+            // Already credited on an earlier sweep: do not alert again.
+            shouldNotify = false;
+          } else {
+            // Not credited (unknown sub-account, untrusted asset, wrong
+            // destination...). The reason is already logged by creditDeposit.
+            logger.warn(
+              `Deposit poller: payment ${stellarPaymentId} not credited `
+              + `(${credit.reason}) for wallet ${publicKey}.`,
+            );
+            if (credit.reason === muxedAccounts.DECLINE_REASONS.UNKNOWN_SUB_ACCOUNT) {
+              // Nobody owns this yet — alerting the base wallet's owner would
+              // tell the wrong person they were paid.
+              shouldNotify = false;
+            }
+          }
+        } catch (creditErr) {
+          logger.error(
+            `Deposit poller: crediting failed for payment ${stellarPaymentId} `
+            + `on wallet ${publicKey}: ${creditErr.message}`,
+          );
+        }
+      }
+
+      // Send the alert to the resolved owner, not blindly to the base wallet.
+      const notifyTarget = await muxedAccounts.resolveNotificationTarget({
+        userId: creditedUserId,
+        wallet: { userId, phoneNumber },
+        prismaClient,
+      });
+
       // Atomically write cursor AND outbox intent BEFORE sending.
       if (prismaClient.depositOutboxRecord) {
         await prismaClient.$transaction(async (tx) => {
@@ -303,8 +361,8 @@ const pollWallet = async (wallet, deps) => {
             create: {
               stellarPaymentId,
               walletId: id,
-              userId: userId || null,
-              phoneNumber,
+              userId: creditedUserId,
+              phoneNumber: notifyTarget || phoneNumber,
               amount: String(amount),
               asset,
               assetIssuer: identity.issuer,
@@ -335,9 +393,9 @@ const pollWallet = async (wallet, deps) => {
 
       if (notify && shouldNotify) {
         try {
-          const res = await notify(phoneNumber, message, {
+          const res = await notify(notifyTarget || phoneNumber, message, {
             notification: {
-              userId: userId || null,
+              userId: creditedUserId,
               type: identity.trusted ? 'deposit_received' : 'unverified_asset_received',
               referenceType: 'wallet',
               referenceId: id,
