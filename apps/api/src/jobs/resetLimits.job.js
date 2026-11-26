@@ -15,7 +15,6 @@ const logger = require('../utils/logger');
 const defaultPrisma = () => require('../common/prisma');
 
 const PAGE_SIZE = 200;
-const BATCH_SIZE = 100;
 
 /**
  * Calculate the sliding 24-hour window start.
@@ -90,7 +89,7 @@ const fetchTransactionsInWindow = async ({
  * @returns {Promise<Object>} Summary of the reset operation
  */
 const resetDailyLimits = async ({
-  prisma,
+  prisma = defaultPrisma(),
   now,
   userIds,
 } = {}) => {
@@ -138,7 +137,6 @@ const resetDailyLimits = async ({
         results.totalTransactionsReviewed += recentTransactions.length;
 
         // Calculate the daily total from these sliding-window transactions
-        const zeroAmount = '0.00'; // Will be handled by the compliance service logic
         const dailyTotal = recentTransactions
           .reduce((sum, tx) => {
             // Add fiatAmount if available, otherwise use amount converted to reference currency
@@ -240,5 +238,4 @@ module.exports = {
   fetchTransactionsInWindow,
   resetDailyLimits,
   runResetLimitsJob,
-  resetDailyLimits,
 };

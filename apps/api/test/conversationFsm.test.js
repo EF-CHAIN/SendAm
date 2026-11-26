@@ -11,7 +11,6 @@ const {
   SESSION_TTL_SECONDS,
   saveSession,
   getSession,
-  clearSession,
   transition,
   resumeSession,
   getResumePrompt,

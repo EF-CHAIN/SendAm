@@ -10,11 +10,6 @@ delete process.env.PIN_LOCKOUT_TIER1_MS;
 delete process.env.PIN_LOCKOUT_TIER2_MS;
 
 const {
-  TIER_1_ATTEMPTS,
-  TIER_1_LOCKOUT_MS,
-  TIER_2_ATTEMPTS,
-  TIER_2_LOCKOUT_MS,
-  TIER_3_ATTEMPTS,
   calculateLockout,
   checkPinLockStatus,
   sendSecurityAlert,

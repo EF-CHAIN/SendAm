@@ -74,7 +74,7 @@ const resolveRecoverySignerPublicKey = (providedKey) => {
  * Executes on-chain signer rotation via Stellar setOptions operation.
  */
 const setEmergencySigners = async ({
-  publicKey,
+  publicKey: _publicKey,
   secretKey,
   recoverySignerPublicKey,
   server = defaultServer,

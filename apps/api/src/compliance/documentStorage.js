@@ -22,7 +22,7 @@
  */
 
 const crypto = require('crypto');
-const { encrypt: encryptEnvelope, decrypt: decryptEnvelope, isEnvelopeCiphertext, parseEnvelopeCiphertext } = require('../services/crypto.service');
+const { encrypt: encryptEnvelope, decrypt: decryptEnvelope, parseEnvelopeCiphertext } = require('../services/crypto.service');
 const config = require('../config/env');
 const logger = require('../utils/logger');
 
@@ -106,8 +106,6 @@ const encryptAndUpload = async (imageBytes, { bucket, key, kmsProvider, keyVersi
     // The format will be: version:iv:authTag:encryptedData
     // But we also need to store the encrypted DEK (from KMS) alongside it.
     // Let's use the envelope format: env:v1:provider:keyVersion:keyId:iv:authTag:data
-    const encryptedDataSerialized = `${version}:${iv.toString('hex')}:${authTag.toString('hex')}:${encryptedBytes.toString('hex')}`;
-
     // Step 5: Return all metadata needed for S3 upload and DB storage
     const result = {
       // S3 will store only the encrypted bytes (base64-encoded)
@@ -115,7 +113,7 @@ const encryptAndUpload = async (imageBytes, { bucket, key, kmsProvider, keyVersi
       s3Bucket: bucket,
 
       // Encrypted data in envelope format for DB storage
-      encryptedData: `env:v1:${config.encryptionKey ? 'local' : 'kms'}:${version}:${Buffer.from(config.encryptionKey || '', 'hex').toString('base64url')}:${iv.toString('hex')}:${authTag.toString('hex')}:${encryptedBytes.toString('hex')}`,
+      encryptedData: `env:v1:${config.encryptionKey ? 'local' : 'kms'}:${version}:${Buffer.from(String(encryptedDEKResult.keyId || ''), 'utf8').toString('base64url')}:${iv.toString('hex')}:${authTag.toString('hex')}:${encryptedBytes.toString('hex')}`,
 
       // Components for decryption
       encryptedDataKey: encryptedDEKResult.encryptedDataKey,

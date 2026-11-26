@@ -1,7 +1,6 @@
 'use strict';
 
 const crypto = require('crypto');
-const { StellarSdk } = require('../config/stellar');
 const { isContractStrkey } = require('../config/soroban');
 const logger = require('../utils/logger');
 

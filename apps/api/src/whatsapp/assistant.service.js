@@ -3,7 +3,6 @@ const crypto = require('crypto');
 const walletService = require('../wallet/wallet.service');
 const { validateAddress } = require('../wallet/stellar.adapter');
 const { executePayment } = require('../payment/payment.orchestrator');
-const { verifyPin, verifyPinAttempt } = require('../compliance/pin.service');
 const { sendTextMessage } = require('../services/whatsapp.service');
 const { claimPendingSend } = require('./pendingClaim');
 const { createRecipientResolver } = require('./recipientResolver');
@@ -31,14 +30,12 @@ const {
   generateEphemeralPinToken,
   getWebPinEntryUrl,
 } = require('./pinFlow');
+const {
   detectAmbiguousIntent,
   sendDisambiguationPrompt,
   handleDisambiguationReply,
 } = require('./disambiguation');
-  buildPaymentConfirmationButtons,
-  buildCorridorSelectionMenu,
-  buildListMenu,
-} = require('./interactivePayloads');
+const { buildCorridorSelectionMenu } = require('./interactivePayloads');
 const config = require('../config/env');
 const logger = require('../utils/logger');
 const conversationFsm = require('./conversationFsm');
@@ -560,6 +557,8 @@ const processMessage = async (phoneNumber, whatsappName, text, options = {}) => 
   if (await handleRegionalKycPrompt({ phoneNumber, user, text, notify, db })) {
     await resetUnrecognizedCount({ prisma: db, user });
     return;
+  }
+
   // Conversational FSM multi-step flow or expired resume prompt (#975)
   const fsmSession = await conversationFsm.getSession(phoneNumber).catch(() => null);
   if (fsmSession && fsmSession.state !== conversationFsm.STATES.IDLE) {

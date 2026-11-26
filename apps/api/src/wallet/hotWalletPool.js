@@ -3,7 +3,6 @@
 const StellarSdk = require('@stellar/stellar-sdk');
 const config = require('../config/env');
 const logger = require('../utils/logger');
-const { add, subtract, compare, assertValidAmount } = require('../utils/money');
 
 const DEFAULT_POOL_SIZE = 3;
 const DEFAULT_MAX_BALANCE_XLM = 500.0; // Hard cap on hot wallet balance

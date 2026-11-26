@@ -6,12 +6,7 @@ const StellarSdk = require('@stellar/stellar-sdk');
 
 const {
   HotWalletPool,
-  HotWalletPoolError,
-  LowLiquidityAlertError,
   BalanceCapExceededError,
-  ReplenishmentError,
-  DEFAULT_MAX_BALANCE_XLM,
-  DEFAULT_MIN_BALANCE_XLM,
 } = require('../src/wallet/hotWalletPool');
 
 const NETWORK_PASSPHRASE = StellarSdk.Networks.TESTNET;

@@ -1239,6 +1239,8 @@ model SarReport {
   @@index([userId, createdAt])
   @@index([status])
   @@index([detectionRule])
+}
+
 /// A one-time authorization to export a wallet's recovery material (#960).
 ///
 /// Holds NO secret material: only the HASH of the out-of-band challenge code,

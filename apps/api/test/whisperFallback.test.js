@@ -1,6 +1,5 @@
-const { test, describe, beforeEach, afterEach } = require('node:test');
+const { test, describe, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
-const axios = require('axios');
 const {
   isFallbackEligibleError,
   transcribeWithWhisper,
@@ -33,7 +32,7 @@ describe('Whisper Fallback Service (#972)', () => {
   });
 
   test('transcribeWithWhisper uses mock implementation when provided', async () => {
-    setWhisperImpl(async (audio, options) => {
+    setWhisperImpl(async (audio, _options) => {
       assert.equal(audio, dummyAudio);
       return 'Send 50 XLM to Chidi';
     });
@@ -66,7 +65,7 @@ describe('Whisper Fallback Service (#972)', () => {
       throw err;
     };
 
-    const fallbackMock = async (audio) => {
+    const fallbackMock = async (_audio) => {
       fallbackCalled = true;
       return 'Send 100 USDC to Amina';
     };

@@ -169,7 +169,6 @@ const {
   emergencyFreezeWallet,
   setEmergencySigners,
   resolveRecoverySignerPublicKey,
-  cancelPendingTransactions,
   emergencyFreezeHandler,
 } = require('../src/wallet/emergencyFreeze');
 
