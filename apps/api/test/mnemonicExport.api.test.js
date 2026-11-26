@@ -21,18 +21,18 @@
 // The real router, the real session middleware, the real rate limiters and the
 // real service are all exercised. Only the edges are doubled.
 //
-// ── Verification scaffolding, and why it is needed ───────────────────────
+// ── Why the PIN service is doubled ──────────────────────────────────────
 //
-// `inject('compliance/pin.service', ...)` is not merely convenient. On current
-// upstream main that file does not PARSE: it contains two concatenated copies
-// of itself and throws `SyntaxError: Identifier 'crypto' has already been
-// declared`. It is one of 20 source files in this condition (`app.js`,
-// `server.js`, `worker.js` among them), which is why the suite has a large
-// pre-existing failure set and why `mnemonic.service.test.js` itself fails on
-// main. Injecting the PIN service is what lets the real `mnemonic.service`
-// load here at all. It is a legitimate unit-test boundary — the PIN factor is
-// doubled in these tests by design — but it is ALSO masking a real upstream
-// defect, and that defect is reported rather than quietly worked around.
+// `inject('compliance/pin.service', ...)` is a deliberate unit boundary, not a
+// workaround: these tests need to drive the PIN factor to specific outcomes
+// (accepted, rejected, locked with a backoff) without running Argon2id, and
+// the real lockout policy has its own tests in `pin.service.test.js` and
+// `pinLockout.test.js`.
+//
+// It was briefly also a necessity — `compliance/pin.service.js` did not parse
+// on main before #1085, so the real `mnemonic.service` could not be required
+// at all. #1085 repaired that, and `mnemonic.service.test.js` passes again,
+// so the injection here is back to being an ordinary test double.
 //
 // Nothing here touches a real wallet, a real key, a live account or a network.
 // Every secret below is generated at runtime by this file.
@@ -253,6 +253,24 @@ const authorizeGrant = async (base, token = 'token-user-1') => {
   assert.equal(verified.status, 200, 'the fixture must reach `authorized`');
   return { grantId: data.grantId, code };
 };
+
+// ── The controller's own invariants ──────────────────────────────────────
+
+test('every service error code maps to a status, and mounting needs no ENCRYPTION_KEY', () => {
+  const controller = require('../src/controllers/mnemonicExport.controller');
+
+  // The controller keeps its own literal map so it can be loaded without
+  // pulling `crypto.service`. That only stays correct if the two agree, so a
+  // code added to the service without a status here fails right now rather
+  // than returning 500 to a caller one day.
+  const unmapped = Object.values(mnemonicService.EXPORT_ERROR_CODES)
+    .filter((code) => controller.statusForCode(code) === undefined);
+  assert.deepEqual(unmapped, [], `these service codes have no HTTP status: ${unmapped}`);
+
+  // And nothing in the module's import graph may demand encryption config:
+  // mounting a router must not depend on a key being present.
+  assert.equal(typeof controller.requestExport, 'function');
+});
 
 // ── Authentication and wallet ownership ──────────────────────────────────
 

@@ -44,12 +44,22 @@
 
 const prisma = require('../common/prisma');
 const logger = require('../utils/logger');
-const mnemonicService = require('../wallet/mnemonic.service');
 const whatsapp = require('../services/whatsapp.service');
 const { writeAuditLog } = require('../common/audit.service');
 const { sendSuccess, sendError } = require('../utils/response');
 
-const { EXPORT_ERROR_CODES } = mnemonicService;
+// `mnemonic.service` pulls in `crypto.service`, which refuses to load without
+// a valid ENCRYPTION_KEY. Requiring it at module scope would make MOUNTING
+// the wallet router depend on encryption config being present — which broke
+// two unrelated route tests that mount the router without it, and would make
+// a misconfigured deployment fail at import rather than at the one endpoint
+// that actually needs a key. Loaded on first use instead; `require` caches,
+// so this costs one property lookup per call.
+let cachedService = null;
+const service = () => {
+  if (!cachedService) cachedService = require('../wallet/mnemonic.service');
+  return cachedService;
+};
 
 /** The channel the challenge is actually delivered over. Not SMS; see above. */
 const CHALLENGE_CHANNEL = 'whatsapp';
@@ -64,18 +74,24 @@ const CHALLENGE_CHANNEL = 'whatsapp';
  * state — not the request — is what makes a retry pointless.
  */
 const STATUS_BY_CODE = Object.freeze({
-  [EXPORT_ERROR_CODES.WALLET_NOT_FOUND]: 404,
-  [EXPORT_ERROR_CODES.GRANT_NOT_FOUND]: 404,
-  [EXPORT_ERROR_CODES.PIN_REJECTED]: 401,
-  [EXPORT_ERROR_CODES.CHALLENGE_REJECTED]: 401,
-  [EXPORT_ERROR_CODES.NOT_AUTHORIZED]: 403,
-  [EXPORT_ERROR_CODES.GRANT_EXPIRED]: 410,
-  [EXPORT_ERROR_CODES.GRANT_CONSUMED]: 409,
-  [EXPORT_ERROR_CODES.CHALLENGE_ATTEMPTS_EXCEEDED]: 429,
-  [EXPORT_ERROR_CODES.INVALID_MNEMONIC]: 400,
-  [EXPORT_ERROR_CODES.MNEMONIC_MISMATCH]: 400,
-  [EXPORT_ERROR_CODES.INVALID_ACCOUNT_INDEX]: 400,
+  wallet_not_found: 404,
+  grant_not_found: 404,
+  pin_rejected: 401,
+  challenge_rejected: 401,
+  export_not_authorized: 403,
+  grant_expired: 410,
+  grant_consumed: 409,
+  challenge_attempts_exceeded: 429,
+  invalid_mnemonic: 400,
+  mnemonic_mismatch: 400,
+  invalid_account_index: 400,
 });
+
+// The literals above must stay in step with the service's own codes. Asserted
+// rather than trusted: `mnemonicExport.api.test.js` checks every
+// EXPORT_ERROR_CODES value has an entry here, so adding a code to the service
+// without mapping it fails a test instead of silently returning 500.
+const statusForCode = (code) => STATUS_BY_CODE[code];
 
 /**
  * Translate a service error into a response, or hand it on.
@@ -86,7 +102,7 @@ const STATUS_BY_CODE = Object.freeze({
  * server ends up telling a client that a crash was their mistake.
  */
 const respondToExportError = (res, next, error) => {
-  const status = STATUS_BY_CODE[error?.code];
+  const status = statusForCode(error?.code);
   if (!status) return next(error);
 
   const details = { code: error.code };
@@ -157,10 +173,10 @@ const requestExport = async (req, res, next) => {
       db: prisma,
     });
     if (!walletId) return sendError(res, 'Wallet not found for this user.', 404, {
-      code: EXPORT_ERROR_CODES.WALLET_NOT_FOUND,
+      code: service().EXPORT_ERROR_CODES.WALLET_NOT_FOUND,
     });
 
-    const grant = await mnemonicService.requestExport({
+    const grant = await service().requestExport({
       userId,
       walletId,
       prismaClient: prisma,
@@ -174,8 +190,8 @@ const requestExport = async (req, res, next) => {
       challengeExpiresAt: grant.challengeExpiresAt,
       // Named explicitly so no caller has to assume this was an SMS.
       channel: CHALLENGE_CHANNEL,
-      challengeDigits: mnemonicService.CHALLENGE_DIGITS,
-      maxAttempts: mnemonicService.CHALLENGE_MAX_ATTEMPTS,
+      challengeDigits: service().CHALLENGE_DIGITS,
+      maxAttempts: service().CHALLENGE_MAX_ATTEMPTS,
     }, 'Export challenge sent', 201);
   } catch (error) {
     return respondToExportError(res, next, error);
@@ -195,10 +211,10 @@ const verifyExport = async (req, res, next) => {
 
     const owned = await assertOwnedGrant({ grantId, userId, db: prisma });
     if (!owned) return sendError(res, 'Export grant not found.', 404, {
-      code: EXPORT_ERROR_CODES.GRANT_NOT_FOUND,
+      code: service().EXPORT_ERROR_CODES.GRANT_NOT_FOUND,
     });
 
-    const authorized = await mnemonicService.verifyExportChallenge({
+    const authorized = await service().verifyExportChallenge({
       grantId: owned.id,
       code,
       pin,
@@ -230,10 +246,10 @@ const claimExport = async (req, res, next) => {
 
     const owned = await assertOwnedGrant({ grantId, userId, db: prisma });
     if (!owned) return sendError(res, 'Export grant not found.', 404, {
-      code: EXPORT_ERROR_CODES.GRANT_NOT_FOUND,
+      code: service().EXPORT_ERROR_CODES.GRANT_NOT_FOUND,
     });
 
-    const payload = await mnemonicService.consumeExport({
+    const payload = await service().consumeExport({
       grantId: owned.id,
       prismaClient: prisma,
     });
@@ -273,12 +289,12 @@ const revokeExport = async (req, res, next) => {
 
     const owned = await assertOwnedGrant({ grantId, userId, db: prisma });
     if (!owned) return sendError(res, 'Export grant not found.', 404, {
-      code: EXPORT_ERROR_CODES.GRANT_NOT_FOUND,
+      code: service().EXPORT_ERROR_CODES.GRANT_NOT_FOUND,
     });
 
-    if (owned.status === mnemonicService.GRANT_STATUS.CONSUMED) {
+    if (owned.status === service().GRANT_STATUS.CONSUMED) {
       return sendError(res, 'This export has already been used.', 409, {
-        code: EXPORT_ERROR_CODES.GRANT_CONSUMED,
+        code: service().EXPORT_ERROR_CODES.GRANT_CONSUMED,
       });
     }
 
@@ -286,11 +302,11 @@ const revokeExport = async (req, res, next) => {
     // whichever update the database applies first decides the outcome.
     const result = await prisma.mnemonicExportGrant.updateMany({
       where: { id: owned.id, userId, consumedAt: null },
-      data: { status: mnemonicService.GRANT_STATUS.REVOKED },
+      data: { status: service().GRANT_STATUS.REVOKED },
     });
     if (!result || result.count !== 1) {
       return sendError(res, 'This export has already been used.', 409, {
-        code: EXPORT_ERROR_CODES.GRANT_CONSUMED,
+        code: service().EXPORT_ERROR_CODES.GRANT_CONSUMED,
       });
     }
 
@@ -305,7 +321,7 @@ const revokeExport = async (req, res, next) => {
 
     return sendSuccess(res, {
       grantId: owned.id,
-      status: mnemonicService.GRANT_STATUS.REVOKED,
+      status: service().GRANT_STATUS.REVOKED,
     }, 'Export revoked');
   } catch (error) {
     return respondToExportError(res, next, error);
@@ -315,6 +331,7 @@ const revokeExport = async (req, res, next) => {
 module.exports = {
   CHALLENGE_CHANNEL,
   STATUS_BY_CODE,
+  statusForCode,
   deliverChallenge,
   resolveWalletId,
   assertOwnedGrant,
