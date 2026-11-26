@@ -14,6 +14,7 @@ const { captureException } = require('../observability/errors');
 const { canonicalizePhoneNumber } = require('../utils/validators');
 
 const { validateWebhookEnvelope, validateInboundMessage, validateStatusEntry } = require('../whatsapp/webhook.validator');
+const { parseInteractiveInbound } = require('../whatsapp/interactivePayloads');
 
 /** Outcome labels for a single inbound message item within a batch. */
 const OUTCOMES = {
@@ -55,10 +56,9 @@ const processMessage = async ({ message, value }) => {
     return { outcome: OUTCOMES.INVALID };
   }
 
-  const selection = message.interactive?.list_reply?.id;
-  const isContactSelection = message.type === 'interactive' &&
-    message.interactive?.type === 'list_reply' && /^contact:[a-f0-9]{24}:[1-9][0-9]?$/.test(selection || '');
-  if (!['text', 'audio', 'voice'].includes(message.type) && !isContactSelection) {
+  const interactiveReply = parseInteractiveInbound(message);
+  const isInteractiveSupported = Boolean(interactiveReply);
+  if (!['text', 'audio', 'voice'].includes(message.type) && !isInteractiveSupported) {
     return { outcome: OUTCOMES.UNSUPPORTED };
   }
 
@@ -147,15 +147,20 @@ const processMessage = async ({ message, value }) => {
   // by arrival at this process instead of by what the customer actually sent
   // first.
   const providerTimestamp = message.timestamp ? Number(message.timestamp) * 1000 : undefined;
+  const inboundText = interactiveReply
+    ? (interactiveReply.id || interactiveReply.title)
+    : message.text?.body;
+
   try {
     await enqueue('whatsapp-inbound', 'message.received', {
       from,
       whatsappName,
-      text: isContactSelection ? selection : message.text?.body,
+      text: inboundText,
       mediaId: message.audio?.id || message.voice?.id,
       messageType: message.type,
       whatsappMessageId: message.id,
       providerTimestamp,
+      ...(interactiveReply ? { interactive: interactiveReply } : {}),
     }, options);
   } catch (queueError) {
     increment('sendam_webhook_events_total', { status: 'failed' });
