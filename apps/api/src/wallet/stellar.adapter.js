@@ -10,6 +10,12 @@ const { outboundHeaders } = require("../observability/context");
 const assetIdentity = require("./assetIdentity");
 const { nativeBalance, PRECISION } = require("./balanceCalculator");
 const { routePathPayment, pathAmount } = require("../payment/pathPaymentRouter");
+// The high-value quorum gate (#959). Required here — and nowhere earlier in
+// the call chain — because this module is the last place a transaction exists
+// as an in-memory object before it reaches Horizon. Every outbound path
+// (orchestrator payments, refunds, recurring payments, SEP-6/SEP-31 rails)
+// funnels through `submitPayment`.
+const { authorizeForSubmission, configuredCoSigners } = require("./multisig");
 
 const chain = "stellar";
 
@@ -592,13 +598,18 @@ const submitPayment = async ({
       const stellarMemo = buildStellarMemo({ memo, memoType });
 
       let transaction;
+      // Kept past the build block so the quorum gate always sees the SAME
+      // Horizon record the sequence number was taken from — an AccountResponse
+      // carries `signers` and `thresholds`, which is what the policy reads
+      // instead of inventing its own notion of "authorized".
+      let accountRecord;
       let hash;
       let lastError;
       let uncertain = false;
       for (let attempt = 1; attempt <= SEND_MAX_ATTEMPTS; attempt += 1) {
         if (!transaction) {
-          const sourceAccount = await server.loadAccount(sourcePublicKey);
-          const balance = assertNativeReserve(sourceAccount, fee, 0, baseReserve,
+          accountRecord = await server.loadAccount(sourcePublicKey);
+          const balance = assertNativeReserve(accountRecord, fee, 0, baseReserve,
             sourceAsset.isNative() && !pathPayment ? normalizedAmount : undefined);
           let operation;
           if (pathPayment) {
@@ -606,7 +617,7 @@ const submitPayment = async ({
             if (sourceAsset.isNative()) {
               budget = balance.available < budget ? balance.available : budget;
             } else if (sourceAsset.getIssuer() !== sourcePublicKey) {
-              const line = sourceAccount.balances.find((entry) =>
+              const line = accountRecord.balances.find((entry) =>
                 entry.asset_code === sourceAsset.getCode() && entry.asset_issuer === sourceAsset.getIssuer());
               const available = parseUnits(line?.balance ?? "0", PRECISION)
                 - parseUnits(line?.selling_liabilities ?? "0", PRECISION);
@@ -626,10 +637,28 @@ const submitPayment = async ({
             operation = StellarSdk.Operation.payment({ destination, asset: sourceAsset, amount: normalizedAmount });
           }
 
-          const builder = new StellarSdk.TransactionBuilder(sourceAccount, { fee, networkPassphrase }).addOperation(operation);
+          const builder = new StellarSdk.TransactionBuilder(accountRecord, { fee, networkPassphrase }).addOperation(operation);
           if (stellarMemo) builder.addMemo(stellarMemo);
           transaction = builder.setTimeout(30).build();
           await sign(transaction);
+
+          // ── The quorum gate (#959) ──────────────────────────────────────
+          // Runs on EVERY freshly built envelope — including the rebuild after
+          // a tx_bad_seq retry — and always before `submitTransaction` is
+          // reachable. It throws for a high-value transfer that cannot show
+          // two valid signatures; the throw leaves this function through the
+          // outer catch without any submission having been attempted.
+          //
+          // `onEnvelope` is deliberately after the gate: a refused transaction
+          // never reaches the network, so persisting its hash would leave a
+          // txHash pointing at nothing.
+          await authorizeForSubmission({
+            transaction,
+            accountRecord,
+            networkPassphrase,
+            resolveCoSigners: configuredCoSigners,
+          });
+
           hash = safeHash(transaction);
           if (onEnvelope) await onEnvelope(hash);
         }
