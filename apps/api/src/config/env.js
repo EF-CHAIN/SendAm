@@ -215,6 +215,12 @@ module.exports = {
     pathIssuers: {
       NGN: process.env.STELLAR_NGN_ISSUER,
       GHS: process.env.STELLAR_GHS_ISSUER,
+      // NGNT corridor (#962). Deliberately has no built-in default: the only
+      // issuer address we could find comes from a single source and there is
+      // no canonical testnet issuer, so the corridor stays unavailable until
+      // an operator verifies an issuer and sets it. See the note in
+      // config/networkProfiles.js.
+      NGNT: process.env.STELLAR_NGNT_ISSUER,
     },
     explorerBaseUrl: stellarProfile ? stellarProfile.explorerBaseUrl : null,
     supportsFriendbot: stellarProfile ? stellarProfile.supportsFriendbot : false,
@@ -297,6 +303,9 @@ module.exports = {
     provider: process.env.VOICE_PROVIDER || 'deepgram',
     deepgramApiKey: process.env.DEEPGRAM_API_KEY,
     whisperApiKey: process.env.WHISPER_API_KEY || process.env.OPENAI_API_KEY,
+    whisperBaseUrl: process.env.WHISPER_BASE_URL || process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1',
+    whisperModel: process.env.WHISPER_MODEL || 'whisper-1',
+    whisperTimeoutMs: Number(process.env.WHISPER_TIMEOUT_MS || 30000),
     speakerConfidenceThreshold: Number(process.env.VOICE_SPEAKER_CONFIDENCE_THRESHOLD || 0.75),
   },
   // Request body limits and timeout tuning. Limits are route-appropriate;
