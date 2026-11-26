@@ -25,6 +25,7 @@ const {
 const { matchContacts } = require('../services/contactMatcher');
 const { sendMetaMessage } = require('../services/whatsappMedia');
 const { sendVoiceReceipt } = require('../voice/voiceReceipt');
+const { parseRegionalIntent } = require('../voice/intentParser');
 const {
   processPinVerification,
   generateEphemeralPinToken,
@@ -103,7 +104,18 @@ const parsePaymentIntent = (text) => {
   const sendMatch = textWithoutMemo.match(
     /(?:send|pay|transfer)\s+([\d.]+)\s*((?!to\b)[a-zA-Z]{2,5})?\s+(?:to\s+)?(.+)/i
   );
-  if (!sendMatch) return null;
+  if (!sendMatch) {
+    const regional = parseRegionalIntent(normalized);
+    if (regional && regional.action === 'SEND') {
+      return {
+        amount: String(regional.amount),
+        asset: regional.currency || NATIVE_ASSET,
+        recipient: regional.recipient,
+        ...(regional.memo ? { memo: regional.memo, memoType: regional.memoType || 'text' } : (memo ? { memo, memoType } : {})),
+      };
+    }
+    return null;
+  }
   return {
     amount: sendMatch[1],
     asset: sendMatch[2] ? sendMatch[2].toUpperCase() : NATIVE_ASSET,
