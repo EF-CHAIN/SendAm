@@ -11,6 +11,7 @@ const { startSep24Poller } = require('./sep24Poll.job');
 const { startAlertDeliveryTestPoller } = require('../observability/alertDeliveryTest.service');
 const { processReceiptJob, QUEUE_NAME: RECEIPT_QUEUE } = require('./generateReceipt.job');
 const { processPartnerWebhookJob, QUEUE_NAME: PARTNER_WEBHOOK_QUEUE } = require('../services/partnerWebhooks');
+const { processBatchSettlementJob, QUEUE_NAME: BATCH_SETTLEMENT_QUEUE } = require('../payment/batchSettlement');
 const { processPaymentReversalJob, QUEUE_NAME: REVERSAL_QUEUE } = require('../payment/refundEngine');
 const { enqueue, registerProcessor } = require('../queues/queue.service');
 const config = require('../config/env');
@@ -49,6 +50,7 @@ const registerPartnerWebhookJobs = () => registerProcessor(PARTNER_WEBHOOK_QUEUE
 
 const registerReceiptJobs = () => registerProcessor(RECEIPT_QUEUE, (job) => processReceiptJob(job));
 
+const registerBatchSettlementJobs = () => registerProcessor(BATCH_SETTLEMENT_QUEUE, (job) => processBatchSettlementJob(job));
 const registerPaymentReversalJobs = () => registerProcessor(REVERSAL_QUEUE, (job) => processPaymentReversalJob(job));
 
 const registerJobs = () => {
@@ -80,6 +82,7 @@ const registerJobs = () => {
 
   registerPartnerWebhookJobs();
   registerReceiptJobs();
+  registerBatchSettlementJobs();
   registerPaymentReversalJobs();
   const ledgerReconciler = startLedgerReconciliationScheduler();
   const recurringPayments = startRecurringPaymentScheduler();
@@ -95,7 +98,7 @@ const registerJobs = () => {
     sep24Poller,
     ledgerReconciler,
     recurringPayments,
-    processorNames: ['whatsapp-inbound', PARTNER_WEBHOOK_QUEUE, RECEIPT_QUEUE, REVERSAL_QUEUE],
+    processorNames: ['whatsapp-inbound', PARTNER_WEBHOOK_QUEUE, RECEIPT_QUEUE, BATCH_SETTLEMENT_QUEUE, REVERSAL_QUEUE],
     stop: async () => {
       depositPoller.stop();
       auditPoller.stop();

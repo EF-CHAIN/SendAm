@@ -215,6 +215,12 @@ module.exports = {
     pathIssuers: {
       NGN: process.env.STELLAR_NGN_ISSUER,
       GHS: process.env.STELLAR_GHS_ISSUER,
+      // NGNT corridor (#962). Deliberately has no built-in default: the only
+      // issuer address we could find comes from a single source and there is
+      // no canonical testnet issuer, so the corridor stays unavailable until
+      // an operator verifies an issuer and sets it. See the note in
+      // config/networkProfiles.js.
+      NGNT: process.env.STELLAR_NGNT_ISSUER,
     },
     explorerBaseUrl: stellarProfile ? stellarProfile.explorerBaseUrl : null,
     supportsFriendbot: stellarProfile ? stellarProfile.supportsFriendbot : false,
@@ -249,9 +255,26 @@ module.exports = {
     cacheMaxAgeMs: Number(process.env.PRICING_RATE_CACHE_MAX_AGE_MS || 60000),
     staleCacheMaxAgeMs: Number(process.env.PRICING_STALE_RATE_CACHE_MAX_AGE_MS || 300000),
     maxSourceAgeMs: Number(process.env.PRICING_PROVIDER_MAX_SOURCE_AGE_MS || 24 * 60 * 60 * 1000),
+    // Multi-provider FX aggregation (ExchangeRate-API + CoinGecko + Binance P2P).
+    // Every feed older than fxMaxRateAgeMs is rejected and operators are alerted.
+    fxAggregatorEnabled: process.env.PRICING_FX_AGGREGATOR_ENABLED !== 'false',
+    fxMaxRateAgeMs: Number(process.env.PRICING_FX_MAX_RATE_AGE_MS || 60000),
+    fxMinProviders: Number(process.env.PRICING_FX_MIN_PROVIDERS || 1),
+    fxMaxDisagreementBps: Number(process.env.PRICING_FX_MAX_DISAGREEMENT_BPS || 200),
+    fxAlertWebhookUrl: process.env.PRICING_FX_ALERT_WEBHOOK_URL || process.env.ERROR_MONITOR_WEBHOOK_URL,
+    fxAlertToken: process.env.PRICING_FX_ALERT_TOKEN || process.env.ERROR_MONITOR_TOKEN,
+    fxAlertCooldownMs: Number(process.env.PRICING_FX_ALERT_COOLDOWN_MS || 60000),
+    binanceP2pEnabled: process.env.BINANCE_P2P_ENABLED !== 'false',
+    binanceP2pBaseUrl: process.env.BINANCE_P2P_BASE_URL || 'https://p2p.binance.com',
+    binanceP2pTimeoutMs: Number(process.env.BINANCE_P2P_TIMEOUT_MS || 3000),
     maxRate: process.env.PRICING_PROVIDER_MAX_RATE || '1000000000',
     spreadBasisPoints: Number(process.env.PRICING_SPREAD_BASIS_POINTS || 0),
     feePolicyVersion: process.env.PRICING_FEE_POLICY_VERSION || 'standard-v1',
+    // Per-corridor fee schedule (#997). Rules are stored in the FeeRule table
+    // and edited through the admin API; feeRateBps only sets the percentage
+    // component of the built-in fallback schedule used when no rule matches.
+    feeRateBps: Number(process.env.PRICING_FEE_RATE_BPS || 100),
+    feeRuleCacheTtlMs: Number(process.env.PRICING_FEE_RULE_CACHE_TTL_MS || 30000),
     supportedFiatCurrencies: (process.env.SUPPORTED_FIAT_CURRENCIES || 'NGN,GHS,USD,EUR,GBP')
       .split(',')
       .map((currency) => currency.trim().toUpperCase())
@@ -297,6 +320,9 @@ module.exports = {
     provider: process.env.VOICE_PROVIDER || 'deepgram',
     deepgramApiKey: process.env.DEEPGRAM_API_KEY,
     whisperApiKey: process.env.WHISPER_API_KEY || process.env.OPENAI_API_KEY,
+    whisperBaseUrl: process.env.WHISPER_BASE_URL || process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1',
+    whisperModel: process.env.WHISPER_MODEL || 'whisper-1',
+    whisperTimeoutMs: Number(process.env.WHISPER_TIMEOUT_MS || 30000),
     speakerConfidenceThreshold: Number(process.env.VOICE_SPEAKER_CONFIDENCE_THRESHOLD || 0.75),
   },
   // Request body limits and timeout tuning. Limits are route-appropriate;

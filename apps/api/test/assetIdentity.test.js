@@ -132,3 +132,82 @@ test('resolveConfiguredIssuer returns the configured issuer for a recognized cod
   assert.equal(assetIdentity.resolveConfiguredIssuer({ network: 'testnet', code: 'DOGE' }), null);
   assert.equal(assetIdentity.resolveConfiguredIssuer({ network: 'testnet', code: 'native' }), null);
 });
+
+// ── EURC and NGNT corridors (#962) ───────────────────────────────────────
+//
+// Step 3 of the process documented at the top of src/wallet/assetIdentity.js:
+// every newly trusted code gets its trusted and spoofed cases here.
+
+const TESTNET_EURC = 'GB3Q6QDZYTHWT7E5PVS3W7FUT5GVAFC5KSZFFLPU25GO7VTC3NM2ZTVO';
+const MAINNET_EURC = 'GDHU6WRG4IEQXM5NZ4BMPKOXHW76MZM4Y2IEMFDVXBSDP6SJY4ITNPP2';
+
+test('configured EURC on its configured issuer is trusted, per network', () => {
+  const testnet = assetIdentity.describeAsset({
+    network: 'testnet', assetType: 'credit_alphanum4', code: 'EURC', issuer: TESTNET_EURC,
+  });
+  assert.equal(testnet.trusted, true);
+  assert.equal(testnet.code, 'EURC');
+  assert.equal(testnet.issuer, TESTNET_EURC);
+  assert.equal(testnet.assetId, `stellar:testnet:EURC:${TESTNET_EURC}`);
+
+  const mainnet = assetIdentity.describeAsset({
+    network: 'public', assetType: 'credit_alphanum4', code: 'EURC', issuer: MAINNET_EURC,
+  });
+  assert.equal(mainnet.trusted, true);
+  assert.equal(mainnet.issuer, MAINNET_EURC);
+});
+
+test('a spoofed EURC from an unrecognized issuer is never trusted', () => {
+  const spoof = assetIdentity.describeAsset({
+    network: 'testnet', assetType: 'credit_alphanum4', code: 'EURC', issuer: SPOOF_ISSUER,
+  });
+  assert.equal(spoof.trusted, false);
+  // Still fully describable, so reconciliation can account for it.
+  assert.equal(spoof.code, 'EURC');
+  assert.equal(spoof.issuer, SPOOF_ISSUER);
+});
+
+test('EURC issuers do not cross networks', () => {
+  // The mainnet issuer presented on testnet (or the reverse) is not trusted:
+  // an issuer is only ever valid for the network it was configured for.
+  assert.equal(
+    assetIdentity.isTrustedIssuedAsset({ network: 'testnet', code: 'EURC', issuer: MAINNET_EURC }),
+    false,
+  );
+  assert.equal(
+    assetIdentity.isTrustedIssuedAsset({ network: 'public', code: 'EURC', issuer: TESTNET_EURC }),
+    false,
+  );
+});
+
+test('EURC and USDC issuers are not interchangeable', () => {
+  assert.equal(
+    assetIdentity.isTrustedIssuedAsset({ network: 'testnet', code: 'EURC', issuer: TESTNET_USDC }),
+    false,
+  );
+  assert.equal(
+    assetIdentity.isTrustedIssuedAsset({ network: 'testnet', code: 'USDC', issuer: TESTNET_EURC }),
+    false,
+  );
+});
+
+test('resolveConfiguredIssuer resolves EURC and returns null for unconfigured NGNT', () => {
+  assert.equal(
+    assetIdentity.resolveConfiguredIssuer({ network: 'testnet', code: 'EURC' }),
+    TESTNET_EURC,
+  );
+  // NGNT ships with no issuer on purpose: no address could be verified to the
+  // standard this module demands, and a wrong issuer would make a worthless
+  // look-alike token spendable. It becomes available only when an operator
+  // sets STELLAR_NGNT_ISSUER.
+  assert.equal(assetIdentity.resolveConfiguredIssuer({ network: 'testnet', code: 'NGNT' }), null);
+});
+
+test('an unconfigured NGNT can never be trusted, whoever claims to issue it', () => {
+  for (const issuer of [SPOOF_ISSUER, TESTNET_USDC, TESTNET_EURC]) {
+    assert.equal(
+      assetIdentity.isTrustedIssuedAsset({ network: 'testnet', code: 'NGNT', issuer }),
+      false,
+    );
+  }
+});
