@@ -45,6 +45,8 @@ router.post('/payments/stuck/:id/retry', requireAdmin('operations.write'), admin
 router.post('/payments/stuck/:id/resolve', requireAdmin('operations.write'), adminController.markStuckPaymentResolved);
 router.post('/payments/stuck/:id/escalate', requireAdmin('operations.write'), adminController.escalateStuckPayment);
 router.get('/ledger/discrepancies', requireAdmin('operations.write'), adminController.getLedgerDiscrepancies);
+router.get('/reconciliation/memos', requireAdmin('operations.write'), adminController.getMemoReconciliationCheckpoints);
+router.post('/reconciliation/memos/:id/resolve', requireAdmin('operations.write'), adminController.resolveMemoReconciliationCheckpoint);
 router.get('/kyc', requireAdmin('compliance.read'), adminController.getKycProfiles);
 router.get('/kyc/export', requireAdmin('compliance.read'), adminController.exportKyc);
 router.get('/kyc/:id/expiry-status', requireAdmin('compliance.read'), adminController.getKycExpiryStatus);

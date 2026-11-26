@@ -672,6 +672,41 @@ const getLedgerDiscrepancies = async (req, res, next) => {
   }
 };
 
+const getMemoReconciliationCheckpoints = async (req, res, next) => {
+  try {
+    const { status = 'mismatch', limit = 50 } = req.query;
+    const checkpoints = await prisma.reconciliationCheckpoint.findMany({
+      where: {
+        checkpointType: 'memo_exception',
+        ...(status ? { status } : {}),
+      },
+      take: parseLimit(limit),
+      orderBy: { createdAt: 'desc' },
+    });
+    return sendSuccess(res, { checkpoints });
+  } catch (error) {
+    next(error);
+  }
+};
+
+const resolveMemoReconciliationCheckpoint = async (req, res, next) => {
+  try {
+    const { resolveExceptionDeposit } = require('../payment/memoReconciliation');
+    const { id } = req.params;
+    const { targetUserId, reason } = req.body;
+    const result = await resolveExceptionDeposit({
+      checkpointId: id,
+      targetUserId,
+      adminId: req.admin?.id || 'admin',
+      resolutionReason: reason,
+      prisma,
+    });
+    return sendSuccess(res, result, 'Memo exception resolved and credited successfully');
+  } catch (error) {
+    next(error);
+  }
+};
+
 const getWalletSummary = async (req, res, next) => {
   try {
     const summary = await getWalletActivitySummary({
@@ -1217,6 +1252,8 @@ module.exports = {
   discardDeadLetterJob: discardDeadLetterJobHandler,
   getStellarToml,
   validateStellarToml,
+  getMemoReconciliationCheckpoints,
+  resolveMemoReconciliationCheckpoint,
 };
 
 
