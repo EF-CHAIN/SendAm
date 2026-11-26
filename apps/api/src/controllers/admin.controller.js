@@ -700,6 +700,18 @@ const recoverWallet = async (req, res, next) => {
   }
 };
 
+const { operatorUnlockPin } = require('../compliance/pinLockout');
+
+const unlockUserPin = async (req, res, next) => {
+  try {
+    const userId = req.params.userId || req.params.id;
+    const result = await operatorUnlockPin({
+      prisma,
+      userId,
+      adminId: req.admin?.id || 'system',
+      reason: req.body?.reason || 'Manual operator unlock after security verification',
+    });
+    return sendSuccess(res, result, 'User PIN lockout cleared by operator');
 const emergencyFreezeWallet = async (req, res, next) => {
   try {
     const result = await walletService.emergencyFreezeWallet({
@@ -1196,6 +1208,7 @@ module.exports = {
   reactivateUserAccount,
   getUserAccountStatusHistory,
   getUserStatement,
+  unlockUserPin,
   getKycExpiryStatus,
   getComplianceExpirySummary,
   getDeadLetterJobs,
