@@ -292,6 +292,25 @@ model LedgerPosting {
   @@index([asset, createdAt])
 }
 
+model LedgerEntry {
+  id              String   @id @default(cuid())
+  debitAccountId  String
+  creditAccountId String
+  amount          String
+  currency        String
+  description     String?
+  transactionId   String?
+  reference       String?
+  metadata        Json     @default("{}")
+  createdAt       DateTime @default(now())
+
+  @@index([debitAccountId])
+  @@index([creditAccountId])
+  @@index([currency, createdAt])
+  @@index([transactionId])
+  @@index([createdAt])
+}
+
 model PaymentIdempotency {
   id                    String   @id @default(cuid())
   userId                String
@@ -1227,6 +1246,29 @@ model SarReport {
 /// expiry window, bounded attempts and single use. The mnemonic itself is
 /// never persisted here or anywhere else.
 model MnemonicExportGrant {
+  id                 String    @id @default(cuid())
+  userId             String
+  walletId           String
+  /// pending | authorized | consumed | expired | revoked
+  status             String    @default("pending")
+  /// HMAC of the out-of-band challenge; the plaintext code is never stored.
+  challengeHash      String
+  challengeExpiresAt DateTime
+  challengeAttempts  Int       @default(0)
+  pinVerifiedAt      DateTime?
+  otpVerifiedAt      DateTime?
+  authorizedAt       DateTime?
+  consumedAt         DateTime?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  wallet Wallet @relation(fields: [walletId], references: [id], onDelete: Cascade)
+
+  @@index([userId, status])
+  @@index([status, challengeExpiresAt])
+}
+
 /// A virtual sub-wallet addressed by a Stellar MED25519 muxed address (#958).
 ///
 /// Muxed accounts do NOT create on-chain accounts: every sub-account shares
@@ -1238,26 +1280,6 @@ model MuxedSubAccount {
 
   userId   String
   walletId String
-
-  /// pending | authorized | consumed | expired | revoked
-  status String @default("pending")
-
-  /// HMAC of the out-of-band challenge code. The plaintext code is sent to the
-  /// user's own channel and never stored, logged or returned by the API.
-  challengeHash String
-
-  challengeExpiresAt DateTime
-  challengeAttempts  Int      @default(0)
-
-  pinVerifiedAt DateTime?
-  otpVerifiedAt DateTime?
-  authorizedAt  DateTime?
-  /// Set the moment the export is served. A consumed grant can never be
-  /// replayed — a second export needs a fresh grant.
-  consumedAt    DateTime?
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
   /// The 64-bit muxed sub-account id, held as a decimal STRING. A JS Number
   /// cannot represent the full uint64 range (2^53-1 < 2^64-1), so every read
   /// and write of this value goes through BigInt. Never parse it with
@@ -1315,8 +1337,6 @@ model DepositCredit {
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
   wallet Wallet @relation(fields: [walletId], references: [id], onDelete: Cascade)
 
-  @@index([userId, status])
-  @@index([status, challengeExpiresAt])
   @@index([userId, createdAt])
   @@index([walletId, createdAt])
 }

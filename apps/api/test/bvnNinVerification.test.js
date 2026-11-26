@@ -8,7 +8,7 @@ process.env.DOJAH_APP_ID = 'app_test';
 process.env.DOJAH_SECRET_KEY = 'sk_test';
 process.env.KYC_ID_HASH_SECRET = 'test-hash-secret';
 
-const state = {};
+const state = { auditHead: null };
 const mockPrisma = {
   kycProfile: {
     findUnique: async () => state.profile,
@@ -26,6 +26,9 @@ const mockPrisma = {
     create: async ({ data }) => { state.audits.push(data); return data; },
   },
   auditChainHead: {
+    findUnique: async () => state.auditHead,
+    create: async ({ data }) => { state.auditHead = data; return state.auditHead; },
+    update: async ({ data }) => { state.auditHead = { ...state.auditHead, ...data }; return state.auditHead; },
     findUnique: async () => null,
     update: async () => null,
     create: async () => null,
@@ -55,6 +58,7 @@ const dojahFails = (status) => async () => {
 const auditActions = () => state.audits.map((a) => a.action);
 
 beforeEach(() => {
+  state.auditHead = null;
   state.profile = null;
   state.userUpdates = [];
   state.verifications = [];
