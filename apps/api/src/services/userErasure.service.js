@@ -218,6 +218,8 @@ const anonymizeUser = async (db, options = {}) => {
     throw error;
   }
 
+  const anonymizedPhone = `deleted-user-${userId}`;
+
   const tombstoneHash = generateTombstoneHash();
   const anonymizedPhone = customAnonymizedPhone || `anonymized:${tombstoneHash}`;
 

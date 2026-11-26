@@ -16,6 +16,7 @@
  * @property {readonly string[]} horizonHosts - Allowlist of valid Horizon hostname strings for this network.
  * @property {string} defaultHorizonUrl - Default Horizon REST API base URL for this network.
  * @property {string} usdcIssuer - Circle's canonical USDC issuing Stellar G-address (StrKey) on this network.
+ * @property {string} eurcIssuer - Circle's canonical EURC issuing Stellar G-address (StrKey) on this network.
  * @property {string} explorerBaseUrl - Base URL for looking up transactions and accounts on StellarExpert block explorer.
  * @property {boolean} supportsFriendbot - True if automated testnet Friendbot account funding is supported.
  * @property {string | null} friendbotUrl - Friendbot service URL for account creation and funding, or null on mainnet.
@@ -31,6 +32,25 @@
 const TESTNET_USDC_ISSUER = 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5';
 const MAINNET_USDC_ISSUER = 'GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN';
 
+// Circle's EURC issuers (#962), taken from Circle's own published contract
+// address list: https://developers.circle.com/stablecoins/eurc-contract-addresses
+// Both strkeys were checksum-validated before being committed, because a
+// single wrong character here would route user funds to a worthless
+// same-code token from an unrelated issuer.
+const TESTNET_EURC_ISSUER = 'GB3Q6QDZYTHWT7E5PVS3W7FUT5GVAFC5KSZFFLPU25GO7VTC3NM2ZTVO';
+const MAINNET_EURC_ISSUER = 'GDHU6WRG4IEQXM5NZ4BMPKOXHW76MZM4Y2IEMFDVXBSDP6SJY4ITNPP2';
+
+// NGNT (Nigerian Naira Token) is deliberately NOT hardcoded. The only issuer
+// address we could find is in the Cowrie anchor's own stellar.toml, and
+// sources disagree about which entity issues it; there is no canonical
+// testnet issuer at all, and several unrelated tokens share the code "NGNT"
+// on other chains. An unverified issuer baked into the binary is worse than
+// an absent one, so the NGNT corridor is configured per deployment through
+// STELLAR_NGNT_ISSUER (see config/env.js `pathIssuers`) and is simply
+// unavailable until an operator sets it. The candidate address an operator
+// should verify against the live stellar.toml and a block explorer is
+// GAWODAROMJ33V5YDFY3NPYTHVYQG7MJXVJ2ND3AOGIHYRWINES6ACCPD.
+
 /** @type {Readonly<Record<'testnet' | 'public', Readonly<NetworkProfile>>>} */
 const NETWORK_PROFILES = Object.freeze({
   testnet: Object.freeze({
@@ -41,6 +61,7 @@ const NETWORK_PROFILES = Object.freeze({
     horizonHosts: Object.freeze(['horizon-testnet.stellar.org']),
     defaultHorizonUrl: 'https://horizon-testnet.stellar.org',
     usdcIssuer: TESTNET_USDC_ISSUER,
+    eurcIssuer: TESTNET_EURC_ISSUER,
     explorerBaseUrl: 'https://stellar.expert/explorer/testnet',
     // Friendbot only exists on test networks; funding is free there.
     supportsFriendbot: true,
@@ -54,6 +75,7 @@ const NETWORK_PROFILES = Object.freeze({
     horizonHosts: Object.freeze(['horizon.stellar.org']),
     defaultHorizonUrl: 'https://horizon.stellar.org',
     usdcIssuer: MAINNET_USDC_ISSUER,
+    eurcIssuer: MAINNET_EURC_ISSUER,
     explorerBaseUrl: 'https://stellar.expert/explorer/public',
     supportsFriendbot: false,
     friendbotUrl: null,
@@ -252,6 +274,7 @@ const describeNetworkProfile = (profile) => {
     passphrase: profile.passphrase,
     horizonHosts: [...profile.horizonHosts],
     usdcIssuer: profile.usdcIssuer,
+    eurcIssuer: profile.eurcIssuer,
     explorerBaseUrl: profile.explorerBaseUrl,
     supportsFriendbot: profile.supportsFriendbot,
   };
@@ -262,6 +285,8 @@ module.exports = {
   SUPPORTED_NETWORK_IDS,
   TESTNET_USDC_ISSUER,
   MAINNET_USDC_ISSUER,
+  TESTNET_EURC_ISSUER,
+  MAINNET_EURC_ISSUER,
   normalizeNetworkId,
   getNetworkProfile,
   resolveNetworkProfile,
