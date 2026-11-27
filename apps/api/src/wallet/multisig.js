@@ -20,6 +20,47 @@
 // unless the gate returned — not merely "not called when it rejects", but
 // lexically after a statement that throws.
 //
+// In production that boundary is `wallet/stellar.adapter.js#submitPayment`,
+// which is the one function every USER-FACING outbound transfer goes through —
+// the payment orchestrator, refunds, recurring payments and the SEP-6/SEP-31
+// rails all end up there. It calls `authorizeForSubmission` AFTER the envelope
+// is signed and BEFORE `server.submitTransaction`, so a refused transaction
+// has already thrown by the time any transport exists.
+//
+// That is deliberately narrower than "every path that can reach Horizon", and
+// the difference matters. Other modules call `server.submitTransaction`
+// directly and this gate does NOT see them:
+//
+//   * `wallet/stellar.adapter.js#establishTrustline` and `wallet/trustlines.js`
+//     (#962/#1066) submit `changeTrust` only, which moves no value and is
+//     exempt on purpose (see ZERO_VALUE_OPERATIONS);
+//   * `wallet/feeBump.js` wraps an already-authorized inner transaction. Its
+//     one caller is `trustlines.js`, wrapping a ChangeTrust;
+//   * `wallet/channelAccountPool.js` is operational plumbing and is dormant —
+//     nothing requires it;
+//   * `wallet/hotWalletPool.js` (#1081) is NOT exempt, and is the one real
+//     gap. Its `_executeMultisigTransfer` builds a native payment of
+//     arbitrary size from cold storage, signs it with raw in-process keypairs
+//     up to its own `coldStorageThreshold`, and submits directly, applying a
+//     quorum notion unrelated to this policy. It is dormant today — nothing
+//     requires it — so it is a LATENT bypass, not a live one. Wiring it in
+//     without gating it would make the policy incomplete.
+//
+// `multisig.sendpath.test.js` asserts exactly that shape — one sanctioned
+// `feeBump` caller, the other two dormant — so widening the ungated surface
+// fails a test rather than passing silently.
+//
+// Bringing the treasury path under one policy — or deciding that it is
+// intentionally governed separately — is a maintainer decision, not something
+// this module may assume. Do not restate the claim that all value-moving
+// submissions are gated until it is true.
+//
+// Below the threshold nothing new runs at all — no extra Horizon read, no
+// co-signer resolution, no verification. The ledger already enforces the
+// account's own thresholds for ordinary transfers, and changing that would be
+// a regression for the low-value flow the acceptance criteria require to keep
+// working.
+//
 // ── What a real 2-of-3 check has to verify ───────────────────────────────
 //
 // Counting signatures is not verification. Four things must hold:
@@ -520,10 +561,385 @@ const submitAuthorized = async ({
   return { authorization, result };
 };
 
+// ── Getting the second signature ───────────────────────────────────────────
+//
+// A policy that can only REFUSE is half a feature: refusing every high-value
+// transfer forever is safe but useless. The second signature has to come from
+// somewhere, so this section defines where: the quorum co-signers configured
+// for the deployment (the platform compliance signer and/or the operator
+// signer), each of which is asked — over the same hash-based protocol the HSM
+// signer already speaks — to co-sign the exact envelope being submitted.
+//
+// Three rules keep this honest:
+//
+//  1. A co-signer is only ever ASKED, never trusted. Its reply is verified
+//     with Ed25519 against the transaction hash before it is attached, and
+//     `authorizeTransaction` then re-verifies the whole envelope against the
+//     ledger's own signer set. A co-signer that signs something else, returns
+//     garbage, or is not actually a signer on the account cannot move the
+//     transaction one step closer to submission.
+//  2. Nothing is configured, or the configuration is unusable ⇒ high-value
+//     transfers are refused. Fail closed, with a stable code an operator can
+//     act on, and never a silent downgrade to single-key submission.
+//  3. Co-signers are resolved LAZILY, only once a transaction is known to be
+//     high tier. A broken co-signer configuration must not be able to break a
+//     $10 payment.
+//
+// The co-signers themselves are only reachable if the account actually has
+// those keys on-chain, which is an operator action this module deliberately
+// never performs (see `buildThresholdPlan`). Until then, `MULTISIG_COSIGNERS`
+// is unset and every high-value transfer fails closed with
+// `cosigner_unavailable`.
+
+const COSIGNER_ERROR_CODES = Object.freeze({
+  /** No co-signer configured, so a second signature can never be obtained. */
+  COSIGNER_UNAVAILABLE: 'cosigner_unavailable',
+  /** `MULTISIG_COSIGNERS` / `MULTISIG_COSIGNER_ENDPOINT` cannot be used. */
+  COSIGNER_MISCONFIGURED: 'cosigner_misconfigured',
+  /** A configured co-signer was reached but did not produce a signature. */
+  COSIGNER_FAILED: 'cosigner_failed',
+  /** A co-signer replied with something that is not a valid signature. */
+  INVALID_COSIGNER_SIGNATURE: 'invalid_cosigner_signature',
+});
+
+const SIGNATURE_BYTES = 64;
+
+/**
+ * Normalize whatever a co-signer handed back into the base64 form
+ * `addSignature` expects. Returns `null` unless the result is exactly 64
+ * bytes — a length check is the cheapest way to reject a truncated or
+ * padded-to-garbage reply before any cryptography runs.
+ *
+ * @param {Buffer|Uint8Array|string} raw
+ * @returns {string|null} base64 signature, or null if unusable.
+ */
+const toSignatureBase64 = (raw) => {
+  let bytes = null;
+  if (Buffer.isBuffer(raw)) bytes = raw;
+  else if (raw instanceof Uint8Array) bytes = Buffer.from(raw);
+  else if (typeof raw === 'string') {
+    const trimmed = raw.trim();
+    if (/^[0-9a-fA-F]{128}$/.test(trimmed)) bytes = Buffer.from(trimmed, 'hex');
+    else bytes = Buffer.from(trimmed, 'base64');
+  }
+  if (!bytes || bytes.length !== SIGNATURE_BYTES) return null;
+  return bytes.toString('base64');
+};
+
+/**
+ * Parse one `MULTISIG_COSIGNERS` entry: either `<keyId>=<publicKey>` or a bare
+ * `<publicKey>`.
+ *
+ * @param {string} spec
+ * @returns {{keyId: string, publicKey: string}|null} null for a blank entry.
+ * @throws {Error} code `cosigner_misconfigured` for a malformed key.
+ */
+const parseCoSignerSpec = (spec) => {
+  const raw = String(spec ?? '').trim();
+  if (!raw) return null;
+  const separator = raw.indexOf('=');
+  const keyId = separator > 0 ? raw.slice(0, separator).trim() : null;
+  const publicKey = separator > 0 ? raw.slice(separator + 1).trim() : raw;
+  if (!StellarSdk.StrKey.isValidEd25519PublicKey(publicKey)) {
+    throw codedError(
+      'MULTISIG_COSIGNERS contains an entry that is not a valid Stellar public key.',
+      COSIGNER_ERROR_CODES.COSIGNER_MISCONFIGURED,
+      { entry: keyId || 'unknown' },
+    );
+  }
+  return { keyId: keyId || publicKey, publicKey };
+};
+
+/**
+ * Test/ops override for the co-signer list. `undefined` restores the
+ * environment-derived list; `null` (or `[]`) pins the list to "none".
+ *
+ * @param {Array<object>|null|undefined} coSigners
+ */
+let coSignerOverride;
+const setCoSigners = (coSigners) => {
+  coSignerOverride = coSigners === undefined ? undefined : coSigners;
+};
+
+let cachedCoSignerClient = { endpoint: null, apiKey: null, client: null };
+
+/**
+ * Build (and memoize) the remote signing client the co-signers share. Uses
+ * `hsmSigner` so the co-signing protocol is the same one already reviewed and
+ * tested: a 32-byte hash in, a 64-byte Ed25519 signature out.
+ *
+ * @returns {object} an HSM signer client.
+ * @throws {Error} code `cosigner_misconfigured` when no endpoint is configured.
+ */
+const resolveCoSignerClient = () => {
+  const endpoint = String(process.env.MULTISIG_COSIGNER_ENDPOINT || '').trim();
+  const apiKey = process.env.MULTISIG_COSIGNER_API_KEY
+    || process.env.HSM_API_KEY
+    || undefined;
+
+  if (!endpoint) {
+    throw codedError(
+      'MULTISIG_COSIGNERS is set but MULTISIG_COSIGNER_ENDPOINT is empty; '
+      + 'there is no way to obtain a second signature.',
+      COSIGNER_ERROR_CODES.COSIGNER_MISCONFIGURED,
+    );
+  }
+  if (cachedCoSignerClient.endpoint === endpoint && cachedCoSignerClient.apiKey === apiKey) {
+    return cachedCoSignerClient.client;
+  }
+  // Lazy require: `hsmSigner` pulls in the HTTP client, and a deployment that
+  // never configures co-signers should never load it.
+  const { createHsmSigner } = require('./hsmSigner');
+  const client = createHsmSigner({ endpoint, apiKey });
+  cachedCoSignerClient = { endpoint, apiKey, client };
+  return client;
+};
+
+/**
+ * The quorum co-signers configured for this deployment.
+ *
+ * @returns {Array<{keyId: string, publicKey: string, signHash: Function}>}
+ *          Empty when nothing is configured — callers must treat that as
+ *          "high-tier transfers are unavailable", not as "approve them".
+ * @throws {Error} code `cosigner_misconfigured` when the configuration exists
+ *         but cannot be used.
+ */
+const configuredCoSigners = () => {
+  if (coSignerOverride !== undefined) return coSignerOverride;
+
+  const raw = String(process.env.MULTISIG_COSIGNERS || '').trim();
+  if (!raw) return [];
+
+  const specs = raw.split(',').map(parseCoSignerSpec).filter(Boolean);
+  if (specs.length === 0) return [];
+
+  const client = resolveCoSignerClient();
+  return specs.map((spec) => ({
+    keyId: spec.keyId,
+    publicKey: spec.publicKey,
+    signHash: ({ hash, transaction } = {}) => client.signHash({
+      keyId: spec.keyId,
+      publicKey: spec.publicKey,
+      hash,
+      ...(transaction ? { context: { transactionHash: transaction.hash().toString('hex') } } : {}),
+    }),
+  }));
+};
+
+/**
+ * Collect whatever extra signatures a high-tier transaction still needs, then
+ * authorize it.
+ *
+ * Does nothing at all — no co-signer is resolved, no signature is requested —
+ * when the transaction is below the threshold, so a broken co-signer
+ * configuration can never affect an ordinary payment.
+ *
+ * @param {object} params
+ * @param {object} params.transaction - Transaction or FeeBumpTransaction.
+ * @param {object} params.accountRecord - Horizon account record (signers + thresholds).
+ * @param {string} params.networkPassphrase - Network the signatures must bind to.
+ * @param {string} [params.threshold] - Override the high-value threshold.
+ * @param {Array<object>} [params.coSigners] - Co-signers to consult.
+ * @returns {Promise<object>} `{ tier, quorumRequired, requiredWeight, requested, attached, weight }`
+ * @throws {Error} with a `code` from COSIGNER_ERROR_CODES or MULTISIG_ERROR_CODES.
+ */
+const collectQuorumSignatures = async ({
+  transaction,
+  accountRecord,
+  networkPassphrase,
+  threshold = highValueThreshold(),
+  coSigners = [],
+}) => {
+  const classification = classifyTransaction({ transaction, threshold });
+
+  if (!classification.requiresQuorum) {
+    return {
+      tier: classification.tier,
+      quorumRequired: false,
+      requested: [],
+      attached: [],
+    };
+  }
+
+  if (!Array.isArray(coSigners) || coSigners.length === 0) {
+    throw codedError(
+      'High-value transfer refused: no quorum co-signer is configured, so a second '
+      + 'signature can never be obtained.',
+      COSIGNER_ERROR_CODES.COSIGNER_UNAVAILABLE,
+      { tier: classification.tier, reasons: classification.reasons },
+    );
+  }
+
+  // Throws when the account record has no signers array: an unknown signer set
+  // must never be treated as an open door.
+  const weights = signerWeights(accountRecord);
+  const requiredWeight = requiredWeightFor({ accountRecord, tier: classification.tier });
+  const starting = verifySignatures({ transaction, accountRecord, networkPassphrase });
+
+  const { inner } = unwrapForPolicy(transaction);
+  const hash = inner.hash();
+
+  const signed = new Set(starting.validSigners);
+  const requested = [];
+  const attached = [];
+  let weight = starting.totalWeight;
+
+  for (const coSigner of coSigners) {
+    if (weight >= requiredWeight) break;
+    if (!coSigner || typeof coSigner.signHash !== 'function') continue;
+
+    const publicKey = String(coSigner.publicKey || '');
+    if (!StellarSdk.StrKey.isValidEd25519PublicKey(publicKey)) {
+      throw codedError(
+        'A configured quorum co-signer does not name a valid Stellar public key.',
+        COSIGNER_ERROR_CODES.COSIGNER_MISCONFIGURED,
+        { tier: classification.tier },
+      );
+    }
+    if (!weights.has(publicKey)) {
+      // The ledger is authoritative: a key that is not a signer on this
+      // account can never contribute weight, so asking it is a configuration
+      // mistake worth surfacing rather than quietly burning time on.
+      throw codedError(
+        `Quorum co-signer ${coSigner.keyId || 'unknown'} is not a signer on this account, `
+        + 'so its signature can never satisfy the quorum.',
+        COSIGNER_ERROR_CODES.COSIGNER_MISCONFIGURED,
+        { tier: classification.tier },
+      );
+    }
+    if (signed.has(publicKey)) continue;
+
+    requested.push(publicKey);
+    let raw;
+    try {
+      raw = await coSigner.signHash({ keyId: coSigner.keyId, publicKey, hash, transaction: inner });
+    } catch (error) {
+      throw codedError(
+        `Quorum co-signer ${coSigner.keyId || publicKey} did not produce a signature: `
+        + `${error?.code || error?.message || 'signing failed'}`,
+        COSIGNER_ERROR_CODES.COSIGNER_FAILED,
+        { tier: classification.tier },
+      );
+    }
+
+    const base64 = toSignatureBase64(raw);
+    if (!base64) {
+      throw codedError(
+        `Quorum co-signer ${coSigner.keyId || publicKey} returned a value that is not a `
+        + `${SIGNATURE_BYTES}-byte Ed25519 signature.`,
+        COSIGNER_ERROR_CODES.INVALID_COSIGNER_SIGNATURE,
+        { tier: classification.tier },
+      );
+    }
+    try {
+      // `addSignature` verifies Ed25519 against this transaction's hash before
+      // it attaches anything, so a co-signer that signed a different envelope
+      // is rejected here instead of being counted.
+      inner.addSignature(publicKey, base64);
+    } catch (_error) {
+      throw codedError(
+        `Quorum co-signer ${coSigner.keyId || publicKey} returned a signature that does not `
+        + 'verify for this transaction.',
+        COSIGNER_ERROR_CODES.INVALID_COSIGNER_SIGNATURE,
+        { tier: classification.tier },
+      );
+    }
+
+    signed.add(publicKey);
+    attached.push(publicKey);
+    weight += weights.get(publicKey) || 0;
+  }
+
+  return {
+    tier: classification.tier,
+    quorumRequired: true,
+    requiredWeight,
+    requested,
+    attached,
+    weight,
+  };
+};
+
+/**
+ * The submission gate: make sure the envelope in front of you is one this
+ * policy allows on the wire, collecting the co-signatures it is missing first.
+ *
+ * This is the function `stellar.adapter.submitPayment` calls between signing
+ * and submitting. It throws — always, and before any transport is touched —
+ * when the transaction may not be submitted.
+ *
+ * @param {object} params
+ * @param {object} params.transaction - Transaction or FeeBumpTransaction.
+ * @param {object} params.accountRecord - Horizon account record for the source.
+ * @param {string} params.networkPassphrase - Network the signatures must bind to.
+ * @param {string} [params.threshold] - Override the high-value threshold.
+ * @param {Function} [params.resolveCoSigners] - Lazily supplies the co-signers.
+ * @returns {Promise<object>} Authorization detail; `quorumRequired` says which
+ *          branch ran.
+ * @throws {Error} with a `code` from MULTISIG_ERROR_CODES or COSIGNER_ERROR_CODES.
+ */
+const authorizeForSubmission = async ({
+  transaction,
+  accountRecord,
+  networkPassphrase,
+  threshold = highValueThreshold(),
+  resolveCoSigners = configuredCoSigners,
+}) => {
+  const classification = classifyTransaction({ transaction, threshold });
+
+  if (!classification.requiresQuorum) {
+    // Deliberately NOT run through `authorizeTransaction`: below the threshold
+    // the account's own on-chain thresholds govern, exactly as they did before
+    // this policy existed, and the ledger rejects an under-signed envelope on
+    // its own. The application only raises the bar above the threshold — which
+    // is also why a broken co-signer configuration can never break this path.
+    return {
+      authorized: true,
+      quorumRequired: false,
+      tier: classification.tier,
+      totalsByAsset: classification.totalsByAsset,
+      feeBumped: classification.feeBumped,
+      reasons: classification.reasons,
+      note: 'At or below the high-value threshold; the account\'s on-chain thresholds govern.',
+    };
+  }
+
+  // Everything this branch throws is a refusal that happened BEFORE any
+  // transport existed, so it is tagged `preSubmission`. Callers that unwind a
+  // failed payment need that distinction: an error raised after submission
+  // started may correspond to a transaction that is actually on the network
+  // and must be reversed by the reversal job, whereas a refusal here moved
+  // nothing and the caller still owns every reservation it took. Without the
+  // tag the payment orchestrator treats the refusal as post-submission and
+  // leaks the velocity reservation, because `handleStellarPaymentFailure`
+  // only enqueues a reversal for genuine Horizon rejections.
+  try {
+    const coSigners = await resolveCoSigners();
+
+    const collection = await collectQuorumSignatures({
+      transaction,
+      accountRecord,
+      networkPassphrase,
+      threshold,
+      coSigners,
+    });
+
+    const authorization = authorizeTransaction({
+      transaction, accountRecord, networkPassphrase, threshold,
+    });
+
+    return { ...authorization, quorumRequired: true, coSignerCollection: collection };
+  } catch (error) {
+    if (error && typeof error === 'object') error.preSubmission = true;
+    throw error;
+  }
+};
+
 module.exports = {
   TRANSFER_TIERS,
   QUORUM_POLICY,
   MULTISIG_ERROR_CODES,
+  COSIGNER_ERROR_CODES,
   VALUED_OPERATIONS,
   ZERO_VALUE_OPERATIONS,
   highValueThreshold,
@@ -535,4 +951,10 @@ module.exports = {
   verifySignatures,
   authorizeTransaction,
   submitAuthorized,
+  parseCoSignerSpec,
+  toSignatureBase64,
+  setCoSigners,
+  configuredCoSigners,
+  collectQuorumSignatures,
+  authorizeForSubmission,
 };

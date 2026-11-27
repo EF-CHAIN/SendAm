@@ -418,7 +418,12 @@ const executePayment = async ({
     };
   } catch (error) {
     if (submitted && trackEnvelope) throw error;
-    if (!submissionStarted) {
+    // `preSubmission` is set by the #959 quorum gate, which refuses an
+    // envelope after `submissionStarted` is already true but before anything
+    // reached Horizon. Such a refusal moved no value, so the reservation is
+    // this function's to release — the reversal job never sees it, because
+    // `handleStellarPaymentFailure` only acts on Horizon rejections.
+    if (!submissionStarted || error?.preSubmission) {
       await releaseVelocityReservation(velocityReservation).catch((releaseError) => {
         logger.error('velocity_reservation_release_failed', { message: releaseError.message });
       });
