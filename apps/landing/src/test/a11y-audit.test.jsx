@@ -258,8 +258,11 @@ describe('landing WCAG 2.2 AAA audit', () => {
       renderAt('/onboarding');
       await screen.findByRole('heading', { name: /onboarding checkpoints/i });
       // Progress is never colour-only: the numeric value and stage word are
-      // both present in the accessible tree.
-      expect(screen.getByText(/67% of onboarding milestones completed/i)).toBeInTheDocument();
+      // both present in the accessible tree. The heading renders before the
+      // status fetch settles, so wait for the progress text itself.
+      expect(
+        await screen.findByText(/67% of onboarding milestones completed/i, {}, { timeout: 5000 }),
+      ).toBeInTheDocument();
       expect(screen.getAllByText('In Progress').length).toBeGreaterThan(0);
     });
 
